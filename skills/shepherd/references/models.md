@@ -19,12 +19,12 @@ exactly and ignore this table.
 
 ## Roles
 
-- **Bottom rung:** work that only reads, or that a later check catches: the
-  swarm router and simplify.
-- **Second rung:** runners that push commits or resolve threads: triage and
-  ci-repair. In trials the bottom rung fixed code and forgot to resolve the
-  thread, committed without pushing, invented domain rules, and edited code to
-  get past a gate. Each slip cost a redo one rung up, so starting there is the
+- **Bottom rung:** work that only reads and that a later step checks: the swarm
+  router, whose findings a verifier or lens confirms.
+- **Second rung:** runners that edit code, push commits, or resolve threads:
+  triage, simplify, and ci-repair. In trials the bottom rung fixed code and forgot to resolve the
+  thread, committed without pushing, invented domain rules, edited code to
+  get past a gate, and a simplify pass reverted a review fix. Each slip cost a redo one rung up, so starting there is the
   cheaper path.
 - **One rung up:** swarm's default delegation target; the validator for a risky
   change; swarm's verifier for a bottom-rung finding.

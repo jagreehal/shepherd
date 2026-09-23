@@ -37,9 +37,15 @@ gh pr view --json number,url,baseRefName,headRefOid,state \
 
 ```bash
 gh pr view <number> --json mergeable,mergeStateStatus --jq '{mergeable, status: .mergeStateStatus}'
+git fetch -q origin <base> && git rev-list --count HEAD..origin/<base>
 ```
 
-- **`BEHIND`:** run `gh pr update-branch <number>` (a merge, no force-push),
+Count the commits behind; do not read "behind" from `mergeStateStatus`. GitHub
+reports `BEHIND` only when branch protection requires an up-to-date branch, so a
+branch many commits behind shows `CLEAN` or `UNSTABLE`, and it misses the base's
+newer CI workflows and fixes.
+
+- **Behind (count > 0):** run `gh pr update-branch <number>` (a merge, no force-push),
   then `git fetch` and `git merge --ff-only @{u}` so a repair lands on top.
   `base_update.status = "updated"`.
 - **`CONFLICTING` or `DIRTY`:** do not try; update-branch cannot resolve a

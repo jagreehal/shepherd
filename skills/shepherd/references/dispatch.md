@@ -15,8 +15,8 @@ degradation rules sit at the end; running a fragment runs without them.
 
 - **swarm** runs in the main loop through `Skill("swarm")`. It starts its own
   reviewer agents, and nesting those inside a runner costs a layer of context.
-- **triage** and **ci-repair**: one `Agent` each at the second rung (see
-  `models.md`). Tell the
+- **triage**, **simplify**, and **ci-repair**: one `Agent` each at the second
+  rung (see `models.md`). Tell the
   runner the skill name and let it load its own body; loading it here first pays
   for it twice.
 - **simplify**: one `Agent` that applies `../review-simplicity/SKILL.md` in fix
@@ -73,7 +73,10 @@ already read. Tell runners to read a file only where the patch is not enough.
   base conflict, record it and carry on."
 - **simplify:** "Apply `../review-simplicity/SKILL.md` in fix mode to the diff at
   `<diff_path>` on PR `<number>`, yourself: invoke no skill and start no agent.
-  Change only lines the PR changed. Edit the working tree only; do not commit or
+  Change only lines the PR changed, and never change behaviour: a simplification
+  that alters any output, error, or side effect is out of scope. Never revert a
+  fix made during review (the commits since `<review_base_sha>`), and never touch
+  code a deferred thread covers: `<deferred_threads with file:line>`. Edit the working tree only; do not commit or
   push. Return the files changed (or 'no changes') with one line each, plus any
   `validation_request`."
 

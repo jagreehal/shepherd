@@ -150,6 +150,9 @@ so stop the round and re-baseline next iteration.
 
 **c. simplify, when warranted.** Same gate as swarm, keyed on
 `simplify_marker_sha`. One runner edits the working tree without committing.
+Its brief carries the first head of this iteration as `review_base_sha` and
+every deferred thread's `file:line`, so it cannot undo a review fix or decide a
+deferred question.
 Confirm its claimed changes with `git status --porcelain` in your own tree;
 then `git add`, commit `refactor: simplify pass`, push. Set `simplify_marker_sha = HEAD`.
 
