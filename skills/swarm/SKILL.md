@@ -28,6 +28,10 @@ hands it work:
 | simplicity | `review-simplicity` | the four rules of simple design, YAGNI, reinvented stdlib |
 | maintainability | `review-maintainability` | coupling, naming, observability, rollout safety, house rules |
 | slop | `review-slop` | low-signal code and prose that agents tend to produce |
+| custom | any skill | whatever the repo or you add: React rules, a design system, API guidelines |
+
+Custom lenses wrap any skill in a review-only brief. Load the catalog before the
+router runs (`references/custom-lenses.md`).
 
 ## Rules that hold on every run
 
@@ -142,9 +146,11 @@ missing or fails to start, record `checks: <tool> unavailable` and move on.
 
 ## Step 3: Router pass
 
-Resolve the model ladder first (`../shepherd/references/models.md`). Dispatch
-ONE router agent at the bottom rung with the diff path, file list, commit log,
-PR title and body, and `CHECK_FINDINGS`. Its brief:
+Resolve the model ladder first (`../shepherd/references/models.md`) and load
+the custom lens catalog (`references/custom-lenses.md`). Dispatch ONE router
+agent at the bottom rung with the diff path, file list, commit log, PR title
+and body, `CHECK_FINDINGS`, and each custom lens's name and description, so it
+can delegate to them like built-in lenses. Its brief:
 
 - You are the only first-pass reviewer. Review the whole diff for correctness,
   security, simplicity, maintainability, and slop. Read at least 50 lines around
@@ -194,6 +200,11 @@ this turn, each on the rung the plan named. Each agent
 gets its lens skill body, the diff path, its scope, and `CHECK_FINDINGS`, and
 is told it is the only reviewer for that scope. It never learns about the
 router or the other lenses, so it cannot anchor on them.
+
+Add a delegation for every custom lens whose `applies_to` matches a changed
+file, scoped to those files, whatever the plan says, and give it the lens brief
+from `references/custom-lenses.md`. Custom lenses run in the same parallel
+message and do not count toward the cap.
 
 A lens may return `REDELEGATE: <lens> | <scope> | <reason>` when another lens
 would see more. Honour it once. Cap the run at 6 delegations.

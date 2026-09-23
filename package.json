@@ -33,5 +33,9 @@
     "@types/bun": "^1.2.0",
     "oxlint": "1.78.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0",
+    "zod": "^4.0.0"
   }
 }

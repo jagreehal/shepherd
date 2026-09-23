@@ -49,6 +49,34 @@ installed; a skill of yours with the same name stays unless you pass `--force`.
 | `review-maintainability` | Coupling, rollout safety, observability, naming, and the repo's own written rules. |
 | `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
 
+## Add your own reviewers
+
+Any skill can review code as a swarm lens: React performance rules, your design
+system, your API conventions. Point shepherd at the skill and the files it cares
+about:
+
+```bash
+bunx @jagreehal/shepherd lens add vercel-react-best-practices --name react \
+  --applies '**/*.tsx' --applies '**/*.jsx'          # writes .shepherd/lenses.yml
+bunx @jagreehal/shepherd lens add ~/skills/house-style --name house --global   # yours, every repo
+bunx @jagreehal/shepherd lens list
+```
+
+```yaml
+# .shepherd/lenses.yml
+lenses:
+  react:
+    skill: vercel-react-best-practices   # an installed skill, or a path to one in the repo
+    applies_to: ['**/*.tsx', '**/*.jsx'] # runs whenever a matching file changes
+```
+
+A lens with `applies_to` runs on every PR that touches a matching file. Without
+it, the router decides when the lens is worth calling, from its description.
+Swarm wraps the skill in a review-only brief: the skill is the checklist, its
+findings post like any other lens's (`[react/async-parallel]`), and triage fixes
+them. The repository's lens file is read from the default branch, so a PR cannot
+pick its own reviewers.
+
 ## One iteration
 
 ```text

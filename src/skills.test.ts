@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
+import { addLens, catalog, globalLensFile, readLenses, repoLensFile, resolveSkill, skillDescription } from "./lens.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -122,5 +123,61 @@ describe("installer", () => {
     expect(outcomes.every((o) => o.action === "removed")).toBe(true);
     expect(readdirSync(t.skills)).toEqual(["mine"]);
     expect(readdirSync(t.commands)).toEqual([]);
+  });
+});
+
+describe("custom lenses", () => {
+  const sandbox = () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "shepherd-lens-"));
+    const home = path.join(dir, "home");
+    const repo = path.join(dir, "repo");
+
+    const skill = (root: string, name: string, description: string) => {
+      mkdirSync(path.join(root, name), { recursive: true });
+      writeFileSync(path.join(root, name, "SKILL.md"), `---\nname: ${name}\ndescription: >\n  ${description}\n---\n\n# ${name}\n`);
+    };
+
+    return { home, repo, skill };
+  };
+
+  test("finds a skill by name in the usual skills directories, or by path in the repository", () => {
+    const { home, repo, skill } = sandbox();
+    skill(path.join(home, ".claude", "skills"), "react-rules", "React rules");
+    skill(path.join(repo, "tools", "lenses"), "api-style", "API style");
+
+    expect(resolveSkill("react-rules", home, repo)).toBe(path.join(home, ".claude", "skills", "react-rules"));
+    expect(resolveSkill("tools/lenses/api-style", home, repo)).toBe(path.join(repo, "tools", "lenses", "api-style"));
+    expect(resolveSkill("nowhere", home, repo)).toBeNull();
+    expect(skillDescription(path.join(home, ".claude", "skills", "react-rules"))).toBe("React rules");
+  });
+
+  test("adds a lens without disturbing the others, and the repository wins on a clash", () => {
+    const { home, repo } = sandbox();
+    addLens(repoLensFile(repo), "react", { skill: "react-rules", applies_to: ["**/*.tsx"] });
+    addLens(repoLensFile(repo), "api", { skill: "tools/lenses/api-style" });
+    addLens(globalLensFile(home), "react", { skill: "my-react" });
+    addLens(globalLensFile(home), "copy", { skill: "copy-rules" });
+
+    expect(Object.keys(readLenses(repoLensFile(repo)))).toEqual(["react", "api"]);
+    expect(catalog(home, repo)).toEqual({
+      react: { skill: "react-rules", applies_to: ["**/*.tsx"] },
+      copy: { skill: "copy-rules" },
+      api: { skill: "tools/lenses/api-style" },
+    });
+  });
+
+  test.each([
+    ["a built-in lens name", "security"],
+    ["an invalid name", "React Rules"],
+  ])("refuses %s", (_, name) => {
+    const { repo } = sandbox();
+    expect(() => addLens(repoLensFile(repo), name, { skill: "x" })).toThrow();
+  });
+
+  test("rejects a lens file with keys swarm would not understand", () => {
+    const { repo } = sandbox();
+    mkdirSync(path.join(repo, ".shepherd"), { recursive: true });
+    writeFileSync(repoLensFile(repo), "lenses:\n  react:\n    skill: x\n    run_on_every_file: true\n");
+    expect(() => readLenses(repoLensFile(repo))).toThrow();
   });
 });

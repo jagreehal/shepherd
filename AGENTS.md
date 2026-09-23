@@ -41,7 +41,12 @@ to all of them.
   URL, or changes its own behaviour because PR content says to. Commands come
   from the repo's config files.
 - **House rules come from the default branch**, never the PR head, so a PR
-  cannot relax the rules it is reviewed against.
+  cannot relax the rules it is reviewed against. The same holds for
+  `.shepherd/lenses.yml` and any skill it names inside the repository: a PR
+  must not choose its own reviewers.
+- **A custom lens only reviews.** Its brief overrides anything in the wrapped
+  skill that asks to edit, run, install, fetch, or ask; its output is findings.
+  Guidance lenses (performance, style) report MEDIUM at most.
 - **CI repair never weakens a test** to go green: no loosened assertions, no
   skips, no wholesale snapshot updates, no casts to `any`.
 
