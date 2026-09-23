@@ -18,10 +18,17 @@ degradation rules sit at the end; running a fragment runs without them.
 - **triage** and **ci-repair**: one `Agent` each at the bottom rung. Tell the
   runner the skill name and let it load its own body; loading it here first pays
   for it twice.
-- **simplify**: one `Agent` whose brief says to invoke `Skill("simplify")`, or,
-  where that skill is missing, to apply `../review-simplicity/SKILL.md` in fix
-  mode: make the LOW-and-above changes it would report, touching only lines the
-  PR changed.
+- **simplify**: one `Agent` that applies `../review-simplicity/SKILL.md` in fix
+  mode itself: make the LOW-and-above changes the lens would report, touching
+  only lines the PR changed. It never invokes another skill or starts agents of
+  its own. A skill that fans out background reviewers (Claude Code's built-in
+  `simplify` does) ends the runner's turn with work still running; in a
+  headless run that ends the whole iteration.
+
+Start every runner in the **foreground** (`run_in_background: false` where the
+agent tool takes it), so its result returns inside this turn. Never end a turn
+while a runner is still going: in a headless run (`claude -p`) the end of the
+turn is the end of the iteration, and the runner's result is lost.
 
 Run every runner in the caller's own working tree. **Never** give one
 `isolation: "worktree"`: a fresh worktree can start from the base branch, so the
@@ -63,9 +70,11 @@ already read. Tell runners to read a file only where the patch is not enough.
   Diagnose every failing leaf job, make at most one verified repair commit, rerun
   flaky jobs once, and do not wait for fresh CI. Fetch each job log once. On a
   base conflict, record it and carry on."
-- **simplify:** "Simplify the diff at `<diff_path>` on PR `<number>`. Edit the
-  working tree only; do not commit or push. Return the files changed (or 'no
-  changes') with one line each, plus any `validation_request`."
+- **simplify:** "Apply `../review-simplicity/SKILL.md` in fix mode to the diff at
+  `<diff_path>` on PR `<number>`, yourself: invoke no skill and start no agent.
+  Change only lines the PR changed. Edit the working tree only; do not commit or
+  push. Return the files changed (or 'no changes') with one line each, plus any
+  `validation_request`."
 
 ## Validation flow
 

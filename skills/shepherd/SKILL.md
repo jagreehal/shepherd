@@ -14,8 +14,8 @@ Owns the loop; the sub-skills own the work:
 
 - **`swarm`** reviews and posts comments.
 - **`triage`** ends every review thread fixed, resolved, or deferred.
-- **`simplify`** tidies the diff (Claude Code's built-in skill, or the
-  `review-simplicity` lens in fix mode where that is missing).
+- **simplify** tidies the diff: one runner applying the `review-simplicity`
+  lens in fix mode.
 - **`ci-repair`** keeps the branch current and repairs CI.
 - **`stamp`**, if the repo runs it, gives the approval verdict.
 

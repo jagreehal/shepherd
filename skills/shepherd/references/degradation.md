@@ -8,7 +8,7 @@ run missing two of its runners looks identical to a clean one otherwise.
   `H1`. Report CI as unknown.
 - **swarm missing:** skip review in every round. Triage still handles existing
   bot threads, and simplify still runs.
-- **simplify and review-simplicity both missing:** skip Step 2c every round.
+- **review-simplicity missing:** skip Step 2c every round.
 - **A lens missing:** swarm's router covers the concern; see swarm's degradation.
 - **Agents cannot be started:** run triage and ci-repair inline from their
   skill bodies. They then cost session-model rates, so on a budget prefer

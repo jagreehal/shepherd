@@ -168,7 +168,8 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 ## Step 4: Delegation pass
 
 Skip when the plan is empty. Otherwise dispatch every delegation **in one
-message** so they run in parallel, each on the rung the plan named. Each agent
+message**, in the foreground, so they run in parallel and all return inside
+this turn, each on the rung the plan named. Each agent
 gets its lens skill body, the diff path, its scope, and `CHECK_FINDINGS`, and
 is told it is the only reviewer for that scope. It never learns about the
 router or the other lenses, so it cannot anchor on them.
