@@ -18,7 +18,10 @@ to all of them.
 - **Triage never posts.** Its only GitHub mutations are commits and resolving
   all-automated threads. The report is the audit trail.
 - **A thread with any human in it is never fixed, resolved, or replied to** by a
-  skill. If a participant cannot be classified, they count as human.
+  skill. If a participant cannot be classified, they count as human. The one
+  exception is the operator's own instruction: a thread whose only person is
+  the logged-in user, asking for a concrete change, is acted on. Their
+  questions still wait for them.
 - **Gates are never worked around, and never stop a fix.** No splitting,
   moving, or renaming files, no `AGENT_APPROVALS.md`, no placeholder for a
   flagged credential: nothing whose aim is to make a gate pass. Fixing the

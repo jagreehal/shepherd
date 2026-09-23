@@ -115,6 +115,15 @@ If any comment in the thread is not automated, the whole thread is **human**:
 defer it untouched. A person who replied to a bot has joined the conversation.
 If you cannot tell, treat it as human.
 
+One exception: the **operator's instruction**. When the only person in the
+thread is the logged-in user (`gh api user --jq .login`, the person running
+shepherd) and their latest comment asks for a concrete change ("remove the key
+and the `?id=` parameter", "rename this to formatGBP"), it is an instruction
+from the person you work for. Act on it like an actionable thread, contract
+changes included, and resolve it with the commit in the report. A question
+("could we...?", "should this...?") is not an instruction: defer it. Anyone
+else in the thread makes it human again.
+
 **What it asks for.** For all-automated threads:
 
 - **Actionable**, at any severity, LOW included, when all of these hold:
@@ -196,6 +205,8 @@ unsure and the comment predates the last push, skip rather than act.
   `just-do-it` and `do-and-say`: apply, check, commit, push, resolve, count as
   **promoted**, and put the reasoning and the alternative prominently in the
   report. `stop-and-ask`: add to `deferred_threads`, leave open.
+- **Operator's instruction:** apply it, check it, commit, push, resolve.
+  Record "done as asked in <sha>".
 - **Human:** defer. Standalone, you may offer a trivial, obviously correct fix
   through `AskUserQuestion`; even then push it, leave the thread open, and
   report "fixed in <sha>, thread left open for your reply".
