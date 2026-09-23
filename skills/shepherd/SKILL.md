@@ -106,7 +106,9 @@ own PR head. On a PR by someone other than the logged-in user, confirm with
 `AskUserQuestion` before the first push to their branch.
 
 **Write the diff once** for the round and pass the path:
-`gh pr diff <number> > "$TMPDIR/shepherd-<short_sha>.patch"`.
+`gh pr diff <number> > "$(git rev-parse --git-common-dir)/shepherd/<short_sha>.patch"` (create the directory
+first). The repo's git directory is the same path for every process and never
+committed; `$TMPDIR` can differ inside and outside a sandbox.
 
 ## Step 2: Quality loop
 
@@ -123,7 +125,10 @@ is set. Set `swarm_marker_sha = HEAD` after.
 Skipping it despite qualifying changes needs an `AskUserQuestion` confirm, in
 round 1 only.
 
-**b. triage.** One runner at the bottom rung (see dispatch). Relay its
+**b. triage.** When the unresolved-thread query (triage's Step 3) returns
+nothing, stamp raised no issues on the head, and no validation request is
+pending, record triage as a no-op for the round without dispatching. An empty
+input is not a skipped step. Otherwise, one runner at the bottom rung (see dispatch). Relay its
 narration with the round number. Record `new_head_sha`, `deferred_threads`, the
 counts, `stamp`, and any `validation_requests`, which go through the validation
 flow in `references/dispatch.md` before the round can be dry.
@@ -161,7 +166,8 @@ monitor: nothing reports back, and the iteration strands.
 - Dry, and `r >= 2` or swarm ran this round: stop; this round's final HEAD is `H1`.
 - `r == 4`: stop, narrate the cap, use this round's final HEAD as `H1`, and
   report `stopped=round-cap`. Run every runner in every round the loop reaches;
-  skipping one is a degradation and goes in the summary.
+  skipping one is a degradation and goes in the summary. A no-op on empty input
+(see b) is not a skip.
 - Otherwise run the next round from this round's final HEAD.
 
 ## Step 3: ci-repair

@@ -67,10 +67,13 @@ Take owner/repo from `url`. With no PR, diff against `origin/main` (or
 `origin/master`) after `git fetch`, skip posting in Step 7, and print the report.
 
 Write the diff once and pass the path to every agent. Take it from GitHub, not
-a local base ref, which can be weeks stale:
+a local base ref, which can be weeks stale. Keep scratch files under the repo's
+git directory: git never commits them, and every process sees the same path,
+where `$TMPDIR` can differ inside and outside a sandbox.
 
 ```bash
-gh pr diff <number> > "$TMPDIR/swarm-<short_sha>.patch"
+mkdir -p "$(git rev-parse --git-common-dir)/shepherd"
+gh pr diff <number> > "$(git rev-parse --git-common-dir)/shepherd/swarm-<short_sha>.patch"
 gh pr diff <number> --name-only
 ```
 
@@ -101,7 +104,7 @@ exactly the PR head, run the checks in a detached worktree:
 
 ```bash
 git fetch -q origin "pull/<number>/head"
-git worktree add --detach "$TMPDIR/swarm-<short_sha>" <head_sha>
+git worktree add --detach "$(git rev-parse --git-common-dir)/shepherd/swarm-<short_sha>" <head_sha>
 ```
 
 Reuse the main checkout's dependency directory by symlink (`node_modules`,
@@ -200,6 +203,9 @@ the author: a fresh instance at the same rung is independent enough.
   documented behaviour, a library version) stays at its severity with the open
   question stated, rather than dropping.
 - Batch all findings for one verifier into one agent.
+- With one or two findings to check, the orchestrating session may verify them
+  itself instead, since it did not write them. The same rules hold: quote the
+  code, and name the verifier as `orchestrator` in the summary.
 
 MEDIUM and below post unverified, but a finding with no file and line and no
 concrete fix drops to NIT.
