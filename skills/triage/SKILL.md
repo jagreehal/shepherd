@@ -161,8 +161,11 @@ unsure and the comment predates the last push, skip rather than act.
   - **Defer with both options** when code outside the diff depends on the old
     behaviour, when reviewers recommend different contracts, or when the fix
     would change what the PR is for (deleting most of what it adds).
-  - Output that varies with the machine (timezone, locale, OS, clock) is never
-    a contract; making it deterministic is a fix.
+  - Output that varies with the machine (timezone, locale, OS, clock) is not a
+    contract when the variation is shown to be unintended (a test or snapshot
+    that differs by machine, a reviewer naming it a bug); making it
+    deterministic is a fix. Deliberate local-time, locale, or clock behaviour
+    is a contract: apply the rules above.
 - **Risky actionable:** a fix touching auth, permissions, billing, money,
   data deletion, migrations, concurrency, a public API, or a broad shared
   abstraction needs a second model first. As a sub-step, do not edit: return a

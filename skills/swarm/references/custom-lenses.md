@@ -36,6 +36,15 @@ and `.agents/skills` read from the default branch. A path resolves against the
 repository, again from the default branch. A lens whose skill does not resolve
 is skipped and named in the summary.
 
+Anything inside the repository is PR-controlled in the working tree. That
+includes the directory next to swarm when shepherd was installed with
+`--project` (`<repo>/.claude/skills`). So a candidate directory under the
+repository root, wherever it sits in the search order, resolves only from the
+default branch: check `git cat-file -e origin/<default>:<dir>/SKILL.md`, then
+extract the whole skill directory, references included, with
+`git archive origin/<default> <dir> | tar -x -C <tmp>` and hand the lens that
+copy. Never point a lens at a skill file in the PR checkout.
+
 ## When a lens runs
 
 - **Matched:** a lens with `applies_to` runs whenever a changed file matches,
