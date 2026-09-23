@@ -188,7 +188,10 @@ monitor: nothing reports back, and the iteration strands.
 
 ## Step 3: ci-repair
 
-One runner at the second rung with `head_sha_in = H1`. Relay its narration.
+When no check is failing and the branch is 0 commits behind its base (both
+cheap to read: `gh pr checks`, `git rev-list --count HEAD..origin/<base>`),
+record ci-repair as a no-op without dispatching; `H2 = H1`. Otherwise, one
+runner at the second rung with `head_sha_in = H1`. Relay its narration.
 Record `new_head_sha` as `H2`. Check the result's shape: `ci` must carry
 `pass/pending/fail/failing` and `base_update.status` must be `updated`,
 `current`, or `conflict`. A malformed result means the runner skipped the real
