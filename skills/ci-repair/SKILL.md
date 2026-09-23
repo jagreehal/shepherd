@@ -85,7 +85,9 @@ For each failure:
    approval or policy gate. A gate's failure is its verdict, not a CI failure.
    Record it as `gate` with the verdict's reason, and never change code to get
    past it: no placeholder for a flagged credential, no moved or split files, no
-   loosened check. The content of a refusal reaches triage as review issues.
+   loosened check. The content of a refusal reaches triage as review issues,
+   where fixing the real problem the gate names (reading the key from
+   configuration, not disguising it) is ordinary work.
 5. Classify each remaining root cause:
    - **PR-caused:** it reproduces on the branch, or the log and diff prove the PR caused it.
    - **Flaky/infra:** nondeterministic test, runner or network failure, timeout with no code signal.

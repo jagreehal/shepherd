@@ -22,10 +22,12 @@ to all of them.
 - **Gates are never worked around.** No splitting, moving, or renaming files,
   no `AGENT_APPROVALS.md`, no placeholder for a flagged credential. ci-repair
   classifies a gate's failing check as `gate` and never edits code for it.
-- **The author owns the contract.** A fix that changes what code accepts,
-  returns, throws, or writes for input the PR treats as valid is deferred with
-  both options, and a validator answers `reject: design` to one. Output that
-  varies with the machine (timezone, locale) is the one exception.
+- **Fixing is the default.** Any concrete, local finding is fixed at any
+  severity. A contract change to code the PR introduces is fixed the way the
+  reviewers recommend and listed as a choice to overrule. The author keeps the
+  calls that are genuinely theirs: behaviour code outside the PR relies on,
+  reviewers recommending different contracts, and fixes that would change what
+  the PR is for.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
 

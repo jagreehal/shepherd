@@ -116,16 +116,21 @@ If you cannot tell, treat it as human.
 
 **What it asks for.** For all-automated threads:
 
-- **Actionable**: all of these hold:
-  - severity HIGH or CRITICAL, or the finding is convergent across lenses;
+- **Actionable**, at any severity, LOW included, when all of these hold:
   - the fix is concrete: a rename, a missing check, a forgotten `await`, an
-    off-by-one, a wrong constant;
-  - it is local: one file, or a few tightly related edits;
-  - it needs no new design decision, dependency, or scope change.
+    off-by-one, a wrong constant, a missing test, a clearer message;
+  - it is local: the files the PR touches, or a few tightly related edits;
+  - it adds no dependency and does not change what the PR is for.
+
+  Fixing is the default. A finding with a concrete fix gets fixed, not closed
+  as a nit; a reviewer that took the trouble to write the fix was usually
+  right, and a PR that arrives with its review comments fixed is what the author
+  asked shepherd for.
 - **Rule-citing**: the thread quotes a repo rule (AGENTS.md, a lint rule, a
   documented convention). Treat it as actionable when the fix is a
   deterministic one-file change; otherwise defer. Never resolve it as a nit.
-- **Nit**: style only, speculative, a duplicate, or already addressed on this head.
+- **Nit**: pure preference with no fix you would defend, speculative, a
+  duplicate, already addressed on this head, or wrong (say why).
 - **Ambiguous**: architecture, broad scope, or a design choice.
 
 **Stale bot comments.** Inline threads are already filtered by `isOutdated`.
@@ -146,13 +151,18 @@ unsure and the comment predates the last push, skip rather than act.
   never invent domain data (reserved words, allowed values, size limits): cite
   the documentation it comes from, or defer.
 - **Contract-changing:** a fix that changes what the code accepts, returns,
-  throws, or writes for input the PR treats as valid (rejecting a value the
-  docs allow, changing a rounding rule, a new required field) is a design
-  decision. Defer it with both options, even when a reviewer bot calls it a bug.
-  One exception: output that varies with the machine (timezone, locale, OS,
-  clock) is not a contract anyone can rely on. Making it deterministic is a fix;
-  pick the reading the docs name, and list the choice in the report so the
-  author can overrule it.
+  throws, or writes for input that was valid before.
+  - **Code this PR introduces** (nothing outside the diff calls it): the PR is
+    still designing the contract, so apply the fix the reviewers recommend,
+    update the PR's own tests to the new contract, and list it as a choice the
+    author can overrule. A parameterised query instead of string-built SQL, a
+    real password hash instead of a toy one, a key read from configuration
+    instead of hard-coded: fix them.
+  - **Defer with both options** when code outside the diff depends on the old
+    behaviour, when reviewers recommend different contracts, or when the fix
+    would change what the PR is for (deleting most of what it adds).
+  - Output that varies with the machine (timezone, locale, OS, clock) is never
+    a contract; making it deterministic is a fix.
 - **Risky actionable:** a fix touching auth, permissions, billing, money,
   data deletion, migrations, concurrency, a public API, or a broad shared
   abstraction needs a second model first. As a sub-step, do not edit: return a

@@ -52,9 +52,10 @@ Only in these cases, however confident you feel:
 - the change would break one of the four rules of simple design, or
 - it is genuinely unclear which outcome is better, or the requirement is
   ambiguous in a way that changes the design, or
-- it changes behaviour users, callers, or data depend on and nothing in the task
-  asked for that: what a function accepts, returns, throws, or writes for
-  input that was valid before.
+- it changes behaviour that code or data outside this change already depends
+  on, and nothing in the task asked for that: what a function accepts,
+  returns, throws, or writes for input that was valid before. Behaviour the
+  current change introduces is still being designed; improve it and say so.
 
 Asking too much everywhere else is the mistake.
 
