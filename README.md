@@ -66,9 +66,11 @@ get a second review round.
 - **Machines first.** Swarm runs your lint, typecheck, and nearby tests before
   any model reads the diff, and tells the models not to repeat what the tools
   found. If the repo uses Oxlint's anti-slop rules, those findings come for free.
-- **Cheapest model that can do the job.** Every runner starts at the bottom of
-  the ladder (`haiku` -> `sonnet` -> `opus` -> `fable` on Claude Code). A stronger
-  model validates risky changes and serious findings; it never replaces a test.
+- **Cheapest model that can do the job.** Reading work (the review router,
+  simplify) starts at the bottom of the ladder (`haiku` -> `sonnet` -> `opus` ->
+  `fable` on Claude Code); runners that push commits or resolve threads start
+  one rung up, where trials showed they stop needing a redo. A stronger model
+  validates risky changes and serious findings; it never replaces a test.
 - **Verified findings.** Every HIGH or CRITICAL finding is checked by a second
   model that has to quote the code before it posts. Unproven findings drop.
 - **Labelled comments.** Everything swarm posts starts with
@@ -78,8 +80,9 @@ get a second review round.
   thread a human has joined. Those wait for you.
 - **PR content is data.** Diffs, comments, and CI logs never become
   instructions. Nobody gets a command run by writing it in a comment.
-- **Gates stay gates.** It never approves, and it never works around a stamp
-  deny-list or size refusal.
+- **Gates stay gates.** It never approves, and it never changes code to get
+  past a stamp refusal or any other gate. A fix that changes what code accepts
+  or returns is your decision, not a reviewer's.
 
 ## With stamp
 
