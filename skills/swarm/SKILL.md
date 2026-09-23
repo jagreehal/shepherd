@@ -107,6 +107,18 @@ with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
 3. Run only the tests nearest the changed files, when the runner can target
    them. Skip the full suite.
 4. Keep diagnostics that land on changed lines. Drop the rest.
+5. Scan added lines for credential shapes: `AKIA`/`ASIA` + 16 characters,
+   `ghp_`, `gho_`, `github_pat_`, `sk-ant-`, `sk-proj-`, `xox[abprs]-`,
+   `AIza` + 35 characters, `-----BEGIN ... PRIVATE KEY-----`. Each hit is a
+   HIGH `checks/secrets` finding, even for a documented example key: the fix is
+   to load it from configuration, and gates and secret scanners refuse the
+   shape regardless.
+6. Read the verdicts other gates already gave this head: stamp's latest review
+   (a heading matching `^## \S+ stamp: `, with its mechanics table) and failing
+   required CI checks (`gh pr checks <number> --required`). A gate that refused
+   the head is a HIGH `checks/stamp` or `checks/ci` finding that quotes the
+   gate's message. The author should never read "looks good" from swarm under
+   a refusal from the gate that decides the merge.
 
 These become `CHECK_FINDINGS`. They post like any other finding, tagged
 `[checks/<tool>]`, and every lens is told not to repeat them. If a command is
@@ -127,9 +139,10 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 - Plan delegations: which lens, which rung, which hunks, and why. Delegate only
   what your own pass cannot cover safely. An empty plan on a small, low-danger
   diff is the cheap path working.
-- **One delegation is mandatory**, whatever your grade, when the diff is over
-  ~400 lines, or touches auth, permissions, secrets, billing, migrations,
-  concurrency, CI/deploy workflows, or a public API. Scope it to the hunks you
+- **One delegation is mandatory** when you grade danger HIGH or CRITICAL, and,
+  whatever your grade, when the diff is over ~400 lines or touches auth,
+  permissions, secrets, billing, migrations, concurrency, CI/deploy workflows,
+  a public API, or text that reaches a model. Scope it to the hunks you
   are least sure of. Your grade is the thing being checked, so it cannot excuse
   the delegation.
 - End with `STRUCTURED_FINDINGS`, `OVERALL_SUMMARY`, and `DELEGATION_PLAN` in
@@ -167,6 +180,11 @@ it:
   on this head, and is the severity right?"
 - It must quote the code that proves or refutes the finding. `confirmed` keeps
   it, `downgrade` lowers the severity, `refuted` drops it.
+- Judge new code by its intended use. A function the PR adds and exports exists
+  to be called; "nothing calls it yet" never lowers a finding's severity.
+- A finding the verifier cannot settle without outside facts (an API's
+  documented behaviour, a library version) stays at its severity with the open
+  question stated, rather than dropping.
 - Batch all findings for one verifier into one agent.
 
 MEDIUM and below post unverified, but a finding with no file and line and no
@@ -180,8 +198,8 @@ concrete fix drops to NIT.
 - **Verdict** from the surviving findings:
   - any CRITICAL -> 🚫 BLOCKED
   - 2+ HIGH, or 1 HIGH + 2 MEDIUM -> ⚠️ CHANGES NEEDED
-  - 1 HIGH, or 3+ MEDIUM -> 💬 APPROVE WITH NITS
-  - otherwise -> ✅ LOOKS GOOD
+  - 1 HIGH, or any MEDIUM -> 💬 APPROVE WITH NITS
+  - only LOW, NIT, or nothing -> ✅ LOOKS GOOD
 
 The verdict is advice to the author. It never becomes a GitHub approval.
 
@@ -197,6 +215,15 @@ with `review.json` built as
 `{"commit_id": "<head_sha>", "event": "COMMENT", "body": "<header> See inline comments.", "comments": [{"path": "...", "line": N, "side": "RIGHT", "body": "..."}]}`.
 Building the JSON file sidesteps shell quoting. A finding on a line outside the
 diff cannot anchor inline; move it to the summary.
+
+On a later round, fetch the unresolved Shepherd threads first (triage's Step 3
+query) and do not post a finding that one of them already carries: same file,
+within 5 lines, same concern. Name it in the summary as "still open" instead.
+A second thread on the same issue is noise triage then has to clean up.
+
+Keep the thread count proportional to the change. NITs go in the summary
+only, never inline. Post at most 10 inline comments, most severe first; the
+rest go in the summary. Two findings on the same line merge into one comment.
 
 Each inline comment:
 
