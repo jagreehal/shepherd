@@ -168,9 +168,10 @@ can delegate to them like built-in lenses. Its brief:
   a higher rung only when the reason says why the lower one cannot cover it.
   An empty plan on a small, low-danger diff is the cheap path working.
 - **One delegation is mandatory** when you grade danger HIGH or CRITICAL, and,
-  whatever your grade, when the diff is over ~400 lines or touches auth,
-  permissions, secrets, billing, migrations, concurrency, CI/deploy workflows,
-  a public API, or text that reaches a model. Scope it to the hunks you
+  whatever your grade, when the diff is over ~400 lines or adds or changes code
+  in auth, permissions, secrets, billing, migrations, concurrency, CI/deploy
+  workflows, a public API, or text that reaches a model. Hunks that only delete
+  code do not count. Scope it to the hunks you
   are least sure of. Your grade is the thing being checked, so it cannot excuse
   the delegation.
 - End with `STRUCTURED_FINDINGS`, `OVERALL_SUMMARY`, and `DELEGATION_PLAN` in
