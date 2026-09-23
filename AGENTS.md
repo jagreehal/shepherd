@@ -60,6 +60,12 @@ to all of them.
   committed without pushing, invented domain rules, and edited code to pass a
   gate. The loop checks every runner's claims against GitHub before trusting
   them, and never acts on a thread itself.
+- Every commit shepherd makes carries a `Shepherd: <skill>` trailer. Commits
+  post under the author's account, and a run once read shepherd's own revert
+  as the author's decision; only commits without the trailer, and threads the
+  author wrote, say what the author decided.
+- Reviewers (the router, every lens) start no agents and write no files; the
+  loop checks the tree is clean after them.
 - GitHub is the record, not the session: swarm dedupes against open threads
   and numbers rounds from its summary comment on every run.
 - Runners work in the caller's own tree. Never `isolation: "worktree"`.

@@ -69,6 +69,10 @@ describe("skill pack", () => {
     expect(triage).toContain('contains("🤖 Automated comment by")');
   });
 
+  test.each(["triage", "ci-repair", "shepherd"])("%s marks its commits with the Shepherd trailer, so a later run never mistakes them for the author's", (name) => {
+    expect(readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8")).toMatch(/Shepherd: (triage|ci-repair|simplify)/);
+  });
+
   test("triage and shepherd read stamp's verdict heading the way stamp writes it", () => {
     const heading = /\^## \\\\S\+ stamp: /;
     expect(readFileSync(path.join(SKILLS, "triage", "SKILL.md"), "utf8")).toMatch(heading);

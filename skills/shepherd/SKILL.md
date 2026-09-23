@@ -59,6 +59,15 @@ This skill owns all of it; runners receive what they need and return updates.
 - `last_updated_at`: the PR's `updatedAt` at the end of the last iteration.
 - `bot_reviews_pending`: set when this skill marks a draft ready.
 
+## Shepherd's commits are not the author's decisions
+
+Every commit shepherd or a runner makes carries a `Shepherd: <skill>` trailer:
+review fixes, simplify passes, reverts, base merges it starts. They post under
+the author's account, so without the trailer a later run reads shepherd's own
+choice (a revert, a deferral) as the author's intent. When reasoning about what
+the author decided, read only commits without the trailer, and threads the
+author wrote. A thread an earlier run deferred is still open work for this run.
+
 ## HEAD threading
 
 Every round can move HEAD, and stamp keys off the final one:
@@ -159,7 +168,8 @@ Its brief carries the first head of this iteration as `review_base_sha` and
 every deferred thread's `file:line`, so it cannot undo a review fix or decide a
 deferred question.
 Confirm its claimed changes with `git status --porcelain` in your own tree;
-then `git add`, commit `refactor: simplify pass`, push. Set `simplify_marker_sha = HEAD`.
+then `git add`, commit `refactor: simplify pass` with the trailer
+`Shepherd: simplify`, push. Set `simplify_marker_sha = HEAD`.
 
 **d. Keep the PR description true.** Review fixes change behaviour the
 description may not mention, and stamp refuses undisclosed behaviour in risky

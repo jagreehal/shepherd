@@ -109,6 +109,7 @@ One repair cycle across all PR-caused root causes:
 3. Run the targeted checks for every fix. If any fails, keep diagnosing; do not
    push an unverified repair.
 4. Commit once (`fix: resolve CI failures`, or something more specific), with
+   the trailer `Shepherd: ci-repair` and
    the repo's required trailers, and push.
 
 For each flaky/infra group, check the run's attempt number. On the first

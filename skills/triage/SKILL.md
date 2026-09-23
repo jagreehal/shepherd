@@ -121,7 +121,16 @@ If you cannot tell, treat it as human.
   - the fix is concrete: a rename, a missing check, a forgotten `await`, an
     off-by-one, a wrong constant, a missing test, a clearer message;
   - it is local: the files the PR touches, or a few tightly related edits;
-  - it adds no dependency and does not change what the PR is for.
+  - it does not change what the PR is for.
+
+  A fix that adds a dependency, dev-only types included, changes the lockfile
+  and can trip a gate: treat it as risky actionable (a second model first) and
+  name the dependency in the report.
+
+  Before resolving any thread as a nit or as wrong, check whether another
+  reviewer, or an earlier fix, asks for the opposite on the same lines. Two
+  reviewers pulling in different directions is the author's call: defer both
+  views together.
 
   Fixing is the default. A finding with a concrete fix gets fixed, not closed
   as a nit; a reviewer that took the trouble to write the fix was usually
@@ -152,7 +161,8 @@ unsure and the comment predates the last push, skip rather than act.
 - **Actionable:** if `body_truncated`, refetch that one thread's full body
   first. Read the target code, make the edit, run the narrowest check that
   proves it (the test, lint, or typecheck for that file), commit
-  (`fix: <what>, from review`), push, and confirm the push landed
+  (`fix: <what>, from review`, with the trailer `Shepherd: triage`), push, and
+  confirm the push landed
   (`git status -sb` shows nothing ahead) before resolving the thread. Report
   `new_head_sha` only from a pushed commit.
 - **Only what the finding proves.** Fix exactly what the thread shows is

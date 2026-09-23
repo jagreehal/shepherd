@@ -152,6 +152,9 @@ agent at the bottom rung with the diff path, file list, commit log, PR title
 and body, `CHECK_FINDINGS`, and each custom lens's name and description, so it
 can delegate to them like built-in lenses. Its brief:
 
+- You only read. Start no agents, invoke no skills, and write no files, not
+  even scratch files: your output is findings and a plan, and the orchestrator
+  starts every agent.
 - You are the only first-pass reviewer. Review the whole diff for correctness,
   security, simplicity, maintainability, and slop. Read at least 50 lines around
   each hunk before judging it.
@@ -208,6 +211,10 @@ message and do not count toward the cap.
 
 A lens may return `REDELEGATE: <lens> | <scope> | <reason>` when another lens
 would see more. Honour it once. Cap the run at 6 delegations.
+
+After the router and every lens return, `git status --porcelain` must be as
+clean as before they ran. Delete anything a reviewer left behind and name it in
+the summary: reviewers read, and a stray file can end up in the next commit.
 
 ## Step 5: Verify before posting
 
