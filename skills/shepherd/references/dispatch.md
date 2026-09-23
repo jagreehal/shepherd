@@ -15,7 +15,8 @@ degradation rules sit at the end; running a fragment runs without them.
 
 - **swarm** runs in the main loop through `Skill("swarm")`. It starts its own
   reviewer agents, and nesting those inside a runner costs a layer of context.
-- **triage** and **ci-repair**: one `Agent` each at the bottom rung. Tell the
+- **triage** and **ci-repair**: one `Agent` each at the second rung (see
+  `models.md`). Tell the
   runner the skill name and let it load its own body; loading it here first pays
   for it twice.
 - **simplify**: one `Agent` that applies `../review-simplicity/SKILL.md` in fix

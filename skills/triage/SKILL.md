@@ -141,6 +141,10 @@ unsure and the comment predates the last push, skip rather than act.
   (`fix: <what>, from review`), push, and confirm the push landed
   (`git status -sb` shows nothing ahead) before resolving the thread. Report
   `new_head_sha` only from a pushed commit.
+- **Only what the finding proves.** Fix exactly what the thread shows is
+  wrong. Do not add validation, limits, or lists the thread did not name, and
+  never invent domain data (reserved words, allowed values, size limits): cite
+  the documentation it comes from, or defer.
 - **Contract-changing:** a fix that changes what the code accepts, returns,
   throws, or writes for input the PR treats as valid (rejecting a value the
   docs allow, changing a rounding rule, a new required field) is a design

@@ -1,7 +1,7 @@
 # Model ladder
 
-Every runner starts at the bottom rung the harness can actually dispatch. A
-stronger model validates a result; it never replaces a test.
+Every runner starts as low on the ladder as its job allows. A stronger model
+validates a result; it never replaces a test.
 
 ## Resolve the ladder before pinning anything
 
@@ -19,7 +19,13 @@ exactly and ignore this table.
 
 ## Roles
 
-- **Bottom rung:** the swarm router, triage, ci-repair, simplify.
+- **Bottom rung:** work that only reads, or that a later check catches: the
+  swarm router and simplify.
+- **Second rung:** runners that push commits or resolve threads: triage and
+  ci-repair. In trials the bottom rung fixed code and forgot to resolve the
+  thread, committed without pushing, invented domain rules, and edited code to
+  get past a gate. Each slip cost a redo one rung up, so starting there is the
+  cheaper path.
 - **One rung up:** swarm's default delegation target; the validator for a risky
   change; swarm's verifier for a bottom-rung finding.
 - **Two rungs up:** fallback when the rung below is unavailable.

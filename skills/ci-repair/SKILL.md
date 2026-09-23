@@ -74,7 +74,13 @@ For each failure:
 2. Fetch each leaf's failed-step log once: `gh run view --job <id> --log-failed`.
    Keep the error, the command, and the file location; trim setup noise.
 3. Find the real local command in the repo's config.
-4. Classify each root cause:
+4. Set aside **gate checks** before classifying: stamp's check (the job from
+   `.github/workflows/stamp.yml`, usually named `review`) and any other
+   approval or policy gate. A gate's failure is its verdict, not a CI failure.
+   Record it as `gate` with the verdict's reason, and never change code to get
+   past it: no placeholder for a flagged credential, no moved or split files, no
+   loosened check. The content of a refusal reaches triage as review issues.
+5. Classify each remaining root cause:
    - **PR-caused:** it reproduces on the branch, or the log and diff prove the PR caused it.
    - **Flaky/infra:** nondeterministic test, runner or network failure, timeout with no code signal.
    - **Unrelated:** fails on the base branch too, or lies outside the PR's behaviour.
@@ -130,7 +136,7 @@ As a sub-step, end with exactly this and nothing after it:
     "commit_sha": null,
     "fixed": [{"root_cause": "", "checks": [""], "validation": [""]}],
     "rerun": [{"name": "", "job_id": "", "status": "queued|already-retried"}],
-    "unresolved": [{"name": "", "classification": "unrelated|needs-decision|unresolved", "reason": ""}]
+    "unresolved": [{"name": "", "classification": "gate|unrelated|needs-decision|unresolved", "reason": ""}]
   },
   "narration": ["[ci] ..."]
 }

@@ -128,7 +128,7 @@ round 1 only.
 **b. triage.** When the unresolved-thread query (triage's Step 3) returns
 nothing, stamp raised no issues on the head, and no validation request is
 pending, record triage as a no-op for the round without dispatching. An empty
-input is not a skipped step. Otherwise, one runner at the bottom rung (see dispatch). Relay its
+input is not a skipped step. Otherwise, one runner at the second rung (see dispatch). Relay its
 narration with the round number. Record `new_head_sha`, `deferred_threads`, the
 counts, `stamp`, and any `validation_requests`, which go through the validation
 flow in `references/dispatch.md` before the round can be dry.
@@ -181,7 +181,7 @@ monitor: nothing reports back, and the iteration strands.
 
 ## Step 3: ci-repair
 
-One runner at the bottom rung with `head_sha_in = H1`. Relay its narration.
+One runner at the second rung with `head_sha_in = H1`. Relay its narration.
 Record `new_head_sha` as `H2`. Check the result's shape: `ci` must carry
 `pass/pending/fail/failing` and `base_update.status` must be `updated`,
 `current`, or `conflict`. A malformed result means the runner skipped the real

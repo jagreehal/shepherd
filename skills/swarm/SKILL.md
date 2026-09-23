@@ -176,8 +176,11 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 
 ## Step 4: Delegation pass
 
-The orchestrating session runs the plan as the router wrote it. It never drops
-a planned delegation and never re-grades a finding itself; only a verifier
+The orchestrating session runs the plan as the router wrote it, with one
+addition: when the plan lacks a delegation Step 3 makes mandatory (a HIGH or
+CRITICAL grade, a risky area, a large diff), add it, one rung above the router,
+scoped to the hunks behind that grade. It never drops a planned delegation and
+never re-grades a finding itself; only a verifier
 changes a severity, with quoted code (Step 5). A plan that looks wasteful is
 still run, and the waste goes in the summary as a note for the router brief.
 
