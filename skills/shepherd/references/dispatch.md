@@ -80,7 +80,8 @@ already read. Tell runners to read a file only where the patch is not enough.
 
 A runner that meets a risky change returns a `validation_request` (file,
 proposed change, evidence, risk) instead of making it. Start one new agent one
-rung up with only that request and two questions, in order:
+rung up with only that request and these two questions, copied into the brief
+word for word, in order:
 
 1. Does the change alter what the code accepts, returns, throws, or writes for
    an input that the PR's description, docs, or tests treat as valid? If so,

@@ -176,6 +176,11 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 
 ## Step 4: Delegation pass
 
+The orchestrating session runs the plan as the router wrote it. It never drops
+a planned delegation and never re-grades a finding itself; only a verifier
+changes a severity, with quoted code (Step 5). A plan that looks wasteful is
+still run, and the waste goes in the summary as a note for the router brief.
+
 Skip when the plan is empty. Otherwise dispatch every delegation **in one
 message**, in the foreground, so they run in parallel and all return inside
 this turn, each on the rung the plan named. Each agent
@@ -240,10 +245,12 @@ with `review.json` built as
 Building the JSON file sidesteps shell quoting. A finding on a line outside the
 diff cannot anchor inline; move it to the summary.
 
-On a later round, fetch the unresolved Shepherd threads first (triage's Step 3
-query) and do not post a finding that one of them already carries: same file,
-within 5 lines, same concern. Name it in the summary as "still open" instead. When this round
-grades it differently, edit that thread's first comment in place
+Every run, including the first of a new session, fetches the unresolved
+Shepherd threads first (triage's Step 3 query) and does not post a finding that
+one of them already carries: same file, within 5 lines, same concern. Name it in
+the summary as "still open" instead. An earlier session may have reviewed this
+PR; the threads on GitHub are the record, not this session's memory. When this
+round grades it differently, edit that thread's first comment in place
 (`gh api repos/<owner>/<repo>/pulls/comments/<id> -X PATCH -F body=@comment.md`)
 so the thread shows the current severity; keep the header.
 A second thread on the same issue is noise triage then has to clean up.
@@ -278,7 +285,9 @@ gh pr comment <number> --body-file summary.md                                   
 ```
 
 Earlier rounds fold into a `<details>` block, one line each, so the comment
-always leads with the latest verdict.
+always leads with the latest verdict. Take the round number from the existing
+comment (its latest round plus one), never from this session; a comment you
+found is always updated with its history folded in, never overwritten.
 
 ## Step 8: Report
 

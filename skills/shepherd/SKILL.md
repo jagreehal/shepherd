@@ -133,6 +133,15 @@ narration with the round number. Record `new_head_sha`, `deferred_threads`, the
 counts, `stamp`, and any `validation_requests`, which go through the validation
 flow in `references/dispatch.md` before the round can be dry.
 
+Check triage's result against GitHub before trusting it: re-run the thread
+query, and any thread it reported actioned or resolved that is still open goes
+back to a triage runner one rung up, scoped to those threads. Cheap runners fix
+code and forget to resolve, or commit and forget to push.
+
+Shepherd never acts on a thread itself. A thread a runner deferred stays
+deferred for the user, even when the loop disagrees; say so in the summary
+instead of applying the change.
+
 After every runner that reports a new head, check the remote agrees:
 `gh pr view <number> --json headRefOid -q .headRefOid` must equal
 `new_head_sha`. A commit the runner made but did not push is pushed now, and the
