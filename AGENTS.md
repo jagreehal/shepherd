@@ -19,9 +19,12 @@ to all of them.
   all-automated threads. The report is the audit trail.
 - **A thread with any human in it is never fixed, resolved, or replied to** by a
   skill. If a participant cannot be classified, they count as human.
-- **Gates are never worked around.** No splitting, moving, or renaming files,
-  no `AGENT_APPROVALS.md`, no placeholder for a flagged credential. ci-repair
-  classifies a gate's failing check as `gate` and never edits code for it.
+- **Gates are never worked around, and never stop a fix.** No splitting,
+  moving, or renaming files, no `AGENT_APPROVALS.md`, no placeholder for a
+  flagged credential: nothing whose aim is to make a gate pass. Fixing the
+  problem a gate names is ordinary work, and a deny-listed area still gets the
+  human review stamp asks for. ci-repair classifies a gate's failing check as
+  `gate` and never edits code for it.
 - **Fixing is the default.** Any concrete, local finding is fixed at any
   severity. A contract change to code the PR introduces is fixed the way the
   reviewers recommend and listed as a choice to overrule. The author keeps the
