@@ -181,8 +181,25 @@ call also refreshes `updatedAt` for the state line:
 
 ```bash
 gh pr view <number> --json reviewDecision,latestReviews,updatedAt \
-  --jq '{reviewDecision, updatedAt, stamp: ([.latestReviews[] | select(.body | test("^## \\S+ stamp: ")) | {state, body: .body[:400]}][0])}'
+  --jq '{reviewDecision, updatedAt, stamp: ([.latestReviews[] | select(.body | test("^## \\S+ stamp: "))
+    | {state, head: (.body | capture("stamp-reviewed:head=(?<h>[0-9a-f]+)").h // null), body: .body[:400]}][0])}'
 ```
+
+**Is the verdict for `H2`?** stamp marks each review with the head it covers.
+When the latest verdict's `head` is not `H2`, look for a stamp run on `H2`:
+
+```bash
+gh run list --workflow stamp.yml --commit <H2> --json status,conclusion --jq '[.[] | {status, conclusion}]'
+```
+
+- A run is queued or in progress: report `pending`.
+- No run, or only cancelled or skipped ones: nothing will review `H2` on its
+  own. Ask once per head, when `stamp_applied_for_sha != H2`: in label mode
+  remove and re-add the label; in all-PRs mode comment `/stamp` followed by the
+  header on its own lines (the workflow only reads the first line). Set
+  `stamp_applied_for_sha = H2` and report `pending`.
+
+Never report an older head's verdict as current.
 
 Report approved, refused, escalate, or pending, with the one-line reason.
 stamp keeps its approval across a base merge that leaves the PR's diff
