@@ -80,8 +80,17 @@ already read. Tell runners to read a file only where the patch is not enough.
 
 A runner that meets a risky change returns a `validation_request` (file,
 proposed change, evidence, risk) instead of making it. Start one new agent one
-rung up with only that request and the question "should this change be made?"
-It answers `accept`, `reject`, or `needs-more-evidence`, with a reason.
+rung up with only that request and two questions, in order:
+
+1. Does the change alter what the code accepts, returns, throws, or writes for
+   an input that the PR's description, docs, or tests treat as valid? If so,
+   answer `reject: design` and name the contract change. Choosing the contract
+   is the author's call, never a validator's.
+2. Otherwise: should this change be made?
+
+It answers `accept`, `reject`, `reject: design`, or `needs-more-evidence`, with
+a reason. `reject: design` defers the thread to the user with both options
+stated.
 
 - **accept:** re-dispatch the original runner with permission to apply exactly
   that change; the usual checks must still pass.

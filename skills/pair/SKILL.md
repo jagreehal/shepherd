@@ -53,7 +53,8 @@ Only in these cases, however confident you feel:
 - it is genuinely unclear which outcome is better, or the requirement is
   ambiguous in a way that changes the design, or
 - it changes behaviour users, callers, or data depend on and nothing in the task
-  asked for that.
+  asked for that: what a function accepts, returns, throws, or writes for
+  input that was valid before.
 
 Asking too much everywhere else is the mistake.
 

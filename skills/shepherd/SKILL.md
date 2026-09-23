@@ -118,7 +118,8 @@ it; stop at 1 and say so.
 HEAD moved and `swarm_marker_sha..HEAD` changes something besides `*.md`,
 `*.txt`, whitespace, or comments. Swarm runs **in this loop** (via `Skill`), not
 inside a runner, so its reviewer agents are not nested. Pass the PR number, the
-diff path, the resolved ladder, and HEAD. Set `swarm_marker_sha = HEAD` after.
+diff path, the resolved ladder, HEAD, and `since_sha = swarm_marker_sha` when it
+is set. Set `swarm_marker_sha = HEAD` after.
 Skipping it despite qualifying changes needs an `AskUserQuestion` confirm, in
 round 1 only.
 
@@ -127,12 +128,27 @@ narration with the round number. Record `new_head_sha`, `deferred_threads`, the
 counts, `stamp`, and any `validation_requests`, which go through the validation
 flow in `references/dispatch.md` before the round can be dry.
 
+After every runner that reports a new head, check the remote agrees:
+`gh pr view <number> --json headRefOid -q .headRefOid` must equal
+`new_head_sha`. A commit the runner made but did not push is pushed now, and the
+discrepancy goes in the summary; any other mismatch means someone else pushed,
+so stop the round and re-baseline next iteration.
+
 **c. simplify, when warranted.** Same gate as swarm, keyed on
 `simplify_marker_sha`. One runner edits the working tree without committing.
 Confirm its claimed changes with `git status --porcelain` in your own tree;
 then `git add`, commit `refactor: simplify pass`, push. Set `simplify_marker_sha = HEAD`.
 
-**d. Dry?** A round is dry when triage actioned, resolved, and promoted nothing,
+**d. Keep the PR description true.** Review fixes change behaviour the
+description may not mention, and stamp refuses undisclosed behaviour in risky
+territory. When this round's commits changed what the code accepts, returns,
+throws, or writes, upsert one section at the end of the PR body, between
+`<!-- shepherd:review-changes -->` markers, headed "Changes made during review"
+with one line per behaviour change and its commit. Edit only that section;
+the rest of the body is the author's. `gh pr view --json body`, then
+`gh pr edit <number> --body-file <file>`.
+
+**e. Dry?** A round is dry when triage actioned, resolved, and promoted nothing,
 added no deferred thread, simplify changed nothing, no validation request is
 pending, and `bot_reviews_pending` is false.
 
@@ -143,7 +159,9 @@ way. Poll inline, in this turn. Never hand a wait to a background agent or a
 monitor: nothing reports back, and the iteration strands.
 
 - Dry, and `r >= 2` or swarm ran this round: stop; this round's final HEAD is `H1`.
-- `r == 4`: stop, narrate the cap, use this round's final HEAD as `H1`.
+- `r == 4`: stop, narrate the cap, use this round's final HEAD as `H1`, and
+  report `stopped=round-cap`. Run every runner in every round the loop reaches;
+  skipping one is a degradation and goes in the summary.
 - Otherwise run the next round from this round's final HEAD.
 
 ## Step 3: ci-repair

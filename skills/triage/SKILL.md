@@ -138,9 +138,15 @@ unsure and the comment predates the last push, skip rather than act.
 - **Actionable:** if `body_truncated`, refetch that one thread's full body
   first. Read the target code, make the edit, run the narrowest check that
   proves it (the test, lint, or typecheck for that file), commit
-  (`fix: <what>, from review`), push, then resolve the thread.
-- **Risky actionable:** a fix touching auth, permissions, billing, data
-  deletion, migrations, concurrency, a public API, or a broad shared
+  (`fix: <what>, from review`), push, and confirm the push landed
+  (`git status -sb` shows nothing ahead) before resolving the thread. Report
+  `new_head_sha` only from a pushed commit.
+- **Contract-changing:** a fix that changes what the code accepts, returns,
+  throws, or writes for input the PR treats as valid (rejecting a value the
+  docs allow, changing a rounding rule, a new required field) is a design
+  decision. Defer it with both options, even when a reviewer bot calls it a bug.
+- **Risky actionable:** a fix touching auth, permissions, billing, money,
+  data deletion, migrations, concurrency, a public API, or a broad shared
   abstraction needs a second model first. As a sub-step, do not edit: return a
   `validation_request` (file, proposed change, evidence, risk). Standalone,
   dispatch one validator agent a rung up with only that request.

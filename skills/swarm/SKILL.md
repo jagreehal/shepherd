@@ -75,8 +75,14 @@ gh pr diff <number> --name-only
 ```
 
 When `shepherd` invokes you it passes `diff_path`, `head_sha`, the model ladder,
-and `skip_checks` (true when it already ran Step 2 this round). Use them and do
-not re-derive.
+`skip_checks` (true when it already ran Step 2 this round), and `since_sha` (the
+head swarm last reviewed, on round 2 onwards). Use them and do not re-derive.
+
+**Later rounds review the change, not the PR again.** With a `since_sha`, write
+`git diff <since_sha>..<head_sha>` as the round's focus. The router reviews
+that focus in full and the rest of the PR only for HIGH or CRITICAL issues. A
+fresh read of unchanged code finds a new edge case every round, and the loop
+never converges.
 
 ## Step 2: Deterministic evidence first
 
