@@ -118,7 +118,11 @@ it; stop at 1 and say so.
 
 **a. swarm, when warranted.** Run it when `swarm_marker_sha` is `null`, or
 HEAD moved and `swarm_marker_sha..HEAD` changes something besides `*.md`,
-`*.txt`, whitespace, or comments. Swarm runs **in this loop** (via `Skill`), not
+`*.txt`, whitespace, or comments. A head reached only by merging the base
+changes nothing to review: when the PR's diff (`gh pr diff`) is byte-identical
+to the one swarm last reviewed, skip swarm and move `swarm_marker_sha` to HEAD.
+Keep each round's patch under the git directory so the comparison is a file
+compare. Without a stored patch to compare, run swarm. Swarm runs **in this loop** (via `Skill`), not
 inside a runner, so its reviewer agents are not nested. Pass the PR number, the
 diff path, the resolved ladder, HEAD, and `since_sha = swarm_marker_sha` when it
 is set. Set `swarm_marker_sha = HEAD` after.
@@ -229,6 +233,9 @@ gh run list --workflow stamp.yml --commit <H2> --json status,conclusion --jq '[.
 ```
 
 - A run is queued or in progress: report `pending`.
+- A run succeeded without posting a new review: stamp kept its standing
+  approval because the PR's diff did not change (retention). Report
+  `approved` when `reviewDecision` is `APPROVED`, and say it was retained.
 - No run, or only cancelled or skipped ones: nothing will review `H2` on its
   own. Ask once per head, when `stamp_applied_for_sha != H2`: in label mode
   remove and re-add the label; in all-PRs mode comment `/stamp` followed by the
