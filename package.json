@@ -1,0 +1,37 @@
+{
+  "name": "@jagreehal/shepherd",
+  "version": "0.1.0",
+  "description": "Agent skills that drive a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp.",
+  "license": "MIT",
+  "repository": "github:jagreehal/shepherd",
+  "type": "module",
+  "bin": {
+    "shepherd": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "!src/*.test.ts",
+    "skills",
+    "commands",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "bun": ">=1.2",
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run lint && bun run typecheck && bun test",
+    "lint": "oxlint src"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "@types/bun": "^1.2.0",
+    "oxlint": "1.78.0",
+    "typescript": "^5.7.0"
+  }
+}

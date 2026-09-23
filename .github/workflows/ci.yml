@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+    branches: [main] # a PR branch is covered by pull_request; without this filter every PR runs ci twice
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4 # oxlint loads the TS plugin through node; needs type stripping (>=22.18)
+        with:
+          node-version-file: .node-version
+      - run: bun install --frozen-lockfile
+      - run: bun run check
