@@ -128,10 +128,12 @@ with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
    to load it from configuration, and gates and secret scanners refuse the
    shape regardless.
 6. Read the verdicts other gates already gave this head: stamp's latest review
-   (a heading matching `^## \S+ stamp: `, with its mechanics table) and failing
-   required CI checks (`gh pr checks <number> --required`). A gate that refused
-   the head is a HIGH `checks/stamp` or `checks/ci` finding that quotes the
-   gate's message. The author should never read "looks good" from swarm under
+   (a heading matching `^## \S+ stamp: `, with its mechanics table) and every
+   failing CI check on the head (`gh pr checks <number>`), not only required
+   ones: many repos protect nothing. A gate that refused the head, or a check
+   that failed on it, is a HIGH `checks/stamp` or `checks/ci` finding that quotes
+   the failure. CI can fail where the local run passed (a timezone, a locale, an
+   OS); the CI result wins. The author should never read "looks good" from swarm under
    a refusal from the gate that decides the merge.
 
 These become `CHECK_FINDINGS`. They post like any other finding, tagged
@@ -147,7 +149,9 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 - You are the only first-pass reviewer. Review the whole diff for correctness,
   security, simplicity, maintainability, and slop. Read at least 50 lines around
   each hunk before judging it.
-- Do not repeat anything in `CHECK_FINDINGS`.
+- Do not repeat anything in `CHECK_FINDINGS`. Those findings are settled
+  evidence: they do not raise your danger grade or force a delegation on their
+  own. Grade what they point at by the rubric, like any other hunk.
 - Grade danger LOW / MEDIUM / HIGH / CRITICAL with the rubric below, and state
   your confidence.
 - Plan delegations: which lens, which rung, which hunks, and why. Delegate only

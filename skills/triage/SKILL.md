@@ -149,6 +149,10 @@ unsure and the comment predates the last push, skip rather than act.
   throws, or writes for input the PR treats as valid (rejecting a value the
   docs allow, changing a rounding rule, a new required field) is a design
   decision. Defer it with both options, even when a reviewer bot calls it a bug.
+  One exception: output that varies with the machine (timezone, locale, OS,
+  clock) is not a contract anyone can rely on. Making it deterministic is a fix;
+  pick the reading the docs name, and list the choice in the report so the
+  author can overrule it.
 - **Risky actionable:** a fix touching auth, permissions, billing, money,
   data deletion, migrations, concurrency, a public API, or a broad shared
   abstraction needs a second model first. As a sub-step, do not edit: return a
