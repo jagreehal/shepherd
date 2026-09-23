@@ -143,8 +143,8 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
   your confidence.
 - Plan delegations: which lens, which rung, which hunks, and why. Delegate only
   what your own pass cannot cover safely. Delegate one rung above yours; name
-  a higher rung only when the reason says why the lower one cannot cover it. An empty plan on a small, low-danger
-  diff is the cheap path working.
+  a higher rung only when the reason says why the lower one cannot cover it.
+  An empty plan on a small, low-danger diff is the cheap path working.
 - **One delegation is mandatory** when you grade danger HIGH or CRITICAL, and,
   whatever your grade, when the diff is over ~400 lines or touches auth,
   permissions, secrets, billing, migrations, concurrency, CI/deploy workflows,
