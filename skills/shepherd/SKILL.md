@@ -98,6 +98,13 @@ also wakes the repo's review bots, which take minutes; set
 with `gh pr create` (write the body with the repo's PR-description skill if it
 has one), or cancel.
 
+**Be on the PR branch.** Every runner commits to it from this tree. If the
+tree has uncommitted changes, stop and ask; never stash or discard them.
+Otherwise `gh pr checkout <number>`, `git pull --ff-only`, and confirm
+`git rev-parse HEAD` equals `H0`. Tell every runner the tree is the author's
+own PR head. On a PR by someone other than the logged-in user, confirm with
+`AskUserQuestion` before the first push to their branch.
+
 **Write the diff once** for the round and pass the path:
 `gh pr diff <number> > "$TMPDIR/shepherd-<short_sha>.patch"`.
 

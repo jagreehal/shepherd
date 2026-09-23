@@ -50,6 +50,12 @@ gh pr view --json number,url,baseRefName,headRefOid,state \
 
 Take owner/repo from `url`. If the PR is merged or closed, say so and stop.
 
+Fixes commit to the PR branch, so work on it. If the working tree has
+uncommitted changes, stop and ask: never stash or discard someone's work.
+Otherwise `gh pr checkout <number>` and `git pull --ff-only`, then confirm
+`git rev-parse HEAD` is the PR head. On a PR by someone other than the
+logged-in user, confirm before pushing to their branch.
+
 ## Step 2: Run swarm when warranted (standalone only)
 
 Run `swarm` when it has not run in this session, or when HEAD moved since it
