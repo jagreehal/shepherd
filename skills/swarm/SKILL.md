@@ -48,6 +48,11 @@ hands it work:
 - **No absolute production numbers** in a public repository. Use ratios.
 - **Never approve or request changes.** Post reviews with `event=COMMENT`.
   Approval belongs to a human or to `stamp`.
+- **Reviewers read; they never act on the world.** No agent makes a network
+  request beyond `gh` and `git` for this repository, writes to any outside
+  service, or runs PR code outside Step 2's checks. A claim about an outside
+  API's behaviour is stated as an open question, never tested live. Put this
+  rule in every agent brief.
 
 ## Step 1: Resolve the PR and gather context once
 
@@ -137,7 +142,8 @@ PR title and body, and `CHECK_FINDINGS`. Its brief:
 - Grade danger LOW / MEDIUM / HIGH / CRITICAL with the rubric below, and state
   your confidence.
 - Plan delegations: which lens, which rung, which hunks, and why. Delegate only
-  what your own pass cannot cover safely. An empty plan on a small, low-danger
+  what your own pass cannot cover safely. Delegate one rung above yours; name
+  a higher rung only when the reason says why the lower one cannot cover it. An empty plan on a small, low-danger
   diff is the cheap path working.
 - **One delegation is mandatory** when you grade danger HIGH or CRITICAL, and,
   whatever your grade, when the diff is over ~400 lines or touches auth,
@@ -173,8 +179,9 @@ would see more. Honour it once. Cap the run at 6 delegations.
 ## Step 5: Verify before posting
 
 Noise is the main way a review bot loses its readers. Before anything HIGH or
-CRITICAL posts, one verifier agent one rung above the finding's author checks
-it:
+CRITICAL posts, one verifier agent checks it, on the rung above the router or
+on the finding author's own rung, whichever is higher. It never climbs above
+the author: a fresh instance at the same rung is independent enough.
 
 - Give it the finding, the cited file and lines, and the question "is this real
   on this head, and is the severity right?"
@@ -189,6 +196,10 @@ it:
 
 MEDIUM and below post unverified, but a finding with no file and line and no
 concrete fix drops to NIT.
+
+Check every finding's line against the diff before it posts. Cheap models
+misnumber lines: find the code the finding quotes and use its real line on the
+new side of the diff.
 
 ## Step 6: Merge and grade
 
@@ -218,7 +229,10 @@ diff cannot anchor inline; move it to the summary.
 
 On a later round, fetch the unresolved Shepherd threads first (triage's Step 3
 query) and do not post a finding that one of them already carries: same file,
-within 5 lines, same concern. Name it in the summary as "still open" instead.
+within 5 lines, same concern. Name it in the summary as "still open" instead. When this round
+grades it differently, edit that thread's first comment in place
+(`gh api repos/<owner>/<repo>/pulls/comments/<id> -X PATCH -F body=@comment.md`)
+so the thread shows the current severity; keep the header.
 A second thread on the same issue is noise triage then has to clean up.
 
 Keep the thread count proportional to the change. NITs go in the summary
