@@ -227,8 +227,11 @@ the author: a fresh instance at the same rung is independent enough.
   question stated, rather than dropping.
 - Batch all findings for one verifier into one agent.
 - With one or two findings to check, the orchestrating session may verify them
-  itself instead, since it did not write them. The same rules hold: quote the
-  code, and name the verifier as `orchestrator` in the summary.
+  itself instead, since it did not write them. Every rule above binds it as
+  it binds a verifier agent: quote the code, judge new code by its intended
+  use (never "nothing calls it yet"), and name the verifier as `orchestrator` in
+  the summary. It verifies HIGH and CRITICAL findings only; everything below
+  posts at the severity its lens gave.
 
 MEDIUM and below post unverified, but a finding with no file and line and no
 concrete fix drops to NIT.

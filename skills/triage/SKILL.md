@@ -65,7 +65,8 @@ changes, confirm with `AskUserQuestion` first; "review fatigue" is not a reason.
 
 ## Step 3: Fetch threads, cheaply
 
-Fetch unresolved, non-outdated threads and trim bodies to 1500 characters. Bot
+Fetch every unresolved thread, outdated ones included, and trim bodies to 1500
+characters. Bot
 bodies put tag and severity first, so the head is enough to classify; full
 bodies are the biggest context cost of this loop.
 
@@ -88,8 +89,8 @@ gh api graphql -f query='
   }' -F owner=<owner> -F repo=<repo> -F num=<number> \
   --jq '.data.repository.pullRequest.reviewThreads
     | {page: .pageInfo, threads: [.nodes[]
-      | select(.isResolved == false and .isOutdated == false)
-      | {id, path: .comments.nodes[0].path, line: .comments.nodes[0].line,
+      | select(.isResolved == false)
+      | {id, outdated: .isOutdated, path: .comments.nodes[0].path, line: .comments.nodes[0].line,
          author: .comments.nodes[0].author.login,
          body_head: (.comments.nodes[0].body[:1500]),
          body_truncated: ((.comments.nodes[0].body | length) > 1500),
@@ -130,11 +131,19 @@ If you cannot tell, treat it as human.
   documented convention). Treat it as actionable when the fix is a
   deterministic one-file change; otherwise defer. Never resolve it as a nit.
 - **Nit**: pure preference with no fix you would defend, speculative, a
-  duplicate, already addressed on this head, or wrong (say why).
+  duplicate, already addressed on this head, or wrong. Calling a finding wrong
+  needs proof from the code or the repository. A claim about outside behaviour
+  (an API's rules, a service's limits) that you cannot check is not wrong:
+  fix it when the fix is cheap and harmless, otherwise defer it with the claim
+  stated. Never resolve it as wrong.
 - **Ambiguous**: architecture, broad scope, or a design choice.
 
-**Stale bot comments.** Inline threads are already filtered by `isOutdated`.
-For top-level bot comments, look for a commit reference (`/commit/<sha>`,
+**Outdated threads.** GitHub marks a thread outdated when its line changed, not
+when its concern was met, so an outdated thread is never skipped. Read its
+concern against the head: gone, resolve it ("addressed in <sha>"); still true,
+classify it like any other thread, at the line where the code now lives.
+
+**Stale bot comments.** For top-level bot comments, look for a commit reference (`/commit/<sha>`,
 "reviewing `<sha>`"). A reference to anything but HEAD is stale; skip it. When
 unsure and the comment predates the last push, skip rather than act.
 
@@ -204,8 +213,13 @@ gh pr view <number> --json latestReviews \
   and classify it the same way. Fixes push; stamp re-reviews on the push. There
   is nothing to resolve.
 - **REFUSED by a gate** (the mechanics table shows a failed gate such as
-  `deny-list` or `size`): never work around it. No splitting files, moving
-  paths, or adding `AGENT_APPROVALS.md`. Defer it with the gate's message.
+  `deny-list`, `secrets`, or `size`): a gate decides whether stamp approves,
+  not whether the code may be fixed. Keep fixing every thread as usual; a hard
+  coded key in code this PR adds is fixed by reading it from configuration.
+  What is forbidden is changing code *to get past the gate* without fixing
+  anything: a placeholder in place of a flagged value, moved, split, or renamed
+  files, an `AGENT_APPROVALS.md`. Report the gate's message for the author; a
+  deny-listed area still needs the human review stamp asks for, fixed or not.
 - **ESCALATE:** defer; it names the human assurance it needs.
 
 ## Step 6: Report

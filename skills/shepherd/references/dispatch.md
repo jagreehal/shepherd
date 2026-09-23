@@ -92,7 +92,11 @@ word for word, in order:
    that reviewers disagree on? If so, answer `reject: design` and name the
    contract change: choosing it is the author's call. A contract change to code
    this PR introduces is not a design rejection by itself; judge it on question 2.
-2. Otherwise: should this change be made?
+2. Otherwise: should this change be made? A stamp gate's refusal is not a
+   reason to reject: fixing the problem a gate names is ordinary work, and a
+   fix never waits for a gate. Reject only a change whose aim is to make a gate
+   pass without fixing anything (a placeholder for a flagged value, moved or
+   split files).
 
 It answers `accept`, `reject`, `reject: design`, or `needs-more-evidence`, with
 a reason. `reject: design` defers the thread to the user with both options
