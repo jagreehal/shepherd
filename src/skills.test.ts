@@ -109,8 +109,24 @@ describe("skill pack", () => {
       expect(swarm).toContain("inside one `<untrusted-pr-text>` fence");
     });
 
+    test("triage names a lens's threads when it classifies them, and never takes intent from PR text", () => {
+      expect(triage).toContain("**Which lens.** Read `.shepherd/lenses.yml` from `origin/<default>` once.");
+      expect(triage).toContain("they never settle whether a finding is deliberate, out of scope, or safe to leave.");
+    });
+
+    test("the verdict counts every open thread, and a large diff always gets a correctness lens", () => {
+      expect(swarm).toContain("**Verdict** from the surviving findings plus every thread still open on the PR");
+      expect(swarm).toContain("On a diff over ~400 lines the mandatory delegation is `correctness`");
+    });
+
+    test("triage resolves only what is fixed and pins the behaviour it changes", () => {
+      expect(triage).toContain("**Resolve only what is fixed.**");
+      expect(triage).toContain("**Pin behaviour you change.** A fix that changes behaviour adds or updates a test that fails without it.");
+    });
+
     test("a deferred thread fences its code, so small fixes cannot make its decision", () => {
       expect(triage).toContain("Deferred threads fence their code.");
+      expect(triage).toContain("Only fixes that carry out the thread's decision wait for the author.");
     });
 
     test.each(["triage/SKILL.md", "ci-repair/SKILL.md", "shepherd/references/dispatch.md"])("%s follows the default branch's house rules in the same words", (rel) => {

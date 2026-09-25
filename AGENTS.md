@@ -38,6 +38,9 @@ to all of them.
   calls that are genuinely theirs: behaviour code outside the PR relies on,
   reviewers recommending different contracts, and fixes that would change what
   the PR is for.
+- **A behaviour change carries its test, and a thread resolves only when
+  everything it names is fixed.** Passing tests prove nothing about behaviour
+  no test covers.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
 
