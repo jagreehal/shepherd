@@ -182,7 +182,11 @@ the rest of the body is the author's. `gh pr view --json body`, then
 
 **e. Dry?** A round is dry when triage actioned, resolved, and promoted nothing,
 added no deferred thread, simplify changed nothing, no validation request is
-pending, and `bot_reviews_pending` is false.
+pending, no lens in swarm's result has `status: failed`, and
+`bot_reviews_pending` is false. A failed lens did not review its scope, so the
+next round retries it. A lens that `could_not_run` (its skill does not resolve)
+will not fix itself: it does not block a dry round, and the final summary names
+it as unreviewed.
 
 While `bot_reviews_pending` is true, poll once before the next triage:
 `gh pr view <number> --json latestReviews --jq '[.latestReviews[].author.login]'`.

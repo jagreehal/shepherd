@@ -104,7 +104,10 @@ One repair cycle across all PR-caused root causes:
 1. Reproduce with the narrowest faithful command. A mechanical error the log
    and diff prove (a type error on a changed symbol) may be fixed without a
    local reproduction; say so.
-2. Fix the root cause. **Never** weaken an assertion, skip or delete a test,
+2. Fix the root cause. Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and
+   `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
+   not count.
+   **Never** weaken an assertion, skip or delete a test,
    loosen a type to `any`, or regenerate snapshots wholesale to go green.
 3. Run the targeted checks for every fix. If any fails, keep diagnosing; do not
    push an unverified repair.

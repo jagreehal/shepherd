@@ -10,6 +10,8 @@ shepherd runs inside your coding agent (Claude Code, Codex, or any harness with
 skills and subagents), on your machine, as you. stamp runs in CI as the gate.
 shepherd gets the PR ready; stamp decides whether it gets approved.
 
+shepherd works on GitHub only: it reads and writes through `gh`.
+
 ## Install
 
 ```bash
@@ -56,9 +58,10 @@ system, your API conventions. Point shepherd at the skill and the files it cares
 about:
 
 ```bash
-bunx @jagreehal/shepherd lens add vercel-react-best-practices --name react \
-  --applies '**/*.tsx' --applies '**/*.jsx'          # writes .shepherd/lenses.yml
-bunx @jagreehal/shepherd lens add ~/skills/house-style --name house --global   # yours, every repo
+bunx @jagreehal/shepherd lens new react --applies '**/*.tsx'   # scaffolds .shepherd/lenses/react/SKILL.md
+bunx @jagreehal/shepherd lens add vercel-react-best-practices --name react-perf \
+  --applies '**/*.tsx' --applies '**/*.jsx'          # an existing skill, into .shepherd/lenses.yml
+bunx @jagreehal/shepherd lens add ~/skills/house-style --name house --global   # personal preview
 bunx @jagreehal/shepherd lens list
 ```
 
@@ -72,10 +75,18 @@ lenses:
 
 A lens with `applies_to` runs on every PR that touches a matching file. Without
 it, the router decides when the lens is worth calling, from its description.
-Swarm wraps the skill in a review-only brief: the skill is the checklist, its
-findings post like any other lens's (`[react/async-parallel]`), and triage fixes
-them. The repository's lens file is read from the default branch, so a PR cannot
-pick its own reviewers.
+Swarm wraps the skill in a review-only brief: the skill's `## Review` section is
+the checklist, and its findings post like any other lens's
+(`[react/async-parallel]`). Triage fixes them, following the skill's `## Fix`
+section when it has one; nothing in a lens can loosen shepherd's own rules. The
+repository's lens file is read from the default branch, so a PR cannot pick its
+own reviewers. Run `/swarm --preview` to try a lens from your working tree
+before merging it: it reports which files each lens matched and what it found,
+and posts nothing. `lens list` checks each lens (a description, a
+`## Review` with unique rule ids) and exits non-zero on a problem. A `--global`
+lens is a personal preview: swarm prints its
+findings locally and never posts them, so you can try a lens on real PRs before
+committing it for the team.
 
 ## One iteration
 

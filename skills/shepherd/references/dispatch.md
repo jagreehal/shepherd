@@ -75,6 +75,9 @@ already read. Tell runners to read a file only where the patch is not enough.
   base conflict, record it and carry on."
 - **simplify:** "Apply `../review-simplicity/SKILL.md` in fix mode to the diff at
   `<diff_path>` on PR `<number>`, yourself: invoke no skill and start no agent.
+  Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and
+  `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
+  not count.
   Change only lines the PR changed, and never change behaviour: a simplification
   that alters any output, error, or side effect is out of scope. Never revert a
   fix made during review (the commits since `<review_base_sha>`), and never touch

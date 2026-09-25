@@ -35,7 +35,7 @@ DELEGATION_PLAN:
 danger: <LOW|MEDIUM|HIGH|CRITICAL>
 confidence: <HIGH|MEDIUM|LOW>
 delegations:
-- lens: <correctness|security|simplicity|maintainability|slop> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | reason: <one line>
+- lens: <correctness|security|simplicity|maintainability|slop|custom lens name> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | reason: <one line>
 ```
 
 An empty `delegations:` list means the router's findings are the review.
@@ -72,10 +72,12 @@ VERIFICATION:
 
 ### Lenses
 
-| Lens | Model | Scope | Take |
-| --- | --- | --- | --- |
-| router | <model> | full | <danger grade, what it delegated> |
-<one row per lens that ran this round>
+| Lens | Model | Scope | Status | Take | SKILL.md |
+| --- | --- | --- | --- | --- | --- |
+| router | <model> | full | ok | <danger grade, what it delegated> | |
+<one row per lens this round started or meant to start; status ok, failed, or could_not_run; the short blob of the SKILL.md it ran>
+
+<sub>lenses.yml <short blob></sub>
 
 <details>
 <summary>Earlier rounds (<n>)</summary>
