@@ -176,7 +176,9 @@ description may not mention, and stamp refuses undisclosed behaviour in risky
 territory. When this round's commits changed what the code accepts, returns,
 throws, or writes, upsert one section at the end of the PR body, between
 `<!-- shepherd:review-changes -->` markers, headed "Changes made during review"
-with one line per behaviour change and its commit. Edit only that section;
+with one line per behaviour change and its commit. Re-check the lines already
+there against the head: correct or drop one a later commit undid, so the
+section never claims a change the code no longer makes. Edit only that section;
 the rest of the body is the author's. `gh pr view --json body`, then
 `gh pr edit <number> --body-file <file>`.
 

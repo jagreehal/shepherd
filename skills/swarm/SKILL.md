@@ -197,7 +197,9 @@ instructions come last. Its brief:
   in auth, permissions, secrets, billing, migrations, concurrency, CI/deploy
   workflows, a public API, or text that reaches a model. Hunks that only delete
   code do not count. Scope it to the hunks you
-  are least sure of. Your grade is the thing being checked, so it cannot excuse
+  are least sure of. On a diff over ~400 lines the mandatory delegation is
+  `correctness`, whatever else you plan: a large change needs its bugs read
+  by a lens whose job is bugs. Your grade is the thing being checked, so it cannot excuse
   the delegation.
 - A custom lens whose `applies_to` matches a file always runs on it. Do not
   delegate a built-in lens to those files for the concern that lens covers;
@@ -291,7 +293,13 @@ new side of the diff.
 - **Dedupe.** Findings on the same file within 5 lines, or on the same concern,
   merge into one. Two or more independent lenses agreeing makes it
   **convergent**; note every lens that found it.
-- **Verdict** from the surviving findings:
+- **Conflicts with open threads.** A finding whose fix would keep or bring
+  back a problem an open thread names (from any reviewer) says so in its body
+  and names that thread: the author sees both before choosing.
+- **Verdict** from the surviving findings plus every thread still open on the
+  PR, Shepherd's and other reviewers', at the severity each states (another bot's
+  P1 counts as HIGH). A gate that refused this head for an issue the code still
+  has counts too:
   - any CRITICAL -> 🚫 BLOCKED
   - 2+ HIGH, or 1 HIGH + 2 MEDIUM -> ⚠️ CHANGES NEEDED
   - 1 HIGH, or any MEDIUM -> 💬 APPROVE WITH NITS
@@ -322,6 +330,10 @@ round grades it differently, edit that thread's first comment in place
 so the thread shows the current severity; keep the header.
 A second thread on the same issue is noise triage then has to clean up.
 
+Shepherd threads resolved since the last round get one line appended to their
+first comment, in place: `✅ Resolved at <short_sha>`. The summary's "still
+open" entries link to their threads, so a reader sees what is left and where.
+
 Keep the thread count proportional to the change. NITs go in the summary
 only, never inline. Post at most 10 inline comments, most severe first; the
 rest go in the summary. Two findings on the same line merge into one comment.
@@ -335,6 +347,8 @@ Each inline comment:
 **[<lens tag>]** <emoji> <SEVERITY>
 
 <finding body, with the concrete fix>
+
+<HIGH and CRITICAL only: "Verified: " and the code the verifier quoted>
 ```
 
 Severity emoji: 🔴 CRITICAL, 🟠 HIGH, 🟡 MEDIUM, 🟢 LOW, ⚪ NIT. A convergent
