@@ -187,8 +187,10 @@ unsure and the comment predates the last push, skip rather than act.
 - **Actionable:** if `body_truncated`, refetch that one thread's full body
   first. Read the target code, make the edit, run the narrowest check that
   proves it (the test, lint, or typecheck for that file), commit
-  (`fix: <what>, from review`, with the trailer `Shepherd: triage`; one commit
-  per thread, never a batch, so each commit's trailers describe it), push, and
+  (`fix: <what>, from review`, with the trailer `Shepherd: triage` and one
+  `Shepherd-Fixes: <tag>` per rule the thread carried, e.g.
+  `Shepherd-Fixes: architecture/factory-for-one`; one commit per thread, never
+  a batch, so each commit's trailers describe it), push, and
   confirm the push landed
   (`git status -sb` shows nothing ahead) before resolving the thread. Report
   `new_head_sha` only from a pushed commit.

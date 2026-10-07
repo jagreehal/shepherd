@@ -1,0 +1,119 @@
+# The gardener: weekly, score what shepherd did on the repos in GARDEN_REPOS and propose skill edits (here)
+# and lint rules (in each repo) as PRs. It only proposes; a person merges.
+#
+# Two jobs, two runners. `propose` runs the agent, which reads text anyone can write (threads, commit
+# messages), with read-only tokens, and uploads each proposal as plain files: repo, body.md, patch.diff.
+# `publish` never runs agent output: it clones each target fresh, applies the patch with hooks disabled,
+# refuses anything under .github/ or .git, and only then uses the write token.
+#
+# Secrets: GARDEN_TOKEN (PAT, contents + pull requests write on this repo and every GARDEN_REPOS repo; only
+#          `publish` sees it), GARDEN_READ_TOKEN (optional, read-only, for private repos),
+#          OPENCODE_API_KEY (or another provider's key, with GARDEN_MODEL set to match).
+# Variables: GARDEN_REPOS (space-separated owner/name), GARDEN_MODEL (provider/model).
+# Give `propose` its own model key with a spend cap and a read token scoped to GARDEN_REPOS: the agent
+# holds both while it reads thread text, and every proposal reaches the default branch only through review.
+name: garden
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: garden
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  propose:
+    if: vars.GARDEN_REPOS != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      REPOS: ${{ vars.GARDEN_REPOS }}
+      GARDEN_OUTBOX: ${{ runner.temp }}/garden-outbox
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: |
+          bun install --frozen-lockfile
+          bun src/cli.ts install
+          # OpenCode from its release, checked against the published digest.
+          curl -fsSL -o "$RUNNER_TEMP/opencode.tgz" https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-linux-x64.tar.gz
+          echo "c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d  $RUNNER_TEMP/opencode.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.opencode/bin" && tar -xzf "$RUNNER_TEMP/opencode.tgz" -C "$HOME/.opencode/bin" && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          mkdir -p "$GARDEN_OUTBOX"
+      - name: Garden (read-only)
+        env:
+          GH_TOKEN: ${{ secrets.GARDEN_READ_TOKEN || github.token }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          MODEL: ${{ vars.GARDEN_MODEL || 'opencode-go/kimi-k3' }}
+        run: |
+          opencode run --auto -m "$MODEL" --title "garden" "Load the garden skill and run it for: $REPOS.
+          The shepherd checkout is the current directory (run the collector as bun src/cli.ts garden).
+          GARDEN_OUTBOX is set: follow the skill's Outbox mode.
+          Nobody is watching this session: never wait for an answer; put questions in the report."
+      - name: Turn each proposal into a patch
+        run: |
+          mkdir -p "$RUNNER_TEMP/proposals"
+          for dir in "$GARDEN_OUTBOX"/*/; do
+            [ -f "$dir/repo" ] && [ -f "$dir/body.md" ] && [ -d "$dir/tree/.git" ] || continue
+            out="$RUNNER_TEMP/proposals/$(basename "$dir")"; mkdir -p "$out"
+            # -A stages new files too: a proposal that only adds a rule file is still a proposal.
+            git -C "$dir/tree" -c core.hooksPath=/dev/null -c core.fsmonitor=false add -A
+            git -C "$dir/tree" -c core.hooksPath=/dev/null -c core.fsmonitor=false diff --cached --binary --no-ext-diff > "$out/patch.diff"
+            cp "$dir/repo" "$dir/body.md" "$out/"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: garden-proposals
+          path: ${{ runner.temp }}/proposals
+          if-no-files-found: ignore
+
+  publish:
+    needs: propose
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GARDEN_TOKEN }}
+      REPOS: ${{ vars.GARDEN_REPOS }}
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true # no proposals this week
+        with:
+          name: garden-proposals
+          path: proposals
+      - name: Open a PR per proposal
+        run: |
+          [ -d proposals ] || { echo "nothing proposed"; exit 0; }
+          date=$(date -u +%F)
+          for dir in proposals/*/; do
+            # One branch per proposal and run: two proposals for one repo, or a rerun the same day, never collide.
+            slug=$(basename "$dir" | tr -cd 'a-z0-9-' | cut -c1-40); branch="garden/$date-${slug:-proposal}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            repo=$(tr -d '[:space:]' < "$dir/repo")
+            [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "skip $dir: not an owner/name"; continue; }
+            targets=" $REPOS $GITHUB_REPOSITORY "
+            [[ "$targets" == *" $repo "* ]] || { echo "skip $dir: $repo is not a garden target"; continue; }
+            [ -s "$dir/patch.diff" ] || { echo "skip $repo: empty patch"; continue; }
+            work="$RUNNER_TEMP/work/$repo"; rm -rf "$work"
+            git clone -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$work"
+            g() { git -C "$work" -c core.hooksPath=/dev/null -c user.name=shepherd-garden -c user.email=garden@users.noreply.github.com "$@"; }
+            g apply --index "$PWD/$dir/patch.diff" || { echo "skip $repo: patch does not apply"; continue; }
+            # A pushed branch runs its own workflows with this repo's secrets, so a garden PR never touches them.
+            # Checked on what git staged (both sides of every rename), NUL-delimited so git never quotes a
+            # name, and any failure to read the list refuses the proposal.
+            g diff --cached --name-only --no-renames -z > "$RUNNER_TEMP/paths" || { echo "skip $repo: cannot list paths"; continue; }
+            python3 - "$RUNNER_TEMP/paths" <<'PY' || { echo "skip $repo: patch touches a protected path"; continue; }
+          import re, sys
+          paths = [p for p in open(sys.argv[1], "rb").read().split(b"\0") if p]
+          protected = re.compile(rb"^(\.github|\.git)(/|$)|^\.gitmodules$|(^|/)\.gitattributes$")
+          sys.exit(1 if not paths or any(protected.search(p) for p in paths) else 0)
+          PY
+            g commit -q -m "garden: $date" -m "Shepherd: garden"
+            g push -q origin "HEAD:refs/heads/$branch"
+            gh pr create -R "$repo" --head "$branch" --title "garden: $date" --body-file "$dir/body.md"
+          done

@@ -133,7 +133,7 @@ to the one swarm last reviewed, skip swarm and move `swarm_marker_sha` to HEAD.
 Keep each round's patch under the git directory so the comparison is a file
 compare. Without a stored patch to compare, run swarm. Swarm runs **in this loop** (via `Skill`), not
 inside a runner, so its reviewer agents are not nested. Pass the PR number, the
-diff path, the resolved ladder, HEAD, and `since_sha = swarm_marker_sha` when it
+diff path, the resolved ladder and `models` pins, HEAD, and `since_sha = swarm_marker_sha` when it
 is set. Set `swarm_marker_sha = HEAD` after.
 Skipping it despite qualifying changes needs an `AskUserQuestion` confirm, in
 round 1 only.
@@ -269,10 +269,34 @@ stamp keeps its approval across a base merge that leaves the PR's diff
 unchanged, so a ci-repair base update does not cost a re-review. Never try to
 get around a stamp gate.
 
-## Step 5: Summary and hand-back
+## Step 5: Status, summary and hand-back
 
-Print the iteration summary and the state line (`references/formats.md`), then
-hand back. For cadence: `/loop 5m /shepherd <pr>`.
+Set the `shepherd` commit status on `H2`, every iteration, so the PR shows
+where the loop got to even after this session ends. Green CI must never read
+as "done" while shepherd still has work or is waiting on the author:
+
+```bash
+gh api "repos/<owner>/<repo>/statuses/<H2>" -f context=shepherd \
+  -f state=<success|pending|failure> -f description="<one line, under 140 characters>"
+```
+
+- `success`: the second terminal condition holds and nothing is deferred:
+  stamp approved `H2` (or the repo has no stamp), CI is green, and no
+  unresolved thread is left.
+- `failure`: the loop can do nothing more on its own (the "needs the author"
+  terminal condition below). The description says what is needed, most
+  important first: `stamp refused: <reason>`, `stamp escalated`, `3 threads
+  need you`, `base conflict`.
+- `pending`: anything else: work remains, stamp has not judged `H2`, or bot
+  reviews are on their way.
+
+A session that dies mid-iteration leaves the last `pending`, never a green.
+A push that shepherd did not make lands on a head with no `shepherd` status,
+so a branch rule that requires it blocks the merge until shepherd runs again.
+If posting the status fails, say so in the summary and carry on.
+
+Then print the iteration summary and the state line (`references/formats.md`),
+and hand back. For cadence: `/loop 5m /shepherd <pr>`.
 
 ## Step 6: Reflect (terminal conditions only)
 
@@ -298,9 +322,17 @@ Stop for good when:
 - the PR is merged or closed;
 - stamp has approved the current head (or the repo has no stamp), CI has no
   failure needing autonomous work, no new bot threads arrived, and every
-  unresolved thread is in `deferred_threads`; or
+  unresolved thread is in `deferred_threads`;
+- **needs the author:** nothing autonomous is left (every unresolved thread is
+  in `deferred_threads`, triage has acted on every fixable issue in stamp's
+  latest refusal, ci-repair has exhausted its repairs, and the quality loop
+  ended dry or at its cap), yet stamp refused or escalated `H2`, CI still
+  fails, or the base conflicts. Set the `failure` status naming what is
+  needed, list it for the user, and stop: another iteration would only repeat
+  this one; or
 - the user interrupts.
 
+Only the first terminal condition with nothing deferred sets `success`.
 CI failures are never report-only: ci-repair must diagnose and exhaust its safe
 repair or rerun first. Deferred threads never stop the loop. The round cap stops
 the quality loop, not the iteration; Steps 3 and 4 still run.

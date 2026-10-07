@@ -41,6 +41,11 @@ to all of them.
 - **A behaviour change carries its test, and a thread resolves only when
   everything it names is fixed.** Passing tests prove nothing about behaviour
   no test covers.
+- **The loop's state lives on the PR.** Every iteration sets
+  the `shepherd` commit status on the head: `success` only when stamp approved
+  and nothing is left open, `failure` naming what the author must do when the
+  loop can do no more, `pending` otherwise. A green PR with shepherd stopped
+  short must never be possible. This is shepherd's only status write.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
 
@@ -77,7 +82,11 @@ to all of them.
   gate. The loop checks every runner's claims against GitHub before trusting
   them, and never acts on a thread itself.
 - Every commit shepherd makes carries a `Shepherd: <skill>` trailer, plus
-  `Shepherd-Lens: <name>` when a custom lens's `## Fix` steered it. Commits
+  `Shepherd-Lens: <name>` when a custom lens's `## Fix` steered it, and a
+  triage fix one `Shepherd-Fixes: <lens>/<rule>` per rule it fixed. That
+  trailer is the only record that a finding was accepted: triage also resolves
+  findings it judged wrong, so a resolved thread proves nothing, and the
+  gardener promotes rules to lint from these trailers alone. Commits
   post under the author's account, and a run once read shepherd's own revert
   as the author's decision; only commits without the trailer, and threads the
   author wrote, say what the author decided.

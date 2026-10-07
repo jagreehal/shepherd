@@ -1,7 +1,9 @@
 // Custom lenses: any skill, wrapped by swarm as a review-only reviewer whose `## Fix` section steers
 // triage. This file reads and writes the lens files and finds skills on disk; swarm itself reads the
 // repository's file from the default branch at review time (skills/swarm/references/custom-lenses.md).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -18,7 +20,19 @@ const LensSchema = z
   })
   .strict();
 
-const LensFileSchema = z.object({ lenses: z.record(z.string().regex(LENS_NAME), LensSchema).default({}) }).strict();
+// A model id is whatever the harness's agent tool accepts, passed through untouched: `haiku` on Claude Code,
+// `provider/model` on OpenCode (`opencode-go/deepseek-v4-flash`). shepherd never maps one to another.
+const ModelId = z.string().min(1);
+
+const LensFileSchema = z
+  .object({
+    ladder: z.array(ModelId).min(1).optional(), // cheapest first; replaces the harness's ladder
+    models: z.record(z.string().regex(LENS_NAME), ModelId).optional(), // a lens or runner name -> the model it always runs on
+    lenses: z.record(z.string().regex(LENS_NAME), LensSchema).default({}),
+  })
+  .strict();
+
+type LensFile = z.infer<typeof LensFileSchema>;
 
 export type Lens = z.infer<typeof LensSchema>;
 
@@ -26,10 +40,79 @@ export const globalLensFile = (home: string) => path.join(home, ".config", "shep
 
 export const repoLensFile = (repoRoot: string) => path.join(repoRoot, ".shepherd", "lenses.yml");
 
-export function readLenses(file: string): Record<string, Lens> {
-  if (!existsSync(file)) return {};
+const readFile = (file: string): LensFile => (existsSync(file) ? LensFileSchema.parse(parse(readFileSync(file, "utf8")) ?? {}) : { lenses: {} });
 
-  return LensFileSchema.parse(parse(readFileSync(file, "utf8")) ?? {}).lenses;
+export const readLenses = (file: string): Record<string, Lens> => readFile(file).lenses;
+
+/** Model choice for the runners and lenses. The repository's ladder wins; your own fills in when it sets none. Pins merge, the repository winning per name. */
+export function modelChoice(home: string, repoRoot: string, repoFile = repoLensFile(repoRoot)) {
+  const personal = readFile(globalLensFile(home));
+  const repo = readFile(repoFile);
+
+  return { ladder: repo.ladder ?? personal.ladder ?? null, models: { ...personal.models, ...repo.models } };
+}
+
+/**
+ * OpenCode agents for a harness whose subagent tool takes no model (OpenCode 1.x): one per rung,
+ * `shepherd-r<i>`, and one per pin, `shepherd-pin-<name>`, each fixed to its model. Merge the result into
+ * OPENCODE_CONFIG_CONTENT; swarm and the loop then dispatch by agent name.
+ */
+export function opencodeAgents(choice: { ladder: string[] | null; models: Record<string, string> }) {
+  const agent = (model: string, about: string) => ({ mode: "subagent", model, description: `shepherd runner on ${model} (${about})` });
+
+  return {
+    agent: Object.fromEntries([
+      ...(choice.ladder ?? []).map((model, i) => [`shepherd-r${i}`, agent(model, `rung ${i}`)] as const),
+      ...Object.entries(choice.models).map(([name, model]) => [`shepherd-pin-${name}`, agent(model, `pinned for ${name}`)] as const),
+    ]),
+  };
+}
+
+/**
+ * The default branch's `.shepherd/lenses.yml`, copied to a temp file, the same source swarm reads. The branch
+ * name comes from the remote, since a CI checkout sets no origin/HEAD. A missing branch ref throws; a branch
+ * with no lens file gives a path that does not exist: no ladder, no pins.
+ */
+export function defaultBranchLensFile(repoRoot: string): string {
+  const git = (...args: string[]) => execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const branch = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(git("ls-remote", "--symref", "origin", "HEAD"))?.[1];
+
+  if (!branch) throw new Error("cannot tell origin's default branch");
+  const ref = `refs/remotes/origin/${branch}`;
+
+  try {
+    git("rev-parse", "--verify", "--quiet", ref);
+  } catch {
+    throw new Error(`origin/${branch} is not fetched: run git fetch origin ${branch}`);
+  }
+
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "shepherd-lenses-")), "lenses.yml");
+
+  try {
+    writeFileSync(file, git("show", `${ref}:.shepherd/lenses.yml`));
+  } catch {
+    // The default branch has no lens file.
+  }
+
+  return file;
+}
+
+/** Pin `name` (a lens or runner) to `model`, keeping everything else in the file. */
+export function pinModel(file: string, name: string, model: string): void {
+  if (!LENS_NAME.test(name)) throw new Error(`"${name}" must be lowercase letters, digits, and dashes`);
+  const current = readFile(file);
+
+  write(file, { ...current, models: { ...current.models, [name]: ModelId.parse(model) } });
+}
+
+/** Replace the ladder, cheapest model first. */
+export function setLadder(file: string, ladder: string[]): void {
+  write(file, { ...readFile(file), ladder: z.array(ModelId).min(1).parse(ladder) });
+}
+
+function write(file: string, contents: LensFile): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, stringify(contents));
 }
 
 /** Add or replace one lens, keeping every other entry in the file. */
@@ -37,10 +120,9 @@ export function addLens(file: string, name: string, lens: Lens): void {
   if (!LENS_NAME.test(name)) throw new Error(`lens name "${name}" must be lowercase letters, digits, and dashes`);
 
   if (BUILT_IN_LENSES.includes(name)) throw new Error(`"${name}" is a built-in lens; pick another name`);
-  const lenses = { ...readLenses(file), [name]: LensSchema.parse(lens) };
+  const current = readFile(file);
 
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, stringify({ lenses }));
+  write(file, { ...current, lenses: { ...current.lenses, [name]: LensSchema.parse(lens) } });
 }
 
 /** What swarm will load. Repository lenses post and steer fixes; personal ones are a local preview. The repository wins on a name clash. */

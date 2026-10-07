@@ -4,18 +4,23 @@
 // shepherd lens new <name> [--applies <glob>]... [--description <text>]
 // shepherd lens add <skill> [--name <name>] [--applies <glob>]... [--description <text>] [--global]
 // shepherd lens list
+// shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
+// shepherd opencode-agents [--file <lenses.yml>]   (agents for OpenCode 1.x, from the default branch's lenses.yml)
+// shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]
 //
 // Default: skills to ~/.claude/skills, the /shepherd command to ~/.claude/commands.
 // --project installs into ./.claude of the current repository instead.
 // --target <dir> installs skills only, into any agent's skills directory (e.g. ~/.codex/skills, ./.agents/skills).
 // A lens wraps any skill as a swarm reviewer: .shepherd/lenses.yml for the repository, --global for a
-// personal preview that prints locally and never posts.
+// personal preview that prints locally and never posts. Model ids pass straight to the harness's agent
+// tool (`haiku` on Claude Code, `provider/model` on OpenCode); --model on a lens pins it to one.
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { collect, score } from "./garden.ts";
 import { install, uninstall, type Outcome } from "./install.ts";
-import { addLens, BUILT_IN_LENSES, catalog, globalLensFile, lensProblems, newLens, repoLensFile, resolveSkill, skillDescription, type Lens } from "./lens.ts";
+import { addLens, BUILT_IN_LENSES, catalog, defaultBranchLensFile, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -23,7 +28,10 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd uninstall [--project | --target <dir>]
        shepherd lens new <name> [--applies <glob>]... [--description <text>]
        shepherd lens add <skill> [--name <name>] [--applies <glob>]... [--description <text>] [--global]
-       shepherd lens list`;
+       shepherd lens list
+       shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
+       shepherd opencode-agents [--file <lenses.yml>]
+       shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
@@ -36,6 +44,10 @@ const { values: opts, positionals } = parseArgs({
     applies: { type: "string", multiple: true },
     description: { type: "string" },
     global: { type: "boolean", default: false },
+    model: { type: "string" },
+    since: { type: "string" },
+    file: { type: "string" }, // opencode-agents: a lenses.yml to read instead of the default branch's
+    "min-prs": { type: "string", default: "3" },
   },
 });
 
@@ -59,7 +71,7 @@ const report = (outcomes: Outcome[]) => {
   return outcomes.some((o) => o.action === "skipped");
 };
 
-const [command, sub, skillRef] = positionals;
+const [command, sub, skillRef, ...rest] = positionals;
 
 /** Print a lens error as one line and exit 1. */
 const orExit = <T>(run: () => T): T => {
@@ -105,6 +117,8 @@ if (command === "install") {
   }
 
   orExit(() => addLens(file, name, lens));
+
+  if (opts.model) pinModel(file, name, opts.model);
   console.log(`lens "${name}" -> ${found}\nwritten to ${file}`);
 
   console.log(opts.global ? "personal lens: swarm prints its findings locally and never posts them." : MERGE_NOTE);
@@ -115,6 +129,8 @@ if (command === "install") {
 
   if (opts.description) lens.description = opts.description;
   const dir = orExit(() => newLens(repoRoot, skillRef, lens));
+
+  if (opts.model) pinModel(repoLensFile(repoRoot), skillRef, opts.model);
 
   console.log(`lens "${skillRef}" -> ${path.join(dir, "SKILL.md")}\nfill in its Review and Fix sections, try it with /swarm --preview, then: ${MERGE_NOTE}`);
 } else if (command === "lens" && sub === "list") {
@@ -131,6 +147,30 @@ if (command === "install") {
       process.exitCode = 1;
     }
   }
+} else if (command === "models" && (sub === undefined || (sub === "ladder" && skillRef) || (sub === "pin" && skillRef && rest.length === 1))) {
+  const file = opts.global ? globalLensFile(homedir()) : repoLensFile(repoRoot);
+
+  if (sub === "ladder") orExit(() => setLadder(file, [skillRef!, ...rest]));
+
+  if (sub === "pin") orExit(() => pinModel(file, skillRef!, rest[0]!));
+  const { ladder, models } = modelChoice(homedir(), repoRoot);
+
+  console.log(`ladder  ${ladder?.join(" -> ") ?? "the harness's own (skills/shepherd/references/models.md)"}`);
+
+  for (const [name, model] of Object.entries(models)) console.log(`pin     ${name.padEnd(18)} ${model}`);
+
+  if (sub) console.log(`\nwritten to ${file}${opts.global ? "" : `\n${MERGE_NOTE}`}`);
+} else if (command === "opencode-agents") {
+  // The models come from the default branch, never the working tree: on a PR checkout that is PR content.
+  const file = opts.file ? path.resolve(opts.file) : orExit(() => defaultBranchLensFile(repoRoot));
+
+  console.log(JSON.stringify(opencodeAgents(orExit(() => modelChoice(homedir(), repoRoot, file)))));
+} else if (command === "garden" && sub) {
+  // Default window: the last seven days, which the weekly gardener covers exactly.
+  const since = opts.since ?? new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const repos = [sub, ...(skillRef ? [skillRef] : []), ...rest];
+
+  console.log(JSON.stringify(repos.map((repo) => ({ repo, since, ...score(orExit(() => collect(repo, since)), Number(opts["min-prs"])) })), null, 2));
 } else {
   console.error(USAGE);
   process.exit(2);
