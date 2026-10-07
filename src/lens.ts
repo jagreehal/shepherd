@@ -2,7 +2,7 @@
 // triage. This file reads and writes the lens files and finds skills on disk; swarm itself reads the
 // repository's file from the default branch at review time (skills/swarm/references/custom-lenses.md).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse, stringify } from "yaml";
@@ -184,14 +184,28 @@ export function lensProblems(lens: Lens, home: string, repoRoot: string): string
 }
 
 /** Scaffold a lens skill at .shepherd/lenses/<name> and register it. Returns the skill directory. */
-export function newLens(repoRoot: string, name: string, lens: Omit<Lens, "skill">): string {
+/** Starter lenses shipped with shepherd, copied into a repository by `lens new --from`. */
+export const TEMPLATES_DIR = path.resolve(import.meta.dir, "..", "lenses");
+
+export const lensTemplates = (): string[] => readdirSync(TEMPLATES_DIR).filter((d) => existsSync(path.join(TEMPLATES_DIR, d, "SKILL.md"))).sort();
+
+/** A starter lens's SKILL.md, renamed to `name` so its findings read `[<name>/<id>]`. */
+function fromTemplate(template: string, name: string): string {
+  if (!lensTemplates().includes(template)) throw new Error(`no lens template "${template}"; available: ${lensTemplates().join(", ")}`);
+
+  return readFileSync(path.join(TEMPLATES_DIR, template, "SKILL.md"), "utf8").replace(/^name: .*$/m, `name: ${name}`).replace(/^# .*$/m, `# ${name}`);
+}
+
+export function newLens(repoRoot: string, name: string, lens: Omit<Lens, "skill">, template?: string): string {
   const skill = path.posix.join(".shepherd", "lenses", name); // lenses.yml paths are posix on every OS
   const dir = path.join(repoRoot, skill);
 
   if (existsSync(dir)) throw new Error(`${skill} already exists`);
+  const text = template ? fromTemplate(template, name) : lensTemplate(name, lens.description ?? `Reviews code against the team's ${name} rules.`);
+
   addLens(repoLensFile(repoRoot), name, { skill, ...lens });
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "SKILL.md"), lensTemplate(name, lens.description ?? `Reviews code against the team's ${name} rules.`));
+  writeFileSync(path.join(dir, "SKILL.md"), text);
 
   return dir;
 }

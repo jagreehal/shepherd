@@ -30,7 +30,8 @@ Swarm merges two files, repository entries winning on a name clash:
    lens would review a real PR before you commit it.
 
 `shepherd lens new <name> [--applies <glob>]...` scaffolds
-`.shepherd/lenses/<name>/SKILL.md` and registers it. Run `/swarm --preview`
+`.shepherd/lenses/<name>/SKILL.md` and registers it; `--from <template>`
+starts from a bundled starter lens instead (`lenses/`, such as `observability`). Run `/swarm --preview`
 on a PR or a local branch to see what it finds before you commit it; preview
 reads lenses from the working tree and posts nothing.
 `shepherd lens add <skill> --name <name> [--applies <glob>]...` registers an
