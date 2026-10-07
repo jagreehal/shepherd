@@ -50,6 +50,7 @@ installed; a skill of yours with the same name stays unless you pass `--force`.
 | `review-simplicity` | The four rules of simple design; what to delete and what replaces it. |
 | `review-maintainability` | Coupling, rollout safety, observability, naming, and the repo's own written rules. |
 | `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
+| `garden` | The outer loop: scores shepherd's recent runs from GitHub and opens PRs with skill edits and lint rules for findings that keep recurring. |
 
 ## Add your own reviewers
 
@@ -88,6 +89,26 @@ lens is a personal preview: swarm prints its
 findings locally and never posts them, so you can try a lens on real PRs before
 committing it for the team.
 
+## Choose the models
+
+Any provider your harness can reach. Model ids pass straight to its agent tool:
+`haiku` on Claude Code, `provider/model` on OpenCode.
+
+```bash
+shepherd models ladder opencode-go/deepseek-v4-flash opencode-go/glm-5.3 opencode-go/kimi-k3   # cheapest first
+shepherd models pin security opencode-go/qwen3.8-max     # a lens or runner always on this model
+shepherd lens add react-rules --applies '**/*.tsx' --model opencode-go/kimi-k2.7-code
+shepherd models                                          # what will run
+shepherd opencode-agents                                 # agents per rung and pin, for OpenCode 1.x
+```
+
+Both land in `.shepherd/lenses.yml` (`--global` for `~/.config/shepherd/lenses.yml`).
+The repository's ladder wins over yours, and like the lenses it is read from
+the default branch. With nothing set, shepherd uses the harness's own ladder.
+OpenCode 1.x subagents take no model, so `shepherd opencode-agents` prints an
+agent per rung and per pin to merge into `OPENCODE_CONFIG_CONTENT`; swarm then
+dispatches by agent name.
+
 ## One iteration
 
 ```text
@@ -122,6 +143,30 @@ get a second review round.
 - **Gates stay gates.** It never approves, and it never changes code to get
   past a stamp refusal or any other gate. A fix that changes what code accepts
   or returns is your decision, not a reviewer's.
+
+## Gardening
+
+`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs, from
+GitHub alone: reverted fixes, people replying in a thread, loops that hit the
+round cap, stopped short, or went quiet, and the lens rules triage fixed on 3+
+PRs (from its `Shepherd-Fixes` trailers, on PRs by people who can push). The
+`garden` skill turns that into PRs: skill edits for the patterns behind low
+scores, and lint rules for recurring findings one file's syntax can decide, so
+swarm's checks catch them before any model reads the diff.
+
+`.github/workflows/garden.yml` runs it weekly. Set `GARDEN_REPOS`, a
+`GARDEN_TOKEN` that can open PRs on those repos, and a model key; the agent
+only proposes, and a separate job opens the PRs. Each garden PR carries the
+score table, so the next one shows whether a merged edit helped.
+
+## Where the loop got to
+
+Every iteration sets a `shepherd` commit status on the head: `pending` while
+there is work or a verdict to wait for, `failure` with what you need to do
+when only you can move it (`stamp refused: ...`, `3 threads need you`), and
+`success` only when stamp approved and nothing is left open. Require it in a
+branch rule and a PR cannot merge while shepherd is mid-loop or stopped short,
+or after a push it has not seen.
 
 ## With stamp
 

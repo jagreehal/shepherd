@@ -5,9 +5,43 @@ validates a result; it never replaces a test.
 
 ## Resolve the ladder before pinning anything
 
+**The operator's choice comes first.** Read `ladder:` and `models:` from the
+repository's `.shepherd/lenses.yml` on the **default branch**
+(`git show origin/<default>:.shepherd/lenses.yml`), never the PR head, then
+from `~/.config/shepherd/lenses.yml`. The repository's ladder wins; a personal
+ladder applies only when the repository sets none. `models:` pins merge per
+name, the repository winning. `shepherd models` prints the result.
+
+```yaml
+ladder: [opencode-go/deepseek-v4-flash, opencode-go/glm-5.3, opencode-go/kimi-k3, opencode-go/qwen3.8-max]
+models:                 # a name runs on exactly this model, whatever its rung
+  security: opencode-go/qwen3.8-max
+  router: opencode-go/deepseek-v4-flash
+```
+
+Pin names: `router`, `verifier`, `validator`, `triage`, `simplify`,
+`ci-repair`, and any lens, built-in (`correctness`, `security`, `simplicity`,
+`maintainability`, `slop`) or custom. A model id passes to the agent tool's
+model parameter exactly as written: `haiku` on Claude Code, `provider/model`
+on OpenCode. Never translate one id into another provider's. A pin replaces
+the rung for that runner only; climbing for validation starts from the pin's
+position on the ladder, or the top rung when the pin is not on it. A pin that
+the agent tool rejects falls back to the runner's rung, and the summary says
+so.
+
+**When the subagent tool has no model parameter** (OpenCode 1.x), pick the
+model by agent instead: `shepherd opencode-agents` generates one agent per rung
+(`shepherd-r0` is the bottom rung, `shepherd-r1` the next) and one per pin
+(`shepherd-pin-<name>`), each fixed to its model. Dispatch the runner with that
+agent as its type. If those agents are not listed, say so in the summary: every
+runner then runs on the session model.
+
+With nothing configured, use the harness's ladder:
+
 | Harness | Ladder, cheapest first |
 |---|---|
 | Claude Code | `haiku` -> `sonnet` -> `opus` -> `fable` |
+| OpenCode | none built in: list `opencode models` and take the operator's ladder; with none set, the session model is one rung |
 | Codex | the harness's own subagent models, cheapest first; with no per-agent model choice, one rung |
 | Anything else | whatever the agent tool accepts, cheapest first |
 
