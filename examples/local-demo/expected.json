@@ -1,0 +1,12 @@
+{
+  "about": "Planted bugs for `shepherd local demo`. Lines are on the planted side. Each bug reaches the change a different way: an unpushed commit, a staged edit, an unstaged edit, an untracked file, and a deletion.",
+  "bugs": [
+    { "id": "hardcoded-key", "class": "credential in source", "file": "src/config.ts", "lines": [2, 2], "enters_as": "unstaged edit" },
+    { "id": "page-offset", "class": "off-by-one: pages start at 1", "file": "src/users.ts", "lines": [5, 5], "enters_as": "unpushed commit" },
+    { "id": "unawaited-write", "class": "write not awaited, so its failure is lost", "file": "src/notes.ts", "lines": [7, 7], "enters_as": "staged edit" },
+    { "id": "swallowed-error", "class": "empty catch, and saveNote reports success anyway", "file": "src/notes.ts", "lines": [8, 10], "enters_as": "staged edit" },
+    { "id": "removed-authz", "class": "admin check deleted from deleteNote", "file": "src/notes.ts", "lines": [13, 14], "enters_as": "staged deletion" },
+    { "id": "ts-ignore", "class": "suppression hides a string assigned to a number", "file": "src/search.ts", "lines": [4, 5], "enters_as": "untracked file" },
+    { "id": "sql-injection", "class": "user input interpolated into SQL", "file": "src/search.ts", "lines": [7, 7], "enters_as": "untracked file" }
+  ]
+}

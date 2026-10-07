@@ -8,7 +8,7 @@ import path from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 
-export const BUILT_IN_LENSES = ["correctness", "security", "simplicity", "maintainability", "slop"];
+export const BUILT_IN_LENSES = ["correctness", "security", "simplicity", "maintainability", "slop", "spec"];
 
 const LENS_NAME = /^[a-z][a-z0-9-]*$/;
 

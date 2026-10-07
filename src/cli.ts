@@ -7,6 +7,10 @@
 // shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
 // shepherd opencode-agents [--file <lenses.yml>]   (agents for OpenCode 1.x, from the default branch's lenses.yml)
 // shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]
+// shepherd local change [--base <ref>]              (the change before a PR: unpushed commits, staged, unstaged, untracked)
+// shepherd local finish <record.json> [--base <ref>]  (check a local review against that change; complete writes a receipt)
+// shepherd local status [--base <ref>]              (is the change on disk the one a complete review covered?)
+// shepherd local demo [<dir>]                       (a repository with planted bugs to try /shepherd --local on)
 //
 // Default: skills to ~/.claude/skills, the /shepherd command to ~/.claude/commands.
 // --project installs into ./.claude of the current repository instead.
@@ -15,11 +19,13 @@
 // personal preview that prints locally and never posts. Model ids pass straight to the harness's agent
 // tool (`haiku` on Claude Code, `provider/model` on OpenCode); --model on a lens pins it to one.
 import { execFileSync } from "node:child_process";
-import { homedir } from "node:os";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { collect, score } from "./garden.ts";
 import { install, uninstall, type Outcome } from "./install.ts";
+import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { addLens, BUILT_IN_LENSES, catalog, defaultBranchLensFile, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
@@ -31,7 +37,11 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd lens list
        shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
        shepherd opencode-agents [--file <lenses.yml>]
-       shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]`;
+       shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]
+       shepherd local change [--base <ref>]
+       shepherd local finish <record.json> [--base <ref>]
+       shepherd local status [--base <ref>]
+       shepherd local demo [<dir>]`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
@@ -48,6 +58,7 @@ const { values: opts, positionals } = parseArgs({
     since: { type: "string" },
     file: { type: "string" }, // opencode-agents: a lenses.yml to read instead of the default branch's
     "min-prs": { type: "string", default: "3" },
+    base: { type: "string" }, // local: the ref the change is measured from
   },
 });
 
@@ -90,7 +101,7 @@ if (command === "install") {
     console.log("\nskipped: something this installer did not create is in the way; rerun with --force to replace it.");
   }
 
-  console.log("\nNext: in a repository with an open PR, run /shepherd <pr> (or /swarm, /triage, /ci-repair on their own).");
+  console.log("\nNext: in a repository with an open PR, run /shepherd <pr> (or /swarm, /triage, /ci-repair on their own).\nBefore a PR: /shepherd --local. To try it: shepherd local demo.");
 } else if (command === "uninstall") {
   report(uninstall(BUNDLE_ROOT, skillsDest, commandsDest));
 } else if (command === "lens" && sub === "add" && skillRef) {
@@ -171,6 +182,29 @@ if (command === "install") {
   const repos = [sub, ...(skillRef ? [skillRef] : []), ...rest];
 
   console.log(JSON.stringify(repos.map((repo) => ({ repo, since, ...score(orExit(() => collect(repo, since)), Number(opts["min-prs"])) })), null, 2));
+} else if (command === "local" && sub === "change") {
+  console.log(JSON.stringify(orExit(() => captureChange(repoRoot, opts.base)), null, 2));
+} else if (command === "local" && sub === "finish" && skillRef) {
+  const result = orExit(() => finish(repoRoot, readFileSync(skillRef, "utf8"), opts.base));
+
+  console.log(JSON.stringify(result, null, 2));
+
+  if (result.status !== "complete") process.exitCode = 2;
+} else if (command === "local" && sub === "status") {
+  const result = orExit(() => receiptStatus(repoRoot, opts.base));
+
+  console.log(JSON.stringify(result, null, 2));
+
+  if (result.status !== "reviewed") process.exitCode = 1;
+} else if (command === "local" && sub === "demo") {
+  const dir = skillRef ? path.resolve(skillRef) : mkdtempSync(path.join(tmpdir(), "shepherd-demo-"));
+  const app = orExit(() => buildDemo(dir));
+
+  console.log(`demo repository: ${app}\n\nplanted bugs:`);
+
+  for (const b of demoBugs()) console.log(`  ${`${b.file}:${b.lines[0]}`.padEnd(18)} ${b.class} (${b.enters_as})`);
+
+  console.log(`\nNext: cd ${app}, open your coding agent there, and run /shepherd --local.`);
 } else {
   console.error(USAGE);
   process.exit(2);

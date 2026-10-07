@@ -7,7 +7,8 @@ description: >
   and posts inline comments plus one summary comment that updates in place. Use
   for "/swarm", "swarm review", "review this PR from every angle", or when
   shepherd reaches its review step. Accepts an optional PR number, URL, or base
-  branch, and --preview to try unmerged lenses without posting.
+  branch, --preview to try unmerged lenses without posting, and --local to
+  review your change before any PR exists.
 ---
 
 # Swarm
@@ -28,6 +29,7 @@ hands it work:
 | simplicity | `review-simplicity` | the four rules of simple design, YAGNI, reinvented stdlib |
 | maintainability | `review-maintainability` | coupling, naming, observability, rollout safety, house rules |
 | slop | `review-slop` | low-signal code and prose that agents tend to produce |
+| spec | `review-spec` | requirements missing, built wrong, or not asked for, against the linked issue or spec |
 | custom | any skill | whatever the repo or you add: React rules, a design system, API guidelines |
 
 Custom lenses wrap any skill in a review-only brief. Load the catalog before the
@@ -80,6 +82,32 @@ else is unchanged, except:
 Preview runs on your machine only. Working-tree lenses never post or steer a
 fix; only the default branch's lenses do.
 
+## Local mode
+
+With `--local`, swarm reviews your change before a PR exists: the commits not
+yet on your base, staged and unstaged edits, and untracked files `.gitignore`
+does not exclude. It runs on your machine and touches nothing outside it.
+
+- **Nothing goes to GitHub.** No comments, no summary comment, no thread
+  queries, no commit status. Skip Step 7 and print the report.
+- **Capture the change with the CLI**, not by hand, in Step 1:
+
+  ```bash
+  shepherd local change            # --base <ref> to measure from another ref
+  ```
+
+  Run it as `bunx @jagreehal/shepherd local change` when `shepherd` is not on
+  `PATH`, and the same for `finish` below. It prints JSON: `base_ref`, `fingerprint`, `patch_path`, `files`, and the
+  changed `ranges`. Pass `patch_path` to every agent as the diff. Your index is
+  left as it was.
+- **The tree is yours,** so Step 2's checks run. Skip only the step that reads
+  other gates' verdicts: there is no PR, stamp review, or CI run yet.
+- **Keep the record as you go** and finish with it in Step 8. Every lens's
+  scope, every check candidate's outcome, and every finding go into it, so the
+  CLI can say whether the review covered the change.
+- Lenses load from the default branch as usual. Combine with `--preview` to
+  try a lens from your working tree.
+
 ## Step 1: Resolve the PR and gather context once
 
 If `$ARGUMENTS` is a PR number or URL, use it; otherwise:
@@ -89,8 +117,9 @@ gh pr view --json number,url,baseRefName,headRefOid,title,body \
   --jq '{number, url, base: .baseRefName, head_sha: .headRefOid, title, body}'
 ```
 
-Take owner/repo from `url`. With no PR, diff against `origin/main` (or
-`origin/master`) after `git fetch`, skip posting in Step 7, and print the report.
+Take owner/repo from `url`. With no PR, or with `--local`, run in local mode
+(above): `shepherd local change` gives the diff, and the rest of this step's
+GitHub reads do not apply.
 
 Write the diff once and pass the path to every agent. Take it from GitHub, not
 a local base ref, which can be weeks stale. Keep scratch files under the repo's
@@ -230,14 +259,11 @@ never re-grades a finding itself; only a verifier
 changes a severity, with quoted code (Step 5). A plan that looks wasteful is
 still run, and the waste goes in the summary as a note for the router brief.
 
-Skip when the plan is empty. Otherwise dispatch every delegation **in one
-message**, in the foreground, so they run in parallel and all return inside
-this turn, each on the rung the plan named. A lens with a `models:` pin runs
-on its pin instead, and the router is told which lenses are pinned so it does
-not plan a rung for them. Each agent
-gets its lens skill body, the diff path, its scope, and `CHECK_FINDINGS`, and
-is told it is the only reviewer for that scope. It never learns about the
-router or the other lenses, so it cannot anchor on them.
+Add a `spec` delegation, scope `full`, whenever the PR closes an issue or its
+body, commits or branch point at an issue or spec (`../review-spec/SKILL.md`
+says where specs live), one rung above the router unless `spec` is pinned. It
+does not count toward the cap, and its findings never merge with another
+lens's in Step 6.
 
 Add a delegation for every custom lens whose `applies_to` matches a changed
 file, scoped to those files, whatever the plan says, and give it the lens brief
@@ -245,6 +271,15 @@ from `references/custom-lenses.md`. Custom lenses run in the same parallel
 message and do not count toward the cap. A personal lens's findings (from
 `~/.config/shepherd/lenses.yml`) never post: they skip Steps 5 to 7 and print
 under "Personal lenses" in the Step 8 report.
+
+Skip only when the plan is still empty after those additions. Otherwise
+dispatch every delegation **in one message**, in the foreground, so they run in parallel and all return inside
+this turn, each on the rung the plan named. A lens with a `models:` pin runs
+on its pin instead, and the router is told which lenses are pinned so it does
+not plan a rung for them. Each agent
+gets its lens skill body, the diff path, its scope, and `CHECK_FINDINGS`, and
+is told it is the only reviewer for that scope. It never learns about the
+router or the other lenses, so it cannot anchor on them.
 
 A lens may return `REDELEGATE: <lens> | <scope> | <reason>` when another lens
 would see more. Honour it once. Cap the run at 6 delegations.
@@ -391,6 +426,7 @@ As a `shepherd` sub-step: end with exactly this and nothing after it:
   "lenses": [{"lens": "router", "model": "", "scope": "full", "status": "ok", "findings": 0, "skill_blob": ""}],
   "lenses_yml_blob": "",
   "checks": [{"tool": "", "status": "ran|unavailable", "findings": 0}],
+  "local": {"status": "complete|incomplete|invalid|none", "missing": [], "findings_path": ""},
   "narration": ["[swarm] ..."]
 }
 ```
@@ -399,6 +435,44 @@ As a `shepherd` sub-step: end with exactly this and nothing after it:
 the router), and `lenses_yml_blob` that of the default branch's
 `.shepherd/lenses.yml` (empty when there is none), so "why did it say that?"
 can be answered from the instructions that ran.
+
+`local` is `none` on a PR. In local mode it carries `finish`'s status and
+missing items, and `findings_path` is the record's path, which the fixer
+reads.
+
+### The local record
+
+In local mode, write the record to `<git-common-dir>/shepherd/local-record.json`
+and check it before you print anything:
+
+```bash
+shepherd local finish "$(git rev-parse --git-common-dir)/shepherd/local-record.json"
+```
+
+The record is this JSON. `fingerprint` comes from Step 1's capture. `stages`
+holds `checks`, `router`, and `verify`, each `ok`, `failed`, or `skipped` with
+a reason. `lenses` lists the router and every delegation with the scope it
+received: `"full"`, or paths and `path:start-end` ranges. `candidates` lists
+each check finding the router weighed, `raised` (a finding carries it) or
+`dropped` with the reason. `findings` lists what survived verification.
+
+```json
+{
+  "fingerprint": "<from shepherd local change>",
+  "stages": [{"stage": "checks", "status": "ok"}, {"stage": "router", "status": "ok"}, {"stage": "verify", "status": "skipped", "reason": "no HIGH or CRITICAL findings"}],
+  "lenses": [{"lens": "router", "status": "ok", "scope": "full"}, {"lens": "security", "status": "ok", "scope": ["src/search.ts:1-8"]}],
+  "candidates": [{"source": "checks/tsc", "file": "src/search.ts", "line": 5, "status": "raised"}],
+  "findings": [{"file": "src/search.ts", "line": 5, "severity": "MEDIUM", "lens": "checks/tsc", "body": "A string is assigned to a number under @ts-ignore. Remove the suppression and fix the type."}]
+}
+```
+
+`finish` answers `complete`, `incomplete` (a stage or lens did not finish, a
+changed range reached no reviewer, or the files changed during the review), or
+`invalid` (a finding names a line the file does not have, or a candidate has no
+outcome). Fix an `invalid` record and run `finish` again. Report an
+`incomplete` one as **Review incomplete** with each missing item; never as a
+clean review. `complete` writes a receipt tied to this exact content, and
+`shepherd local status` later says whether the files still match it.
 
 ## Narration
 
@@ -414,5 +488,8 @@ collect the lines in `narration` instead of printing them.
   delegations at 2. Say so in the summary.
 - **Posting fails** (permissions, a fork): print the full report and say it was
   not posted.
-- **No PR:** review against the base, print the report, and offer to post once a
-  PR exists.
+- **No PR:** run in local mode, print the report, and offer to post once a PR
+  exists.
+- **`shepherd` CLI missing in local mode:** review the diff from
+  `git diff <base>` plus untracked files, say the review could not be checked
+  for coverage, and report `local.status` as `incomplete`.

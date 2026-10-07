@@ -35,7 +35,7 @@ DELEGATION_PLAN:
 danger: <LOW|MEDIUM|HIGH|CRITICAL>
 confidence: <HIGH|MEDIUM|LOW>
 delegations:
-- lens: <correctness|security|simplicity|maintainability|slop|custom lens name> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | reason: <one line>
+- lens: <correctness|security|simplicity|maintainability|slop|spec|custom lens name> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | reason: <one line>
 ```
 
 An empty `delegations:` list means the router's findings are the review.

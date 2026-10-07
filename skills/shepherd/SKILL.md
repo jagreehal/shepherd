@@ -5,7 +5,8 @@ description: >
   simplify) until they converge, CI repair, then the stamp verdict. Starts every
   runner on the cheapest model the harness can dispatch and validates risky
   changes one rung up. Use for "/shepherd", "babysit this PR", "get this PR
-  ready", or wrap in "/loop 5m /shepherd <pr>" for hands-off cadence.
+  ready", or wrap in "/loop 5m /shepherd <pr>" for hands-off cadence. With
+  --local, reviews and fixes your change before any PR exists.
 ---
 
 # Shepherd
@@ -32,6 +33,52 @@ Cost is calls times context: every runner's result lands in this loop's
 context. Run it in a session that did **not** just write the code. If you are
 at the tail of the implementation session, say so and offer a fresh session or
 a top-level subagent.
+
+## Local mode
+
+`/shepherd --local` gets a change into shape before a PR exists: review, fix,
+run the checks, repeat, until a round is clean or a decision needs the
+developer. Same lenses, same verification, same fix rules. It runs on this
+machine and stops there:
+
+- **No GitHub writes and no GitHub reads.** No push, no comment, no thread, no
+  commit status, no stamp. Steps 3 to 5 do not run.
+- **No commits.** Fixes land in the working tree; the developer reviews and
+  commits them. If the tree has a merge or rebase in progress, stop and say so.
+
+One local iteration:
+
+```
+L0  shepherd local change                 -> fingerprint, patch_path, ranges
+    rounds r = 1..4, stop on a clean round
+      swarm --local at the current change   (record, finish)
+      triage in local mode on its record    (edits the working tree)
+      simplify, when warranted              (edits the working tree)
+      shepherd local change                 -> the next round's change
+```
+
+- Pass swarm `--local` and the ladder; pass triage `findings_path` from swarm's
+  `local` result. Run simplify on the same gate as Step 2c, with
+  `review_base_sha` set to the capture's `base_sha`.
+- **A round is clean** when swarm's `local.status` is `complete`, its checks
+  ran without a failure on changed lines, triage fixed and promoted nothing,
+  and simplify changed nothing. A finding triage dismissed with a reason does
+  not block a clean round; a deferred one ends the loop for the developer.
+- **Incomplete is not clean.** When `finish` says `incomplete`, retry the
+  missing lens or stage once; still incomplete, stop and list what was not
+  reviewed.
+- Validation requests go through `references/dispatch.md` as on a PR.
+
+Report one of these, with the round count, the fixes by file, and every
+deferred finding with its options:
+
+- **local checks passed:** the last round was clean and `shepherd local
+  status` says `reviewed` for the files as they are now. Merge readiness still
+  belongs to the PR workflow; offer to open the PR (body as in Step 1's "No
+  PR") and run `/shepherd <pr>`.
+- **needs you:** findings were deferred, or checks still fail.
+- **review incomplete:** what was not reviewed, and why.
+- **stopped at the round cap:** what the last round still found.
 
 ## Before the first dispatch
 
@@ -103,9 +150,11 @@ print the state line, and hand back.
 also wakes the repo's review bots, which take minutes; set
 `bot_reviews_pending = true` so round 1 does not mistake silence for a clean PR.
 
-**No PR.** Ask the user (`AskUserQuestion`): paste a PR, let shepherd open one
-with `gh pr create` (write the body with the repo's PR-description skill if it
-has one), or cancel.
+**No PR.** Ask the user (`AskUserQuestion`): review the change locally first
+(local mode, above), paste a PR, let shepherd open one with `gh pr create`
+(write the body with the repo's PR-description skill if it has one, else
+with `../pr/SKILL.md`), or
+cancel.
 
 **Be on the PR branch.** Every runner commits to it from this tree. If the
 tree has uncommitted changes, stop and ask; never stash or discard them.
