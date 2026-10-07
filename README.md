@@ -36,7 +36,7 @@ flowchart TD
     end
 ```
 
-- Machines check first: your lint, typecheck and nearby tests run before any model reads the diff.
+- Machines check first: your lint, typecheck, nearby tests and installed scanners run before any model reads the diff.
 - A second model verifies each serious finding before it posts, so you read fewer false alarms.
 - shepherd never replies to people and never approves. Those stay yours.
 - A `shepherd` commit status shows where the loop got to, and a branch rule can require it.
@@ -87,7 +87,7 @@ A round is dry when triage fixed, resolved and promoted nothing, simplify change
 
 ```mermaid
 flowchart LR
-    D[Diff] --> CK[Repo checks:<br/>lint, typecheck, nearby tests]
+    D[Diff] --> CK[Repo checks and installed scanners:<br/>lint, typecheck, nearby tests,<br/>gitleaks, semgrep, osv-scanner and more]
     CK --> RT[Cheap router review]
     RT --> L1[review-correctness]
     RT --> L2[review-security]
@@ -208,7 +208,7 @@ OpenCode 1.x subagents take no model, so `shepherd opencode-agents` prints an ag
 
 ## What it holds to
 
-- **Machines first.** Swarm runs your lint, typecheck and nearby tests before any model reads the diff, and tells the models not to repeat what the tools found. If the repo uses Oxlint's anti-slop rules, those findings come for free.
+- **Machines first.** Swarm runs your lint, typecheck and nearby tests before any model reads the diff, plus the scanners you have installed (`gitleaks`, `semgrep`, `osv-scanner`, `actionlint`, `shellcheck`, `hadolint`) on the files they read. It keeps findings on changed lines, lists each suppression comment the PR adds, and tells the models not to repeat what the tools found. If the repo uses Oxlint's anti-slop rules, those findings come for free.
 - **Cheapest model that can do the job.** Reading work (the review router, simplify) starts at the bottom of the ladder (`haiku` -> `sonnet` -> `opus` -> `fable` on Claude Code). Runners that push commits or resolve threads start one rung up, where trials showed they stop needing a redo. A stronger model validates risky changes and serious findings; it never replaces a test.
 - **Verified findings.** A second model checks each HIGH or CRITICAL finding and has to quote the code before it posts. Unproven findings drop.
 - **Labelled comments.** Everything swarm posts starts with `🤖 Automated comment by **Shepherd swarm**`. It posts through your account, and readers deserve to know.
