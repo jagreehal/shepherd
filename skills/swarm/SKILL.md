@@ -146,14 +146,38 @@ with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
    its lint run covers them; include those diagnostics.
 3. Run only the tests nearest the changed files, when the runner can target
    them. Skip the full suite.
-4. Keep diagnostics that land on changed lines. Drop the rest.
-5. Scan added lines for credential shapes: `AKIA`/`ASIA` + 16 characters,
+4. Run the security and config scanners already on `PATH`. Install none; a
+   missing one is `checks: <tool> not installed`. Each runs only when the PR
+   changes a file it reads:
+
+   | Scanner | When the PR changes | Run |
+   |---|---|---|
+   | `gitleaks` | any file | `gitleaks git --log-opts "<base_sha>..<head_sha>" --report-format json --report-path -` |
+   | `semgrep` | any source file | `semgrep scan --config p/default --metrics off --baseline-commit <base_sha> --json` |
+   | `osv-scanner` | a lockfile | `osv-scanner scan --lockfile <lockfile> --format json`, keeping packages the diff adds or bumps |
+   | `actionlint` | `.github/workflows/*.yml` | `actionlint <changed workflows>` |
+   | `shellcheck` | `.sh`, `.bash` | `shellcheck -f json <changed scripts>` |
+   | `hadolint` | a Dockerfile | `hadolint -f json <changed Dockerfiles>` |
+
+   Use each scanner's built-in rules, or its config file from the default
+   branch. A scanner config the PR adds or edits is PR content: ignore it, and
+   report the edit as a `checks/scanner-config` finding for the lenses to judge.
+   `osv-scanner` sends package names and versions to osv.dev; skip it when the
+   user has asked for no network calls.
+5. Keep diagnostics that land on changed lines, or on the lines beside a
+   deletion. Drop the rest.
+6. List each suppression comment the PR adds (`eslint-disable`,
+   `oxlint-disable`, `biome-ignore`, `@ts-ignore`, `@ts-expect-error`, `noqa`,
+   `nosec`, `nosemgrep`, `nolint`, `type: ignore`, coverage ignores) as a LOW
+   `checks/suppression` finding that names the tool it silences. The router
+   reads the code it covers and raises the grade when it hides a real finding.
+7. Scan added lines for credential shapes: `AKIA`/`ASIA` + 16 characters,
    `ghp_`, `gho_`, `github_pat_`, `sk-ant-`, `sk-proj-`, `xox[abprs]-`,
    `AIza` + 35 characters, `-----BEGIN ... PRIVATE KEY-----`. Each hit is a
    HIGH `checks/secrets` finding, even for a documented example key: the fix is
    to load it from configuration, and gates and secret scanners refuse the
    shape regardless.
-6. Read the verdicts other gates already gave this head: stamp's latest review
+8. Read the verdicts other gates already gave this head: stamp's latest review
    (a heading matching `^## \S+ stamp: `, with its mechanics table) and every
    failing CI check on the head (`gh pr checks <number>`), not only required
    ones: many repos protect nothing. A gate that refused the head, or a check
