@@ -48,6 +48,12 @@ to all of them.
   short must never be possible. This is shepherd's only status write.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
+- **Local mode touches nothing on GitHub.** `--local` never pushes, posts,
+  resolves, sets a status, or commits: fixes stay in the working tree for the
+  developer. It reports "local checks passed", never merge-ready.
+- **A local review is clean only when `shepherd local finish` says
+  `complete`.** Never report an incomplete record as a clean review, and never
+  edit the record to make it pass.
 
 ## Trust
 
@@ -114,6 +120,29 @@ to all of them.
 - A skill's `description` is how an agent decides to load it: say what it does
   and when to use it, under 1024 characters.
 - Keep instructions direct: imperative, specific, no filler.
+- Write and edit skills by `skills/writing-for-agents/SKILL.md`: a checkable
+  completion criterion on every step, and reference only some paths need
+  pushed behind a pointer.
+
+## Upstream skills
+
+`code-review`, `diagnosing-bugs`, `pr`, `retro` and `writing-for-agents` are
+Matt Pocock's, copied unchanged from mattpocock/skills
+([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Never edit them: update by
+copying the upstream directory over, and adapt them from shepherd's own skills,
+which point at them by relative path and say which parts apply.
+
+## Local CLI
+
+- `src/local.ts` reads the developer's repository and never changes it or
+  runs its code: untracked files go through a temp copy of the index, git runs
+  with hooks and fsmonitor off and every configured filter driver emptied, and
+  scratch and receipts live under the git directory.
+- A deleted file is a changed range too (its old lines), so deleting a check
+  still needs a reviewer. Paths come NUL-delimited or unquoted, never as git
+  prints them.
+- Keep the record schema (`ReviewRecord`) and swarm's documented record in
+  step; a test parses one with the other.
 
 ## Installer
 

@@ -75,8 +75,16 @@ and give the change since then, so a merged edit shows whether it helped.
 
 ## Step 4: Skill edits
 
+Before writing an edit, sort each cause with the categories in
+`../retro/SKILL.md` (Matt Pocock's `retro`): a mechanical mistake gets an
+automated check (Step 5), and a check that exists but is not wired in is the
+finding; only a judgement call becomes skill text. Write that text by
+`../writing-for-agents/SKILL.md`.
+
 Clone or use the shepherd checkout, branch `garden/<date>`, make the edits,
-and run `bun run check`; it must pass. Commit with the trailer
+and run `bun run check`; it must pass. Never edit the upstream skills
+(`code-review`, `diagnosing-bugs`, `pr`, `retro`, `writing-for-agents`): a
+cause there gets an edit to the shepherd skill that points at them. Commit with the trailer
 `Shepherd: garden`. Open one PR titled `garden: <date>` whose body has the
 score table, then one section per edit: the cause, the evidence links, and
 the before/after sentence. Nothing to propose: no PR, and say so.

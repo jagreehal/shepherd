@@ -2,7 +2,7 @@
 
 shepherd takes a pull request from "opened" to "ready to merge".
 
-It is a pack of agent skills that runs inside your coding agent (Claude Code, Codex, or any harness with skills and subagents), on your machine, as you. A review swarm reads the change through five lenses and posts inline comments. Triage works through every thread. CI repair fixes what the PR broke. The loop repeats until a round finds nothing new, then hands the head to [stamp](https://github.com/jagreehal/stamp) for the approval verdict.
+It is a pack of agent skills that runs inside your coding agent (Claude Code, Codex, or any harness with skills and subagents), on your machine, as you. A review swarm reads the change through five lenses, plus a spec lens when the change links an issue, and posts inline comments. Triage works through every thread. CI repair fixes what the PR broke. The loop repeats until a round finds nothing new, then hands the head to [stamp](https://github.com/jagreehal/stamp) for the approval verdict.
 
 ```mermaid
 flowchart LR
@@ -60,7 +60,51 @@ The installer copies the skills and marks each copy. It replaces only what it in
 /triage 42                   # thread triage on its own
 /ci-repair 42                # CI on its own
 /review-security             # one lens on the current diff
+/shepherd --local            # before a PR: review and fix your change on this machine
+/swarm --local               # before a PR: review only, print the findings
 ```
+
+## Before you open a PR
+
+`/shepherd --local` reviews and fixes your change before it reaches GitHub. It uses the same lenses, verification and fix rules as the PR loop, and it never pushes, comments, commits or sets a status. You commit the fixes.
+
+```mermaid
+flowchart TD
+    C[shepherd local change<br/>unpushed commits, staged,<br/>unstaged, untracked] --> S[swarm --local<br/>checks, router, lenses, verify]
+    S --> F{shepherd local finish}
+    F -- incomplete --> I[Review incomplete:<br/>what was not reviewed]
+    F -- complete --> T[triage, local:<br/>fix in the working tree]
+    T --> SI[simplify]
+    SI --> Q{Clean round?}
+    Q -- no --> C
+    Q -- "a decision is yours" --> Y[Needs you:<br/>each option listed]
+    Q -- yes --> P[Local checks passed]
+    P --> PR[Open the PR,<br/>then /shepherd &lt;pr&gt;]
+```
+
+The change covers the commits your branch has that its upstream (or the remote's default branch) lacks, staged and unstaged edits, and untracked files `.gitignore` does not exclude. shepherd reads untracked files through a copy of the index, so your own staging stays as you left it.
+
+`shepherd local finish` checks each review against the change before anyone reads it as clean:
+
+- every stage ran, and every lens ended `ok`;
+- every changed line range reached at least one reviewer;
+- each finding names a line its file has;
+- each check finding was raised or dropped with a reason;
+- the files did not change while the review ran.
+
+Anything short of that reports **review incomplete** with what is missing. It proves each line was put in front of a reviewer, which is less than proof that the reviewer understood it.
+
+A complete review writes a receipt keyed to a fingerprint of the exact content. `shepherd local status` tells you whether the files on disk still match a reviewed change; any edit since makes it `changed`. Wire it into a pre-push hook if you want one.
+
+Local mode ends with **local checks passed**, **needs you**, **review incomplete**, or the round cap. Merge readiness still belongs to the PR loop and stamp.
+
+Try it on planted bugs:
+
+```bash
+bunx @jagreehal/shepherd local demo    # prints the repository path and the bugs to expect
+```
+
+The demo repository carries seven bugs, one per way a change reaches the review: an unpushed commit, a staged edit, an unstaged edit, an untracked file and a deleted check. `examples/local-demo/expected.json` lists each one with its lines.
 
 ## How it works
 
@@ -94,8 +138,9 @@ flowchart LR
     RT --> L3[review-simplicity]
     RT --> L4[review-maintainability]
     RT --> L5[review-slop]
+    RT --> L6[review-spec<br/>when an issue or spec is linked]
     RT --> LT[Your team's lenses]
-    L1 & L2 & L3 & L4 & L5 & LT --> VF{HIGH or CRITICAL?}
+    L1 & L2 & L3 & L4 & L5 & L6 & LT --> VF{HIGH or CRITICAL?}
     VF -- yes --> V2[Second model quotes<br/>the code or drops it]
     VF -- no --> P
     V2 --> P[Inline comments<br/>and one summary comment]
@@ -131,6 +176,8 @@ Triage ends each thread fixed, resolved or deferred. It never replies and never 
 | `review-simplicity` | The four rules of simple design; what to delete and what replaces it. |
 | `review-maintainability` | Coupling, rollout safety, observability, naming, and the repo's own written rules. |
 | `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
+| `review-spec` | The change against its issue or spec: requirements missing, built wrong, or not asked for. |
+| `code-review`, `diagnosing-bugs`, `pr`, `retro`, `writing-for-agents` | [Matt Pocock's skills](https://github.com/mattpocock/skills), copied unchanged. `review-spec` runs code-review's Spec axis, `review-simplicity` adds its smell baseline, ci-repair diagnoses with diagnosing-bugs, shepherd writes PR bodies with pr when the repo has no PR skill, and garden sorts causes with retro and writes skill text by writing-for-agents. |
 | `garden` | The outer loop: scores shepherd's recent runs from GitHub and opens PRs with skill edits and lint rules for findings that keep recurring. |
 
 ### When it asks you
@@ -280,6 +327,10 @@ stamp's deterministic gates and approval sit at the end of the loop. In label mo
 
 Swarm's comments post through the author's account. A gate that treats another reviewer's comment as assurance must not count them; the comment header tells them apart.
 
+## Credits
+
+`code-review`, `diagnosing-bugs`, `pr`, `retro` and `writing-for-agents` come from [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock, under the MIT License. They are copied unchanged so they can be refreshed as he improves them; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the commit and how to update. `pr`'s Summary section credits Dex Horthy's `show-me` in `skills/pr/CREDITS.md`.
+
 ## Development
 
 ```bash
@@ -287,4 +338,4 @@ bun install
 bun run check    # oxlint (with anti-slop), tsc, bun test
 ```
 
-The tests check the skill pack itself: each skill's frontmatter, each relative path a skill points at, each JSON contract a runner returns, and the comment header triage relies on. They also exercise the installer against temporary directories. Contributor rules live in [AGENTS.md](AGENTS.md).
+The tests check the skill pack itself: each skill's frontmatter, each relative path a skill points at, each JSON contract a runner returns, and the comment header triage relies on. They also exercise the installer against temporary directories, and run local capture, `finish` and receipts against the demo repository. Contributor rules live in [AGENTS.md](AGENTS.md).

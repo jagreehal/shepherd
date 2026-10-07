@@ -26,7 +26,7 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] 
 
 describe("skill pack", () => {
   test("ships the loop, its runners, the ladder and every lens", () => {
-    expect(names).toEqual(["ci-repair", "garden", "pair", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "shepherd", "swarm", "triage"]);
+    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
   });
 
   test.each(names)("%s: frontmatter name matches its directory and has a description within the 1024-char limit", (name) => {
@@ -43,6 +43,27 @@ describe("skill pack", () => {
     expect(loop).toContain("-f context=shepherd");
     expect(loop).toContain("A session that dies mid-iteration leaves the last `pending`, never a green.");
     expect(loop).toContain("Only the first terminal condition with nothing deferred sets `success`.");
+  });
+
+  test("the upstream skills still hold the parts shepherd's skills point at, and carry their notice", () => {
+    // An upstream update that renames one of these breaks a pointer in a shepherd skill: fix the pointer.
+    const anchors: [string, string][] = [
+      ["code-review", "**Spec sub-agent prompt**"],
+      ["code-review", "the **smell baseline**"],
+      ["diagnosing-bugs", "## Phase 1: Build a feedback loop"],
+      ["retro", "**Automated checks**"],
+      ["pr", "## Merge Danger"],
+      ["writing-for-agents", "**completion criterion**"],
+    ];
+
+    const notices = readFileSync(path.join(ROOT, "THIRD_PARTY_NOTICES.md"), "utf8");
+
+    for (const [skill, anchor] of anchors) {
+      expect({ skill, has: readFileSync(path.join(SKILLS, skill, "SKILL.md"), "utf8").includes(anchor) }).toEqual({ skill, has: true });
+      expect(notices).toContain(`skills/${skill}/`);
+    }
+
+    expect(notices).toContain("Copyright (c) 2026 Matt Pocock");
   });
 
   test("every relative file a skill points at exists", () => {
@@ -140,6 +161,15 @@ describe("skill pack", () => {
     test.each(["triage/SKILL.md", "ci-repair/SKILL.md", "shepherd/references/dispatch.md"])("%s follows the default branch's house rules in the same words", (rel) => {
       expect(read(rel)).toContain("Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do not count.");
     });
+  });
+
+  test("swarm adds the mandatory spec and custom lenses before an empty plan can skip dispatch", () => {
+    const swarm = readFileSync(path.join(SKILLS, "swarm", "SKILL.md"), "utf8");
+    const skip = swarm.indexOf("Skip only when the plan is still empty after those additions.");
+
+    expect(skip).toBeGreaterThan(swarm.indexOf("Add a `spec` delegation"));
+    expect(skip).toBeGreaterThan(swarm.indexOf("Add a delegation for every custom lens"));
+    expect(swarm).not.toContain("Skip when the plan is empty.");
   });
 
   test("swarm reports every lens's status, so a lens that did not finish never reads as clean", () => {

@@ -13,7 +13,9 @@
     "!src/*.test.ts",
     "skills",
     "commands",
-    "AGENTS.md"
+    "examples",
+    "AGENTS.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "bun": ">=1.2",

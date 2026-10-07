@@ -95,7 +95,13 @@ For each failure:
    - **Needs-decision:** the fix means choosing product behaviour, accepting a
      compatibility break, or updating snapshots whose intent is unclear.
 
-When unsure, do not guess with a code change. Report it with the evidence.
+When unsure, do not guess with a code change. When the log does not name the
+cause of a PR-caused failure, run the diagnosis loop in
+`../diagnosing-bugs/SKILL.md` (Matt Pocock's `diagnosing-bugs`) locally before
+any edit: a command that goes red on this failure, ranked falsifiable
+hypotheses, one variable per probe, and its tagged debug logs removed after.
+This skill's rules still win: one commit, never a weakened test. No red
+command: report it with the evidence.
 
 ## Step 4: Repair or rerun
 
