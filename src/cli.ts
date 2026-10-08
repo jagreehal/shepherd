@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // shepherd install   [--project | --target <dir>] [--link] [--force]
 // shepherd uninstall [--project | --target <dir>]
-// shepherd lens new <name> [--applies <glob>]... [--description <text>]
+// shepherd lens new <name> [--from <template>] [--applies <glob>]... [--description <text>]   (templates: lenses/)
 // shepherd lens add <skill> [--name <name>] [--applies <glob>]... [--description <text>] [--global]
 // shepherd lens list
 // shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
@@ -26,13 +26,13 @@ import { parseArgs } from "node:util";
 import { collect, score } from "./garden.ts";
 import { install, uninstall, type Outcome } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
-import { addLens, BUILT_IN_LENSES, catalog, defaultBranchLensFile, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
+import { addLens, BUILT_IN_LENSES, lensTemplates, catalog, defaultBranchLensFile, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
 
 const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [--force]
        shepherd uninstall [--project | --target <dir>]
-       shepherd lens new <name> [--applies <glob>]... [--description <text>]
+       shepherd lens new <name> [--from <template>] [--applies <glob>]... [--description <text>]
        shepherd lens add <skill> [--name <name>] [--applies <glob>]... [--description <text>] [--global]
        shepherd lens list
        shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
@@ -59,6 +59,7 @@ const { values: opts, positionals } = parseArgs({
     file: { type: "string" }, // opencode-agents: a lenses.yml to read instead of the default branch's
     "min-prs": { type: "string", default: "3" },
     base: { type: "string" }, // local: the ref the change is measured from
+    from: { type: "string" }, // lens new: start from a starter lens in lenses/
   },
 });
 
@@ -139,13 +140,15 @@ if (command === "install") {
   if (opts.applies?.length) lens.applies_to = opts.applies;
 
   if (opts.description) lens.description = opts.description;
-  const dir = orExit(() => newLens(repoRoot, skillRef, lens));
+  const dir = orExit(() => newLens(repoRoot, skillRef, lens, opts.from));
 
   if (opts.model) pinModel(repoLensFile(repoRoot), skillRef, opts.model);
 
-  console.log(`lens "${skillRef}" -> ${path.join(dir, "SKILL.md")}\nfill in its Review and Fix sections, try it with /swarm --preview, then: ${MERGE_NOTE}`);
+  console.log(`lens "${skillRef}" -> ${path.join(dir, "SKILL.md")}\n${opts.from ? `started from the ${opts.from} template: edit its rules to fit` : "fill in its Review and Fix sections"}, try it with /swarm --preview, then: ${MERGE_NOTE}`);
 } else if (command === "lens" && sub === "list") {
   for (const name of BUILT_IN_LENSES) console.log(`${name.padEnd(18)} built-in`);
+
+  console.log(`${"".padEnd(18)} starter templates (lens new <name> --from <template>): ${lensTemplates().join(", ")}`);
 
   for (const [name, lens] of Object.entries(catalog(homedir(), repoRoot))) {
     const found = resolveSkill(lens.skill, homedir(), repoRoot);

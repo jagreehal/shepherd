@@ -5,7 +5,7 @@ import path from "node:path";
 import { parse } from "yaml";
 import { parseCommit, parseThread, roundsOf, score } from "./garden.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
-import { addLens, catalog, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
+import { addLens, catalog, lensTemplates, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -311,6 +311,19 @@ describe("custom lenses", () => {
     expect(skillDescription(dir)).toBe("Reviews code against the team's react rules.");
     expect(readLenses(repoLensFile(repo))).toEqual({ react: { skill: ".shepherd/lenses/react", applies_to: ["**/*.tsx"] } });
     expect(() => newLens(repo, "react", {})).toThrow();
+  });
+
+  test("starts a lens from a starter template, renamed so its findings carry the team's name", () => {
+    const { home, repo } = sandbox();
+    const dir = newLens(repo, "obs", { applies_to: ["src/**"] }, "observability");
+    const text = readFileSync(path.join(dir, "SKILL.md"), "utf8");
+
+    expect(lensTemplates()).toContain("observability");
+    expect(text).toMatch(/^name: obs$/m);
+    expect(text).toMatch(/^# obs$/m);
+    expect(text).toContain("- **boundary-signal**:");
+    expect(lensProblems({ skill: ".shepherd/lenses/obs" }, home, repo)).toEqual([]);
+    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: observability');
   });
 
   test("validates a team lens before it runs: rules with ids, each id once", () => {

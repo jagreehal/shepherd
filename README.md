@@ -226,6 +226,37 @@ shepherd reads the repository's lens file from the default branch, so a PR canno
 
 A `--global` lens is a personal preview. Swarm prints its findings locally and never posts them, so you can try a lens on real PRs before you commit it for the team.
 
+### Starter lenses
+
+A team that wants every change checked for observability can start from the bundled pack instead of a blank file:
+
+```bash
+bunx @jagreehal/shepherd lens new observability --from observability --applies 'src/**'
+```
+
+That copies `lenses/observability/SKILL.md` into `.shepherd/lenses/observability/` and registers it. Its seven rules flag outbound calls with no span or log, errors that lose their cause, unstructured logs, secrets or personal data in telemetry, silent data drops, unbounded labels, and user-facing changes with no signal. Its `## Fix` section has triage reach for the repository's existing logger and tracer, and send anything that adds a telemetry dependency to you. Edit the rules to fit; `shepherd lens list` shows the templates.
+
+### The same pack in stamp
+
+A lens is a `SKILL.md` with id'd rules under `## Review`. [stamp](https://github.com/jagreehal/stamp) reads the same file as a rule pack, so one pack steers the review that fixes code and the gate that approves it:
+
+```mermaid
+flowchart LR
+    P[.shepherd/lenses/observability/SKILL.md] --> L[shepherd lens:<br/>findings, then triage fixes<br/>following its Fix section]
+    P --> R[stamp rule pack:<br/>the reviewer refuses, escalates<br/>or notes a broken rule]
+```
+
+```yaml
+# .stamp/policy.yml
+rules:
+  observability:
+    skill: .shepherd/lenses/observability
+    applies_to: ['src/**']
+    on_break: escalate
+```
+
+Both read the pack from the default branch, so a PR cannot change the rules it is judged by. stamp also sends any PR that edits a configured pack to a human, since the pack's rules are trusted context for every later review.
+
 ## Choose the models
 
 Use any provider your harness can reach. Model ids pass straight to its agent tool: `haiku` on Claude Code, `provider/model` on OpenCode.
