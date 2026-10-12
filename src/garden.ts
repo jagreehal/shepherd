@@ -128,6 +128,22 @@ export function parseCommit(sha: string, message: string, date = ""): Commit {
   return { sha, headline: message.split("\n")[0] ?? "", skill: trailer("Shepherd"), lens: trailer("Shepherd-Lens"), fixes, date };
 }
 
+/** An incident whose culprit PR stamp approved: the review let a regression through. */
+export type Escape = { incident: number; title: string; url: string; pr: number; sha: string; cause: "coverage_gap" | "merge_skew" | null };
+
+const REGRESSED = /Regressed-by: #(\d+) \(([0-9a-f]{7,40})\), stamp: approved\b/;
+
+/** The escape an incident issue records, from the lines the incident skill writes; null unless stamp approved the culprit. */
+export function parseEscape(issue: { number: number; title: string; url: string; body: string }): Escape | null {
+  if (!issue.body.includes("<!-- shepherd-incident:")) return null;
+  const m = REGRESSED.exec(issue.body);
+
+  if (!m) return null;
+  const cause = /^`?Coverage gap: /m.test(issue.body) ? "coverage_gap" : /^`?Merge skew: /m.test(issue.body) ? "merge_skew" : null;
+
+  return { incident: issue.number, title: issue.title, url: issue.url, pr: Number(m[1]), sha: m[2]!, cause };
+}
+
 export const roundsOf = (summaryBody: string | undefined) => (summaryBody ? Number(ROUND.exec(summaryBody)?.[1] ?? 0) || null : null);
 
 const gh = (args: string[]) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "pipe"] }); // stderr rides on the thrown error
@@ -159,6 +175,15 @@ const Commits = z.array(z.object({ sha: z.string(), commit: z.object({ message: 
 const Statuses = z.object({ statuses: z.array(z.object({ context: z.string(), state: z.string(), description: z.string().nullable(), updated_at: z.string() })) });
 
 const Comments = z.array(z.object({ body: z.string() }));
+
+const Issues = z.array(z.object({ number: z.number(), title: z.string(), url: z.string(), body: z.string() }));
+
+/** Incidents updated since `since` whose culprit PR stamp approved. */
+export function collectEscapes(repo: string, since: string): Escape[] {
+  const issues = Issues.parse(JSON.parse(gh(["issue", "list", "-R", repo, "--label", "incident", "--state", "all", "--search", `updated:>=${since}`, "--limit", "100", "--json", "number,title,url,body"])));
+
+  return issues.flatMap((i) => parseEscape(i) ?? []);
+}
 
 /** Read shepherd's record on the PRs updated since `since` (YYYY-MM-DD). */
 export function collect(repo: string, since: string): PrRecord[] {

@@ -33,7 +33,7 @@ import { parse as parseYaml, stringify } from "yaml";
 import { type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
-import { collect, score } from "./garden.ts";
+import { collect, collectEscapes, score } from "./garden.ts";
 import { install, uninstall, type Outcome } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
@@ -209,7 +209,7 @@ if (command === "install") {
   const since = opts.since ?? new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
   const repos = [sub, ...(skillRef ? [skillRef] : []), ...rest];
 
-  console.log(JSON.stringify(repos.map((repo) => ({ repo, since, ...score(orExit(() => collect(repo, since)), Number(opts["min-prs"])) })), null, 2));
+  console.log(JSON.stringify(repos.map((repo) => ({ repo, since, ...score(orExit(() => collect(repo, since)), Number(opts["min-prs"])), escapes: orExit(() => collectEscapes(repo, since)) })), null, 2));
 } else if (command === "local" && sub === "change") {
   console.log(JSON.stringify(orExit(() => captureChange(repoRoot, opts.base)), null, 2));
 } else if (command === "local" && sub === "finish" && skillRef) {

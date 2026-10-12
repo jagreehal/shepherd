@@ -5,7 +5,8 @@ description: >
   GitHub record (reverted fixes, people replying in a thread, round caps, loops
   that stopped short or went quiet), then opens PRs: skill edits to shepherd for
   the patterns behind low scores, and lint rules for lens findings triage keeps
-  fixing, so lint catches them before any model reads the diff. Use for "/garden", "garden shepherd", "what should shepherd learn", or
+  fixing, so lint catches them before any model reads the diff, and a rule for
+  each incident whose culprit PR stamp approved. Use for "/garden", "garden shepherd", "what should shepherd learn", or
   on a weekly schedule. Takes repos (owner/name) and an optional --since date.
 ---
 
@@ -41,7 +42,8 @@ person replied in, rounds, and `shepherd` status. `recurring` lists the lens
 rules **accepted** on at least 3 PRs: triage fixed them in a commit nobody
 reverted, named them in a `Shepherd-Fixes` trailer, on a PR by someone who can
 push, and no person argued in their threads. Triage resolves findings it judged
-wrong too, so a resolved thread alone counts for nothing.
+wrong too, so a resolved thread alone counts for nothing. `escapes` lists the
+incidents whose culprit PR stamp approved (Step 5b).
 
 | Signal | Means |
 |---|---|
@@ -69,7 +71,7 @@ the thread the author was left with was one triage should have fixed.
 ## Step 3: Score the window
 
 One table per repo: PRs shepherd touched, PRs with each signal, and the share
-of PRs with no signal. Read the previous garden PR's body
+of PRs with no signal, plus the escapes count. Read the previous garden PR's body
 (`gh pr list -R jagreehal/shepherd --search "garden:" --state all --limit 1`)
 and give the change since then, so a merged edit shows whether it helped.
 
@@ -116,16 +118,39 @@ Open one PR per repo titled `garden: lint rules <date>`, with the trailer
 id it retires. Leave the lens rule in place: a person retires it once the
 lint rule has held.
 
+## Step 5b: A rule for each escaped regression
+
+Each entry in `escapes` is an incident the `incident` skill traced to a PR
+stamp approved. Read the incident issue's root cause, the culprit PR's diff
+and stamp's review on it, and the fix PR with its reproducing test.
+
+- **`cause: merge_skew`:** the PR passed on its own head, so no review rule
+  would have caught it. Put "require up-to-date branches, or a merge queue" in
+  the report and propose nothing.
+- **Otherwise:** write the smallest rule that flags the culprit diff and passes
+  the fix. A rule one file's syntax decides goes through Step 5 as a lint rule.
+  Any other rule joins the repository's own stamp rule pack (`.stamp/rules/`)
+  or a team lens in `.shepherd/`, whichever already covers those paths; add to
+  an existing file before creating one. The rule names what to check, never
+  the incident ("a function that now dereferences an argument its callers can
+  pass as null needs a test with that input").
+
+Rules only tighten. Open one PR per repository titled `garden: escapes <date>`,
+with the trailer `Shepherd: garden`, and give each rule its incident, culprit
+PR, fix PR and the line in the culprit diff it flags. stamp sends a PR that
+edits `.stamp/` or `.shepherd/` to a person, which is the review a new rule
+needs.
+
 ## Outbox mode
 
 When `GARDEN_OUTBOX` is set (the scheduled workflow), you hold no write
-token. Steps 4 and 5 make the same edits but never commit, push, or open a PR.
+token. Steps 4, 5 and 5b make the same edits but never commit, push, or open a PR.
 For each PR you would open, make one directory:
 
 ```text
 $GARDEN_OUTBOX/<short-slug>/
   repo        one line: owner/name the PR targets
-  body.md     the PR body, exactly as Steps 4 and 5 describe it
+  body.md     the PR body, exactly as Steps 4, 5 and 5b describe it
   tree/       a fresh `gh repo clone` of that repo with your edits, uncommitted
 ```
 
@@ -135,7 +160,7 @@ The workflow turns each directory into a patch and opens the PR itself.
 
 ## Step 6: Report
 
-End with the score tables, links to the PRs opened, the causes with no
+End with the score tables, the escapes and the rule proposed for each, links to the PRs opened, the causes with no
 proposal and why, and the judgment rules left to the lenses. Scheduled runs
 print it to the job log; the PR bodies carry everything a reviewer needs.
 
