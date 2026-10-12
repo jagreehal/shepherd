@@ -29,9 +29,13 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun run typecheck && bun test",
-    "lint": "oxlint src"
+    "lint": "oxlint src",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@oxlint/plugins": "1.78.0",
     "@types/bun": "^1.2.0",
     "oxlint": "1.78.0",
