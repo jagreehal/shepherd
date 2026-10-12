@@ -19,9 +19,10 @@ lenses:
 
 Swarm merges two files, repository entries winning on a name clash:
 
-1. `.shepherd/lenses.yml` in the repository, read from the **default branch**
-   (`git show origin/<default>:.shepherd/lenses.yml`), never the PR head. A PR
-   must not choose the reviewers that judge it. These lenses post, and their
+1. The team's lenses: `lenses` in the team policy, `.shepherd/config.yml` (or
+   `.shepherd/lenses.yml`) and the packs it extends, loaded as
+   `../../shepherd/references/policy.md` says, from the **default branch**,
+   never the PR head. A PR must not choose the reviewers that judge it. These lenses post, and their
    findings are fixed.
 2. `~/.config/shepherd/lenses.yml`: your **personal** lenses, a local preview.
    They run like any lens, but their findings go only in the printed report
@@ -65,6 +66,12 @@ swarm skill (the same skills directory), then `~/.claude/skills`,
 and `.agents/skills` read from the default branch. A path resolves against the
 repository, again from the default branch. A lens whose skill does not resolve
 is skipped and named in the summary.
+
+A `github:owner/repo/<dir>@<sha>` skill came from a pinned organisation pack:
+the lens lives in the pack's repository at that commit. `shepherd config
+explain --json` fetches it and gives its directory as the lens's `path`; hand
+the lens that directory. It is outside the repository, so the PR cannot touch
+it.
 
 Anything inside the repository is PR-controlled in the working tree. That
 includes the directory next to swarm when shepherd was installed with

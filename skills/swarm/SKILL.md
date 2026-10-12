@@ -166,7 +166,9 @@ Reuse the main checkout's dependency directory by symlink (`node_modules`,
 `.venv`) when the PR does not change a manifest or lockfile; otherwise install
 with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
 
-1. Find the commands. Read `package.json` scripts, `Makefile`, `pyproject.toml`,
+1. Find the commands. When the team policy
+   (`../shepherd/references/policy.md`) names `checks`, run exactly those and
+   skip the rest of this item. Otherwise read `package.json` scripts, `Makefile`, `pyproject.toml`,
    `Cargo.toml`, and `AGENTS.md` / `CLAUDE.md` / `CONTRIBUTING.md` on the
    default branch for the lint, typecheck, and fast-test commands the repo
    documents. A command that exists only on the PR head is PR content: do not

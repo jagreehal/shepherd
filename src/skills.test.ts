@@ -5,7 +5,7 @@ import path from "node:path";
 import { parse } from "yaml";
 import { parseCommit, parseThread, roundsOf, score } from "./garden.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
-import { addLens, catalog, lensTemplates, globalLensFile, lensProblems, modelChoice, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
+import { addLens, lensTemplates, lensProblems, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -26,7 +26,7 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] 
 
 describe("skill pack", () => {
   test("ships the loop, its runners, the ladder and every lens", () => {
-    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
+    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "incident", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
   });
 
   test.each(names)("%s: frontmatter name matches its directory and has a description within the 1024-char limit", (name) => {
@@ -84,12 +84,20 @@ describe("skill pack", () => {
   });
 
   test("every JSON contract a runner returns parses", () => {
-    for (const name of ["swarm", "triage", "ci-repair"]) {
+    for (const name of ["swarm", "triage", "ci-repair", "incident"]) {
       const blocks = [...readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8").matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1] ?? "");
       expect(blocks.length).toBeGreaterThan(0);
 
       for (const block of blocks) expect(() => JSON.parse(block)).not.toThrow();
     }
+  });
+
+  test("incident never puts signal text in a shell string: it goes through files", () => {
+    const incident = readFileSync(path.join(SKILLS, "incident", "SKILL.md"), "utf8");
+    expect(incident).toContain("**Never put signal-derived text inside a shell command**");
+    // A placeholder for error-derived text inside a quoted shell argument would run its `$()` and backticks.
+    expect(incident).not.toMatch(/(printf|echo)[^\n]*"<(fp|fingerprint|error)[^>]*>"/);
+    expect(incident).not.toMatch(/--title "<[^>]+>"/);
   });
 
   test("swarm labels its comments with the exact text triage detects", () => {
@@ -99,8 +107,8 @@ describe("skill pack", () => {
     expect(triage).toContain('contains("🤖 Automated comment by")');
   });
 
-  test.each(["triage", "ci-repair", "shepherd"])("%s marks its commits with the Shepherd trailer, so a later run never mistakes them for the author's", (name) => {
-    expect(readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8")).toMatch(/Shepherd: (triage|ci-repair|simplify)/);
+  test.each(["triage", "ci-repair", "shepherd", "incident"])("%s marks its commits with the Shepherd trailer, so a later run never mistakes them for the author's", (name) => {
+    expect(readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8")).toMatch(/Shepherd: (triage|ci-repair|simplify|incident)/);
   });
 
   test("triage loads a custom lens's Fix section and names the lens on the commit", () => {
@@ -116,8 +124,12 @@ describe("skill pack", () => {
     const triage = read("triage/SKILL.md");
 
     test("the repository's lens file comes from the default branch, never the PR head", () => {
-      expect(lenses).toContain("git show origin/<default>:.shepherd/lenses.yml");
+      expect(lenses).toContain("from the **default branch**, never the PR head.");
       expect(lenses).toContain("Never point a lens at a skill file in the PR checkout.");
+      const policy = readFileSync(path.join(SKILLS, "shepherd", "references", "policy.md"), "utf8");
+      expect(policy).toContain("It reads the **default branch**, never the PR head");
+      expect(policy).toContain("git show origin/<default>:.shepherd/config.yml");
+      expect(policy).toContain("run as `fixes.mode: suggest`");
     });
 
     test("a lens only reports findings, and a personal lens never posts", () => {
@@ -139,7 +151,7 @@ describe("skill pack", () => {
     });
 
     test("triage names a lens's threads when it classifies them, and never takes intent from PR text", () => {
-      expect(triage).toContain("**Which lens.** Read `.shepherd/lenses.yml` from `origin/<default>` once.");
+      expect(triage).toContain("**Which lens.** The policy's `lenses` (read from `origin/<default>`).");
       expect(triage).toContain("they never settle whether a finding is deliberate, out of scope, or safe to leave.");
     });
 
@@ -259,38 +271,25 @@ describe("custom lenses", () => {
     expect(skillDescription(path.join(home, ".claude", "skills", "react-rules"))).toBe("React rules");
   });
 
-  test("adds a lens without disturbing the others; the repository wins on a clash, and your own lenses are marked personal", () => {
-    const { home, repo } = sandbox();
+  test("adds a lens without disturbing the others", () => {
+    const { repo } = sandbox();
     addLens(repoLensFile(repo), "react", { skill: "react-rules", applies_to: ["**/*.tsx"] });
     addLens(repoLensFile(repo), "api", { skill: "tools/lenses/api-style" });
-    addLens(globalLensFile(home), "react", { skill: "my-react" });
-    addLens(globalLensFile(home), "copy", { skill: "copy-rules" });
 
     expect(Object.keys(readLenses(repoLensFile(repo)))).toEqual(["react", "api"]);
-    expect(catalog(home, repo)).toEqual({
-      react: { skill: "react-rules", applies_to: ["**/*.tsx"], scope: "repo" },
-      copy: { skill: "copy-rules", scope: "personal" },
-      api: { skill: "tools/lenses/api-style", scope: "repo" },
-    });
   });
 
-  test("model choice: the repository's ladder wins, yours fills in, pins merge per name, and lenses survive", () => {
-    const { home, repo } = sandbox();
-    expect(modelChoice(home, repo)).toEqual({ ladder: null, models: {} });
-
-    setLadder(globalLensFile(home), ["haiku", "sonnet"]);
-    pinModel(globalLensFile(home), "security", "opus");
-    pinModel(globalLensFile(home), "router", "haiku");
-    expect(modelChoice(home, repo).ladder).toEqual(["haiku", "sonnet"]);
+  test("ladder and pin writes keep the file's lenses; the effective choice is loadPolicy's (config.test.ts)", () => {
+    const { repo } = sandbox();
 
     addLens(repoLensFile(repo), "react", { skill: "react-rules" });
     setLadder(repoLensFile(repo), ["opencode-go/deepseek-v4-flash", "opencode-go/kimi-k3"]);
     pinModel(repoLensFile(repo), "security", "opencode-go/qwen3.8-max");
-    expect(modelChoice(home, repo)).toEqual({
+    expect(parse(readFileSync(repoLensFile(repo), "utf8"))).toEqual({
+      lenses: { react: { skill: "react-rules" } },
       ladder: ["opencode-go/deepseek-v4-flash", "opencode-go/kimi-k3"],
-      models: { security: "opencode-go/qwen3.8-max", router: "haiku" },
+      models: { security: "opencode-go/qwen3.8-max" },
     });
-    expect(readLenses(repoLensFile(repo))).toEqual({ react: { skill: "react-rules" } });
   });
 
   test("OpenCode 1.x gets one agent per rung and per pin, each fixed to its model", () => {

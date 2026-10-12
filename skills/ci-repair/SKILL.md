@@ -79,7 +79,10 @@ For each failure:
    a child failure; diagnose the leaves.
 2. Fetch each leaf's failed-step log once: `gh run view --job <id> --log-failed`.
    Keep the error, the command, and the file location; trim setup noise.
-3. Find the real local command in the repo's config.
+3. Find the real local command: the team policy's `checks` first
+   (`../shepherd/references/policy.md`), then the repo's config. Under
+   `fixes.mode: suggest` or `local`, and for a file under `escalate.paths`,
+   the policy says how far Step 4 may go.
 4. Set aside **gate checks** before classifying: stamp's check (the job from
    `.github/workflows/stamp.yml`, usually named `review`) and any other
    approval or policy gate. A gate's failure is its verdict, not a CI failure.

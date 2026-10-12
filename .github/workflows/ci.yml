@@ -19,3 +19,9 @@ jobs:
           node-version-file: .node-version
       - run: bun install --frozen-lockfile
       - run: bun run check
+        env:
+          # Signs gh in, so the pinned-pack integration tests run against real GitHub. The private-pack test runs
+          # when the repository has SHEPHERD_IT_TOKEN (read access to the private pack) and the variable
+          # SHEPHERD_IT_PRIVATE_LENS (owner/repo/<lens dir>@<sha on its default branch>); without the token it skips.
+          GH_TOKEN: ${{ secrets.SHEPHERD_IT_TOKEN || github.token }}
+          SHEPHERD_IT_PRIVATE_LENS: ${{ secrets.SHEPHERD_IT_TOKEN && vars.SHEPHERD_IT_PRIVATE_LENS || '' }}

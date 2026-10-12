@@ -162,7 +162,13 @@ changes included, and resolve it with the commit in the report. A question
 ("could we...?", "should this...?") is not an instruction: defer it. Anyone
 else in the thread makes it human again.
 
-**Which lens.** Read `.shepherd/lenses.yml` from `origin/<default>` once. A
+**Team policy.** Load it once (`../shepherd/references/policy.md`). Its
+`fixes.mode` caps Step 5: under `suggest` edit nothing, under `local` commit,
+push and resolve nothing (a fix in the working tree has not landed; report
+those threads as `fixed locally`). A fix that would change a file under `escalate.paths` is deferred to
+the author with the policy's reason, like any thread the author owns.
+
+**Which lens.** The policy's `lenses` (read from `origin/<default>`). A
 thread whose tag names one of its lenses, alone or inside a convergent tag, is
 that lens's thread: name the lens in its report line, and fix it by Step 5's
 custom lens rule.

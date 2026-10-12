@@ -1,56 +1,35 @@
 // Custom lenses: any skill, wrapped by swarm as a review-only reviewer whose `## Fix` section steers
 // triage. This file reads and writes the lens files and finds skills on disk; swarm itself reads the
 // repository's file from the default branch at review time (skills/swarm/references/custom-lenses.md).
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
+import { type Config, ConfigSchema, type Lens, LensSchema, lensCache, ModelId, TEAM_FILES } from "./config.ts";
 
 export const BUILT_IN_LENSES = ["correctness", "security", "simplicity", "maintainability", "slop", "spec"];
 
 const LENS_NAME = /^[a-z][a-z0-9-]*$/;
 
-const LensSchema = z
-  .object({
-    skill: z.string().min(1),
-    applies_to: z.array(z.string().min(1)).optional(),
-    description: z.string().min(1).optional(),
-  })
-  .strict();
+// The lens file is the team policy file: lens commands write lenses, ladder and pins and keep every other key.
+const LensFileSchema = ConfigSchema;
 
-// A model id is whatever the harness's agent tool accepts, passed through untouched: `haiku` on Claude Code,
-// `provider/model` on OpenCode (`opencode-go/deepseek-v4-flash`). shepherd never maps one to another.
-const ModelId = z.string().min(1);
+type LensFile = Config;
 
-const LensFileSchema = z
-  .object({
-    ladder: z.array(ModelId).min(1).optional(), // cheapest first; replaces the harness's ladder
-    models: z.record(z.string().regex(LENS_NAME), ModelId).optional(), // a lens or runner name -> the model it always runs on
-    lenses: z.record(z.string().regex(LENS_NAME), LensSchema).default({}),
-  })
-  .strict();
-
-type LensFile = z.infer<typeof LensFileSchema>;
-
-export type Lens = z.infer<typeof LensSchema>;
+export type { Lens };
 
 export const globalLensFile = (home: string) => path.join(home, ".config", "shepherd", "lenses.yml");
 
-export const repoLensFile = (repoRoot: string) => path.join(repoRoot, ".shepherd", "lenses.yml");
+/** The repository's policy file: `.shepherd/config.yml`, or the older `.shepherd/lenses.yml` when only that exists. */
+export const repoLensFile = (repoRoot: string) => {
+  const [config, legacy] = TEAM_FILES.map((f) => path.join(repoRoot, f));
+
+  return existsSync(config!) || !existsSync(legacy!) ? config! : legacy!;
+};
 
 const readFile = (file: string): LensFile => (existsSync(file) ? LensFileSchema.parse(parse(readFileSync(file, "utf8")) ?? {}) : { lenses: {} });
 
 export const readLenses = (file: string): Record<string, Lens> => readFile(file).lenses;
-
-/** Model choice for the runners and lenses. The repository's ladder wins; your own fills in when it sets none. Pins merge, the repository winning per name. */
-export function modelChoice(home: string, repoRoot: string, repoFile = repoLensFile(repoRoot)) {
-  const personal = readFile(globalLensFile(home));
-  const repo = readFile(repoFile);
-
-  return { ladder: repo.ladder ?? personal.ladder ?? null, models: { ...personal.models, ...repo.models } };
-}
 
 /**
  * OpenCode agents for a harness whose subagent tool takes no model (OpenCode 1.x): one per rung,
@@ -66,35 +45,6 @@ export function opencodeAgents(choice: { ladder: string[] | null; models: Record
       ...Object.entries(choice.models).map(([name, model]) => [`shepherd-pin-${name}`, agent(model, `pinned for ${name}`)] as const),
     ]),
   };
-}
-
-/**
- * The default branch's `.shepherd/lenses.yml`, copied to a temp file, the same source swarm reads. The branch
- * name comes from the remote, since a CI checkout sets no origin/HEAD. A missing branch ref throws; a branch
- * with no lens file gives a path that does not exist: no ladder, no pins.
- */
-export function defaultBranchLensFile(repoRoot: string): string {
-  const git = (...args: string[]) => execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const branch = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(git("ls-remote", "--symref", "origin", "HEAD"))?.[1];
-
-  if (!branch) throw new Error("cannot tell origin's default branch");
-  const ref = `refs/remotes/origin/${branch}`;
-
-  try {
-    git("rev-parse", "--verify", "--quiet", ref);
-  } catch {
-    throw new Error(`origin/${branch} is not fetched: run git fetch origin ${branch}`);
-  }
-
-  const file = path.join(mkdtempSync(path.join(tmpdir(), "shepherd-lenses-")), "lenses.yml");
-
-  try {
-    writeFileSync(file, git("show", `${ref}:.shepherd/lenses.yml`));
-  } catch {
-    // The default branch has no lens file.
-  }
-
-  return file;
 }
 
 /** Pin `name` (a lens or runner) to `model`, keeping everything else in the file. */
@@ -124,13 +74,6 @@ export function addLens(file: string, name: string, lens: Lens): void {
 
   write(file, { ...current, lenses: { ...current.lenses, [name]: LensSchema.parse(lens) } });
 }
-
-/** What swarm will load. Repository lenses post and steer fixes; personal ones are a local preview. The repository wins on a name clash. */
-export const catalog = (home: string, repoRoot: string) => {
-  const tag = (lenses: Record<string, Lens>, scope: "repo" | "personal") => Object.fromEntries(Object.entries(lenses).map(([name, lens]) => [name, { ...lens, scope }]));
-
-  return { ...tag(readLenses(globalLensFile(home)), "personal"), ...tag(readLenses(repoLensFile(repoRoot)), "repo") };
-};
 
 const lensTemplate = (name: string, description: string) => `---
 ${stringify({ name, description })}---
@@ -162,7 +105,7 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 export function lensProblems(lens: Lens, home: string, repoRoot: string): string[] {
   const dir = resolveSkill(lens.skill, home, repoRoot);
 
-  if (!dir) return [`no SKILL.md found for "${lens.skill}"`];
+  if (!dir) return [lensCache(home, lens.skill) ? `"${lens.skill}" is not fetched yet: shepherd config explain fetches pinned pack lenses` : `no SKILL.md found for "${lens.skill}"`];
   const file = path.join(dir, "SKILL.md");
   const text = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
   const front = FRONTMATTER.exec(text)?.[1];
@@ -212,6 +155,9 @@ export function newLens(repoRoot: string, name: string, lens: Omit<Lens, "skill"
 
 /** The directory holding the skill's SKILL.md: a path against the repository, or a name in the usual skills directories. */
 export function resolveSkill(ref: string, home: string, repoRoot: string): string | null {
+  const pinned = lensCache(home, ref);
+
+  if (pinned) return existsSync(path.join(pinned, "SKILL.md")) ? pinned : null;
   const expanded = ref.startsWith("~/") ? path.join(home, ref.slice(2)) : ref;
 
   const candidates = expanded.includes("/")

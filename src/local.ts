@@ -34,7 +34,21 @@ function filtersOff(cwd: string): string[] {
   return [...drivers].flatMap((d) => ["clean", "smudge", "process"].flatMap((k) => ["-c", `filter.${d}.${k}=`]).concat("-c", `filter.${d}.required=false`));
 }
 
-const git = (cwd: string, args: string[], env?: NodeJS.ProcessEnv): string => execFileSync("git", [...GIT_SAFE, ...filtersOff(cwd), ...args], { ...RUN, cwd, env: { ...process.env, ...env } });
+/** Copy the repository's index to `dest`, if it has one, keeping its timestamps. */
+export function copyIndex(repoRoot: string, dest: string): void {
+  const real = path.resolve(repoRoot, git(repoRoot, ["rev-parse", "--git-path", "index"]).trim());
+
+  if (!existsSync(real)) return;
+  copyFileSync(real, dest);
+  // Git treats a file whose mtime is not older than the index as possibly changed and compares its
+  // content. A copy with a fresh mtime would hide same-size edits made within that window.
+  const { atime, mtime } = statSync(real);
+
+  utimesSync(dest, atime, mtime);
+}
+
+/** git with hooks, fsmonitor, gc and every filter driver off: a read never runs repository-chosen commands. */
+export const git = (cwd: string, args: string[], env?: NodeJS.ProcessEnv): string => execFileSync("git", [...GIT_SAFE, ...filtersOff(cwd), ...args], { ...RUN, cwd, env: { ...process.env, ...env } });
 
 const gitOr = (cwd: string, args: string[]): string | null => {
   try {
@@ -178,16 +192,7 @@ export function captureChange(repoRoot: string, base?: string): LocalChange {
   const index = path.join(tmp, "index");
 
   try {
-    const real = path.resolve(repoRoot, git(repoRoot, ["rev-parse", "--git-path", "index"]).trim());
-
-    if (existsSync(real)) {
-      copyFileSync(real, index);
-      // Git treats a file whose mtime is not older than the index as possibly changed and compares its
-      // content. A copy with a fresh mtime would hide same-size edits made within that window.
-      const { atime, mtime } = statSync(real);
-
-      utimesSync(index, atime, mtime);
-    }
+    copyIndex(repoRoot, index);
 
     const env = { GIT_INDEX_FILE: index, GIT_OPTIONAL_LOCKS: "0" };
 
@@ -363,6 +368,7 @@ export function buildDemo(dir: string): string {
   const app = path.join(dir, "app");
   const id = ["-c", "user.name=Shepherd demo", "-c", "user.email=demo@example.invalid", "-c", "commit.gpgsign=false"];
 
+  mkdirSync(dir, { recursive: true });
   git(dir, ["init", "-q", "--bare", "-b", "main", remote]);
   git(dir, ["clone", "-q", remote, app]);
   git(app, ["checkout", "-q", "-b", "main"]);

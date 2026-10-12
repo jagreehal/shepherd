@@ -80,6 +80,23 @@ deferred finding with its options:
 - **review incomplete:** what was not reviewed, and why.
 - **stopped at the round cap:** what the last round still found.
 
+## Team policy and recipes
+
+Load the team policy once, as `references/policy.md` says, and pass it to
+every runner. Then pick the workflow:
+
+- `--recipe <name>`: that recipe's steps, under the rules there. An unknown
+  name stops with the list of known ones; one the fix mode rules out stops
+  with the reason.
+- No `--recipe`, by `fixes.mode`:
+  - `push`: the loop below, Steps 1 to 5 (the `pr` recipe).
+  - `local`: the `fix` recipe (swarm, triage, simplify, swarm) with fixes
+    left in the working tree; Steps 3 and 4 do not run.
+  - `suggest`: the `review` recipe (swarm only); no step changes code.
+
+End a recipe with the outcome policy.md defines (`reviewed`,
+`fixes_uncommitted`, `ready`, `pending`); never call a PR ready on less.
+
 ## Before the first dispatch
 
 Read these once per iteration, when first needed:
