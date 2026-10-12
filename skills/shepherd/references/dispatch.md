@@ -107,8 +107,10 @@ It answers `accept`, `reject`, `reject: design`, or `needs-more-evidence`, with
 a reason. `reject: design` defers the thread to the user with both options
 stated.
 
-- **accept:** re-dispatch the original runner with permission to apply exactly
-  that change; the usual checks must still pass.
+- **accept:** start a new foreground runner whose brief carries exactly that
+  change and the permission to apply it; the usual checks must still pass.
+  Resuming the original runner with a message runs it in the background, so
+  start a new one.
 - **reject:** leave the code alone and note it in the summary.
 - **needs-more-evidence:** gather it, or climb one more rung.
 

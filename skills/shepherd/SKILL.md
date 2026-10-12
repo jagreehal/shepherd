@@ -45,6 +45,9 @@ machine and stops there:
   commit status, no stamp. Steps 3 to 5 do not run.
 - **No commits.** Fixes land in the working tree; the developer reviews and
   commits them. If the tree has a merge or rebase in progress, stop and say so.
+- **The fix mode decides the steps.** Under `fixes.mode: suggest`, run one
+  round of swarm only, with no triage and no simplify, and report `reviewed`
+  with the findings. Under `local` or `push`, run the loop below.
 
 One local iteration:
 
