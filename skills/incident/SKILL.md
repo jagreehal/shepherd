@@ -76,7 +76,9 @@ gh issue list --label incident --state open --search "shepherd-incident:<fingerp
 
 Hash the fingerprint to 12 hex chars: write it to a file with your file tool,
 then `shasum <file> | cut -c1-12`. An open issue with that marker already
-tracks it, and it is your issue.
+tracks it, and it is your issue. Only a search that exits 0 says there is
+none: when it fails, fix the cause and run it again before you open anything,
+since a second issue splits the record.
 
 Otherwise create the label once and open the issue:
 
@@ -172,23 +174,30 @@ failing commit, and a later run can sit on a descendant).
 git bisect start <live commit> <good> && git bisect run sh -c '<probe body>'; git bisect reset
 ```
 
+Name the culprit only from the probe: the commit `git bisect run` reports,
+or the one commit of a single-commit range after `probe` fails on it and
+passes on its parent. A culprit read off a diff or the signal is a guess; run
+the bisection even when the diff looks obvious.
+
 When the range is a single commit, that commit is the culprit; no bisection
 is needed. Skip bisection when no good end exists within 64 commits or the test cannot
 run on older commits; say so. For the culprit commit, find its PR:
 `gh api repos/{owner}/{repo}/commits/<sha>/pulls --jq '.[0].number'`, and
-whether stamp approved it (a review carrying `<!-- stamp-run:`). Add
+whether stamp approved it: `gh api repos/{owner}/{repo}/pulls/<pr>/reviews --jq '[.[] | select(.body | contains("<!-- stamp-run:"))] | last | .state'`
+gives `APPROVED` for approved, empty for not reviewed, and anything else for
+held for a human. Add this line to the issue body, exactly, with one of the
+three values (garden parses it):
 `Regressed-by: #<pr> (<sha>), stamp: <approved|not reviewed|held for a human>`
-to the issue body.
 
 Then tell merge skew from a coverage gap, with the probe, not from CI's
 colour. Run `probe` on the PR's last head commit (`gh pr view <pr> --json
 headRefOid`):
 
 - **Passes on the PR head, fails on the merged culprit:** the base moved under
-  it. Add `Merge skew: passes on <head sha>, fails merged`; the cure is an
+  it. Add the line `Merge skew: passes on <head sha>, fails merged`; the cure is an
   up-to-date-branch rule or a merge queue, not a stricter review.
 - **Fails on the PR head too:** the PR shipped the failure and its tests did
-  not cover it. Add `Coverage gap: fails on <head sha>`.
+  not cover it. Add the line `Coverage gap: fails on <head sha>`.
 - **Head commit gone or probe cannot run there:** record neither.
 
 Then return, popping only this run's entry, never the developer's:
