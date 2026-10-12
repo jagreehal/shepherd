@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
-import { parseCommit, parseThread, roundsOf, score } from "./garden.ts";
+import { parseCommit, parseEscape, parseThread, roundsOf, score } from "./garden.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
 import { addLens, lensTemplates, lensProblems, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
 
@@ -442,6 +442,16 @@ describe("garden", () => {
     });
     expect(parseThread("a.ts", false, [first, { author: "sam", bot: false, body: "No, this interface is for the plugin API." }])?.humanReplied).toBe(true);
     expect(parseThread("a.ts", true, [{ author: "sam", bot: false, body: "plain human comment" }])).toBeNull();
+  });
+
+  test("an incident whose culprit stamp approved is an escape; one stamp did not approve, or any other issue, is not", () => {
+    const body = (stamp: string, cause = "Coverage gap: fails on 1111111") => `<!-- shepherd-incident:36a33da48b93 -->\n\n## Root cause\n\n\`Regressed-by: #29 (6686734), stamp: ${stamp}\`\n\n${cause}`;
+    const issue = (b: string) => ({ number: 33, title: "TypeError: trim", url: "u", body: b });
+
+    expect(parseEscape(issue(body("approved")))).toEqual({ incident: 33, title: "TypeError: trim", url: "u", pr: 29, sha: "6686734", cause: "coverage_gap" });
+    expect(parseEscape(issue(body("approved", "Merge skew: passes on 2222222, fails merged")))?.cause).toBe("merge_skew");
+    expect(parseEscape(issue(body("held for a human")))).toBeNull();
+    expect(parseEscape(issue("Regressed-by: #29 (6686734), stamp: approved"))).toBeNull();
   });
 
   test("reads shepherd's trailers from a commit message", () => {
