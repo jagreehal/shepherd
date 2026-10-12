@@ -32,7 +32,6 @@ jobs:
     timeout-minutes: 60
     env:
       REPOS: ${{ vars.GARDEN_REPOS }}
-      GARDEN_OUTBOX: ${{ runner.temp }}/garden-outbox
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +44,8 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/opencode.tgz" https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-linux-x64.tar.gz
           echo "c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d  $RUNNER_TEMP/opencode.tgz" | sha256sum -c -
           mkdir -p "$HOME/.opencode/bin" && tar -xzf "$RUNNER_TEMP/opencode.tgz" -C "$HOME/.opencode/bin" && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
-          mkdir -p "$GARDEN_OUTBOX"
+          # The runner context is not available in job-level env, so the outbox path is set here.
+          echo "GARDEN_OUTBOX=$RUNNER_TEMP/garden-outbox" >> "$GITHUB_ENV" && mkdir -p "$RUNNER_TEMP/garden-outbox"
       - name: Garden (read-only)
         env:
           GH_TOKEN: ${{ secrets.GARDEN_READ_TOKEN || github.token }}

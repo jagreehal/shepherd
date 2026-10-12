@@ -5,10 +5,10 @@ validates a result; it never replaces a test.
 
 ## Resolve the ladder before pinning anything
 
-**The operator's choice comes first.** Read `ladder:` and `models:` from the
-repository's `.shepherd/lenses.yml` on the **default branch**
-(`git show origin/<default>:.shepherd/lenses.yml`), never the PR head, then
-from `~/.config/shepherd/lenses.yml`. The repository's ladder wins; a personal
+**The operator's choice comes first.** Take `ladder` and `models` from the
+team policy (`policy.md`): `.shepherd/config.yml` or `.shepherd/lenses.yml`
+and its packs, on the **default branch**, never the PR head; then from
+`~/.config/shepherd/lenses.yml`. The repository's ladder wins; a personal
 ladder applies only when the repository sets none. `models:` pins merge per
 name, the repository winning. `shepherd models` prints the result.
 

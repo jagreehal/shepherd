@@ -16,7 +16,7 @@ const demo = (): string => {
 
   dirs.push(dir);
 
-  return buildDemo(dir);
+  return buildDemo(path.join(dir, "not-yet-created")); // a directory that does not exist yet is created
 };
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
