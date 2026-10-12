@@ -1,5 +1,15 @@
 # @jagreehal/shepherd
 
+## 0.3.0
+
+### Minor Changes
+
+- 771b7aa: `shepherd garden` lists `escapes`: incidents whose culprit PR stamp approved. The garden skill proposes, for each one, the smallest lint rule, stamp rule or lens rule that flags the culprit diff and passes the fix.
+
+### Patch Changes
+
+- bc47888: The `incident` skill names a culprit only from its probe, looks up stamp's review with one `gh api` call, and writes the `Regressed-by`, `Coverage gap` and `Merge skew` lines exactly as garden reads them. A failed duplicate search is retried before an issue opens.
+
 ## 0.2.0
 
 ### Minor Changes
