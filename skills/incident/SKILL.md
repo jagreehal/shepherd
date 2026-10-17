@@ -117,6 +117,9 @@ Build the feedback loop from Phase 1 of `../diagnosing-bugs/SKILL.md`, and
 prefer its first rung: a failing test at the seam that reaches the failure,
 asserting on the symptom in the evidence, not "it didn't crash". Put it where
 the repo keeps tests for that code and run it with the repo's own test command.
+When the repo writes executable stories (`../shepherd/references/stories.md`),
+write it as a scenario with the incident issue in its `tickets` and the code
+under suspicion in its `covers`.
 
 Done when the test fails for the reason in the evidence on `origin/<default>`
 (the branch's base, not the branch: a reused branch can already carry an
@@ -231,7 +234,9 @@ concurrency, public API, broad shared abstraction) needs a second model's
 `outcome=needs_decision`, the test committed alone on the branch.
 
 Done when the new test passes and the repo's lint, typecheck and nearby tests
-pass. Never stop on a red check you introduced.
+pass. With executable stories, `goal --require-tickets <issue>` on a full run
+against a full run of the base must also exit 0
+(`../shepherd/references/stories.md`). Never stop on a red check you introduced.
 
 ## Step 6: Open the PR
 

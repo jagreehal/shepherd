@@ -152,6 +152,26 @@ Step 4  stamp at H2
 
 Passing `H0` to ci-repair would diagnose a stale tree. Thread it.
 
+## Trace the iteration
+
+Around each stage, record its start and end so the iteration can be traced. The
+CLI takes the time; you name the stage, and an `end` repeats its start's
+`--round`:
+
+```bash
+shepherd trace event <stage> start --pr <n> [--round <r>] [--head <sha>]
+shepherd trace event <stage> end   --pr <n> [--round <r>] [--outcome ok|failed|skipped] [--retries <n>]
+```
+
+Run the CLI as swarm does: `shepherd`, or `bunx @jagreehal/shepherd` when it
+is not on PATH. Local mode has no PR, so it records no trace.
+
+Stages: `checks`, `swarm`, `verify`, `triage`, `simplify`, `ci-repair`, and
+`stamp` for the wait on stamp's verdict. Step 5 flushes the record. A failed
+`trace` call never stops the loop; note it and go on. Without an
+`OTEL_EXPORTER_OTLP_ENDPOINT` the flush exports nothing and only clears the
+record, so recording costs nothing where nobody collects traces.
+
 ## Step 1: Resolve the PR, fast path, baseline
 
 ```bash
@@ -262,7 +282,26 @@ it as unreviewed.
 While `bot_reviews_pending` is true, poll once before the next triage:
 `gh pr view <number> --json latestReviews --jq '[.latestReviews[].author.login]'`.
 Nothing yet: wait about 90 seconds, poll once more, then clear the flag either
-way. Poll inline, in this turn. Never hand a wait to a background agent or a
+way. When the head has a **Claude Code Review** check run, its status and
+title replace the guess:
+
+```bash
+gh api 'repos/<owner>/<repo>/commits/<head_sha>/check-runs?check_name=Claude%20Code%20Review' \
+  --jq '.check_runs[] | {status, conclusion, title: .output.title}'
+```
+
+- `queued` or `in_progress`: the review is running. Poll it the same way, and
+  clear the flag once it completes.
+- Completed with findings or "found no issues": triage reads its threads.
+- "skipped — no new changes": the review of the earlier head stands.
+- A `conclusion` of `failure`, `timed_out` or `cancelled`, a title saying
+  "failed", "timed out" or "declined", or a PR comment starting `⚠️ Code
+  review skipped` (its budget ran out): Code Review did not review this head.
+  Clear the flag, read its silence as no review, and name it in the final
+  summary. Shepherd posts no `@claude review`, since each one starts a billed
+  review; the summary tells the user they can.
+
+Poll inline, in this turn. Never hand a wait to a background agent or a
 monitor: nothing reports back, and the iteration strands.
 
 - Dry, and `r >= 2` or swarm ran this round: stop; this round's final HEAD is `H1`.
@@ -347,6 +386,16 @@ as "done" while shepherd still has work or is waiting on the author:
 ```bash
 gh api "repos/<owner>/<repo>/statuses/<H2>" -f context=shepherd \
   -f state=<success|pending|failure> -f description="<one line, under 140 characters>"
+```
+
+Then close the iteration's trace, naming how it ended (the summary's
+`stopped=`, or `waiting` or `needs-you`), the CI run the iteration read, and
+any traceparent another process exposed (stamp's review run, a CI run) so the
+traces join by span link:
+
+```bash
+shepherd trace flush --pr <n> --repo <owner/repo> --head <H2> --base <base_sha> \
+  --outcome <how it ended> [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
 ```
 
 - `success`: the second terminal condition holds and nothing is deferred:

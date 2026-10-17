@@ -173,6 +173,12 @@ thread whose tag names one of its lenses, alone or inside a convergent tag, is
 that lens's thread: name the lens in its report line, and fix it by Step 5's
 custom lens rule.
 
+**Claude Code Review.** Its findings open with a severity marker. Read 🔴
+Important as HIGH and 🟡 Nit as LOW, then classify them like any automated
+finding below, so a Nit with a concrete fix still gets fixed. 🟣 Pre-existing
+names a bug the PR did not introduce: defer it to the author as a follow-up,
+unless the PR's own change depends on the broken code.
+
 **What it asks for.** For all-automated threads:
 
 - **Actionable**, at any severity, LOW included, when all of these hold:
@@ -232,6 +238,19 @@ unsure and the comment predates the last push, skip rather than act.
   confirm the push landed
   (`git status -sb` shows nothing ahead) before resolving the thread. Report
   `new_head_sha` only from a pushed commit.
+- **Story findings** (`[checks/stories...]`): fix each one as below and commit
+  it like any actionable thread, then verify as
+  `../shepherd/references/stories.md` says: rerun the touched scenarios and
+  `check` again. A scenario left skipped is unfixed.
+  - A failed scenario (`checks/stories`) carries the failed step, expected
+    and actual values, and `covers` paths. Fix the code those paths name. Never
+    edit the scenario to pass.
+  - A skipped or removed scenario (`checks/stories-off`,
+    `checks/stories-removed`) is fixed by restoring it: drop the skip, or bring
+    back its declaration from the base unchanged. Restored, it must pass on the
+    code; when it fails, fix the code as above. Never restore it with fewer
+    steps, looser expectations or removed assertions. When the change
+    deliberately removes the behaviour, defer it to the author instead.
 - **Resolve only what is fixed.** A thread can name several problems. Resolve
   it when every one holds as fixed on the head; after a partial fix, leave it
   open and defer it with what remains in the report.

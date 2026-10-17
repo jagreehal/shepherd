@@ -12,6 +12,7 @@ export type Commit = { sha: string; headline: string; skill: string | null; lens
 
 export type PrRecord = {
   number: number;
+  headSha?: string;
   title: string;
   state: string;
   threads: Thread[];
@@ -218,6 +219,6 @@ export function collect(repo: string, since: string): PrRecord[] {
     const status = Statuses.parse(JSON.parse(gh(["api", `repos/${repo}/commits/${pr.headRefOid}/status`]))).statuses.find((s) => s.context === "shepherd");
     const summary = Comments.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${pr.number}/comments`])).flat()).find((c) => c.body.includes("<!-- shepherd-swarm-summary -->"));
 
-    return { number: pr.number, title: pr.title, state: pr.state, threads, commits, status: status ? { state: status.state, description: status.description ?? "", updatedAt: status.updated_at } : null, rounds: roundsOf(summary?.body), trusted: trusted(pr.author.login) };
+    return { number: pr.number, headSha: pr.headRefOid, title: pr.title, state: pr.state, threads, commits, status: status ? { state: status.state, description: status.description ?? "", updatedAt: status.updated_at } : null, rounds: roundsOf(summary?.body), trusted: trusted(pr.author.login) };
   });
 }

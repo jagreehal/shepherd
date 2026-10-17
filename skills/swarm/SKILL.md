@@ -217,6 +217,11 @@ with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
    OS); the CI result wins. The author should never read "looks good" from swarm under
    a refusal from the gate that decides the merge.
 
+9. When the repo writes executable stories (`../shepherd/references/stories.md`),
+   read the test run through `executable-stories check` as that file says, and
+   add its `checks/stories`, `checks/stories-off` and `checks/stories-removed`
+   findings. The test command's own result still decides pass or fail.
+
 These become `CHECK_FINDINGS`. They post like any other finding, tagged
 `[checks/<tool>]`, and every lens is told not to repeat them. If a command is
 missing or fails to start, record `checks: <tool> unavailable` and move on.

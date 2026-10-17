@@ -46,6 +46,21 @@ jobs:
           mkdir -p "$HOME/.opencode/bin" && tar -xzf "$RUNNER_TEMP/opencode.tgz" -C "$HOME/.opencode/bin" && echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
           # The runner context is not available in job-level env, so the outbox path is set here.
           echo "GARDEN_OUTBOX=$RUNNER_TEMP/garden-outbox" >> "$GITHUB_ENV" && mkdir -p "$RUNNER_TEMP/garden-outbox"
+      # The collector runs here, outside the agent, so trace credentials never reach a session that
+      # reads text anyone can write. The agent gets the finished report.
+      - name: Collect scores
+        env:
+          GH_TOKEN: ${{ secrets.GARDEN_READ_TOKEN || github.token }}
+          GARDEN_TEMPO_URL: ${{ vars.GARDEN_TEMPO_URL }}
+          GARDEN_TEMPO_HEADERS: ${{ secrets.GARDEN_TEMPO_HEADERS }}
+          GARDEN_DATADOG_SITE: ${{ vars.GARDEN_DATADOG_SITE }}
+          GARDEN_DATADOG_API_KEY: ${{ secrets.GARDEN_DATADOG_API_KEY }}
+          GARDEN_DATADOG_APP_KEY: ${{ secrets.GARDEN_DATADOG_APP_KEY }}
+        run: |
+          # REPOS is space-separated owner/name, so word splitting is intended.
+          # shellcheck disable=SC2086
+          bun src/cli.ts garden $REPOS > "$RUNNER_TEMP/garden-report.json"
+          echo "GARDEN_REPORT=$RUNNER_TEMP/garden-report.json" >> "$GITHUB_ENV"
       - name: Garden (read-only)
         env:
           GH_TOKEN: ${{ secrets.GARDEN_READ_TOKEN || github.token }}
@@ -54,7 +69,7 @@ jobs:
           MODEL: ${{ vars.GARDEN_MODEL || 'opencode-go/kimi-k3' }}
         run: |
           opencode run --auto -m "$MODEL" --title "garden" "Load the garden skill and run it for: $REPOS.
-          The shepherd checkout is the current directory (run the collector as bun src/cli.ts garden).
+          The shepherd checkout is the current directory. GARDEN_REPORT is set: read the collector's report from it.
           GARDEN_OUTBOX is set: follow the skill's Outbox mode.
           Nobody is watching this session: never wait for an answer; put questions in the report."
       - name: Turn each proposal into a patch

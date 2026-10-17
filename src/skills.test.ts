@@ -430,6 +430,15 @@ describe("garden", () => {
     expect(text("publish")).toContain("core.hooksPath=/dev/null");
     expect(text("publish")).toContain("diff --cached --name-only --no-renames");
     expect(text("publish")).not.toContain("opencode");
+
+    // The agent reads text anyone can write, so trace credentials stay in the collector step.
+    const steps: { name?: string; run?: string; env?: Record<string, string> }[] = wf.jobs.propose.steps;
+    const agent = steps.filter((step) => step.run?.includes("opencode run"));
+
+    expect(agent.length).toBeGreaterThan(0);
+    expect(JSON.stringify(agent)).not.toMatch(/GARDEN_(TEMPO|DATADOG)/);
+    expect(steps.find((step) => step.env?.GARDEN_TEMPO_HEADERS)?.run).not.toContain("opencode");
+    expect(steps.find((step) => step.env?.GARDEN_DATADOG_API_KEY)?.run).not.toContain("opencode");
   });
 
   const H = "> [!NOTE]\n> 🤖 Automated comment by **Shepherd swarm**, not written by a human\n\n";
