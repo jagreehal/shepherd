@@ -79,6 +79,11 @@ For each failure:
    a child failure; diagnose the leaves.
 2. Fetch each leaf's failed-step log once: `gh run view --job <id> --log-failed`.
    Keep the error, the command, and the file location; trim setup noise.
+   When the job uploads an executable-stories raw run or report, download it
+   (`gh run download <run_id>`) and read it as
+   `../shepherd/references/stories.md` says: the failing scenario, its failed
+   step, expected and actual values, and `covers` name the cause faster than
+   the log.
 3. Find the real local command: the team policy's `checks` first
    (`../shepherd/references/policy.md`), then the repo's config. Under
    `fixes.mode: suggest` or `local`, and for a file under `escalate.paths`,

@@ -37,6 +37,7 @@ flowchart TD
 ```
 
 - Machines check first: your lint, typecheck, nearby tests and installed scanners run before any model reads the diff.
+- Repos that write [executable stories](https://github.com/jagreehal/executable-stories) get scenario-level evidence: the failed step with expected and actual values, the code each scenario covers, and scenarios a change switched off or removed. Fixes are verified by rerunning those scenarios, and an incident fix is done when `executable-stories goal` passes for its issue.
 - A second model verifies each serious finding before it posts, so you read fewer false alarms.
 - shepherd never replies to people and never approves. Those stay yours.
 - A `shepherd` commit status shows where the loop got to, and a branch rule can require it.
@@ -49,7 +50,16 @@ bunx @jagreehal/shepherd install --project    # ./.claude in the current reposit
 bunx @jagreehal/shepherd install --target ~/.codex/skills   # any other agent's skills directory
 ```
 
-The installer copies the skills and marks each copy. It replaces only what it installed; a skill of yours with the same name stays unless you pass `--force`. `shepherd uninstall` removes only its own copies. From a clone you edit, add `--link` to symlink instead.
+The [skills CLI](https://skills.sh) installs them too, into any agent it supports:
+
+```bash
+npx skills add jagreehal/shepherd             # pick the agents and skills to install
+npx skills add jagreehal/shepherd --skill '*' -a claude-code   # every skill, for Claude Code
+```
+
+Install every skill: they point at each other by relative path. Your agent then runs `/shepherd` as a skill, and the CLI steps fall back to `bunx @jagreehal/shepherd`.
+
+`shepherd install` copies the skills and marks each copy. It replaces only what it installed; a skill of yours with the same name stays unless you pass `--force`. `shepherd uninstall` removes only its own copies. From a clone you edit, add `--link` to symlink instead.
 
 ## Use
 
@@ -126,7 +136,7 @@ flowchart TD
     V --> SUM[Summary and<br/>commit status]
 ```
 
-A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. Round 1's fixes always get a second review round.
+A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. On a repo with Claude Code Review, shepherd reads its check run to know when the review finished or did not run, fixes 🔴 Important and 🟡 Nit findings like any bot finding, and leaves 🟣 Pre-existing ones to you as follow-ups. Round 1's fixes always get a second review round.
 
 ### The review swarm
 
@@ -361,11 +371,13 @@ flowchart LR
     NX --> SC
 ```
 
-`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs, from GitHub alone. It counts reverted fixes, people replying in a thread, and loops that hit the round cap, stopped short or went quiet. It also finds the lens rules triage fixed on 3+ PRs, from its `Shepherd-Fixes` trailers on PRs by people who can push.
+`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs from GitHub, with optional trace measurements. It counts reverted fixes, people replying in a thread, and loops that hit the round cap, stopped short or went quiet. It also finds the lens rules triage fixed on 3+ PRs, from its `Shepherd-Fixes` trailers on PRs by people who can push.
 
 The `garden` skill turns that into PRs: skill edits for the patterns behind low scores, and lint rules for recurring findings one file's syntax can decide, so swarm's checks catch them before any model reads the diff.
 
 `.github/workflows/garden.yml` runs it weekly. Set `GARDEN_REPOS`, a `GARDEN_TOKEN` that can open PRs on those repos, and a model key. The agent only proposes, and a separate job opens the PRs. Each garden PR carries the score table, so the next one shows whether a merged edit helped.
+
+Pass `--traces <otlp.json>` for exported OTLP JSON/JSON-lines files, set `GARDEN_TEMPO_URL` and read-only `GARDEN_TEMPO_HEADERS` to query Grafana Tempo, or set `GARDEN_DATADOG_SITE`, `GARDEN_DATADOG_API_KEY` and an `apm_read` `GARDEN_DATADOG_APP_KEY` to query Datadog. Any mix of inputs can run together. Garden correlates known PR commits and deduplicates trace/span IDs, then flags observed stage failures, repeated retries, approval waits and review spend. Its report includes trace references, coverage limits and unpriced reviews. Trace measurements cannot count a fix as accepted or justify weakening a check. [Configure trace scoring](docs/gardener-telemetry.md), including the bundled weekly workflow.
 
 ## Where the loop got to
 
@@ -406,6 +418,10 @@ flowchart LR
 It dedupes on a fingerprint of the error, never pushes to the default branch, and stops without a fix when it cannot reproduce the failure. stamp refuses an incident fix that has no reproducing test or that hides the symptom.
 
 To run it when the default branch goes red, add a workflow on `workflow_run` of your CI with `conclusion == 'failure'` and `head_branch` set to the default branch, and run one `/incident <run url>` the same way the `shepherd` workflow runs an iteration. An alerting tool can call the same workflow through `repository_dispatch` with the error in the payload.
+
+## Traces
+
+Each iteration records its stages with `shepherd trace event` and closes with `shepherd trace flush`. With `OTEL_EXPORTER_OTLP_ENDPOINT` set, the flush exports one `shepherd.iteration` span with a child span per stage (checks, swarm, verify, triage, simplify, ci-repair, the wait on stamp), carrying the outcome, round, retries and head SHA. The iteration span carries the repository, PR number, head and base SHAs and CI run under the same attribute names stamp's review span uses, and links to related traces by traceparent. The CLI times the stages; model usage inside them is the harness's to report. Without an endpoint nothing loads and nothing exports. The flush clears the record either way and prints the export's error in its JSON when the collector is unreachable.
 
 ## With stamp
 

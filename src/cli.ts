@@ -6,7 +6,7 @@
 // shepherd lens list
 // shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
 // shepherd opencode-agents [--file <lenses.yml>]   (agents for OpenCode 1.x, from the default branch's lenses.yml)
-// shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]
+// shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>] [--traces <otlp.json>]... [--tempo-url <url>] [--trace-retries <n>] [--trace-wait-ms <ms>] [--trace-cost-usd <usd>]
 // shepherd local change [--base <ref>]              (the change before a PR: unpushed commits, staged, unstaged, untracked)
 // shepherd local finish <record.json> [--base <ref>]  (check a local review against that change; complete writes a receipt)
 // shepherd local status [--base <ref>]              (is the change on disk the one a complete review covered?)
@@ -17,6 +17,8 @@
 // shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]  (what would run on your change)
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
+// shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
+// shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
 //
 // Default: skills to ~/.claude/skills, the /shepherd command to ~/.claude/commands.
 // --project installs into ./.claude of the current repository instead.
@@ -30,12 +32,15 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
+import { z } from "zod";
 import { type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
+import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
 import { install, uninstall, type Outcome } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
+import { flush, recordEvent, traceFile } from "./trace.ts";
 import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
@@ -47,7 +52,7 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd lens list
        shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
        shepherd opencode-agents [--file <lenses.yml>]
-       shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>]
+       shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>] [--traces <otlp.json>]... [--tempo-url <url>] [--trace-retries <n>] [--trace-wait-ms <ms>] [--trace-cost-usd <usd>]
        shepherd local change [--base <ref>]
        shepherd local finish <record.json> [--base <ref>]
        shepherd local status [--base <ref>]
@@ -57,7 +62,9 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd config explain [--json] [--working-tree]
        shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]
        shepherd doctor [--json]
-       shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...`;
+       shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...
+       shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
+       shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
@@ -74,13 +81,26 @@ const { values: opts, positionals } = parseArgs({
     since: { type: "string" },
     file: { type: "string" }, // opencode-agents: a lenses.yml to read instead of the default branch's
     "min-prs": { type: "string", default: "3" },
+    traces: { type: "string", multiple: true }, // garden: OTLP JSON or collector JSON-lines files
+    "tempo-url": { type: "string" }, // garden: read-only Tempo API, never the OTLP ingest endpoint
+    "trace-retries": { type: "string" },
+    "trace-wait-ms": { type: "string" },
+    "trace-cost-usd": { type: "string" },
     base: { type: "string" }, // local: the ref the change is measured from
     from: { type: "string" }, // lens new: a starter lens in lenses/; init: the pack to extend
     json: { type: "boolean", default: false },
     "working-tree": { type: "boolean", default: false }, // explain, preview: your edits instead of the default branch
     recipe: { type: "string" },
     preset: { type: "string" }, // init: how far fixes go
-    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were
+    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR
+    round: { type: "string" }, // trace: the quality-loop round
+    outcome: { type: "string" }, // trace: how a step or iteration ended
+    retries: { type: "string" },
+    head: { type: "string" }, // trace: the head SHA
+    repo: { type: "string" }, // trace flush: owner/repo
+    "ci-run": { type: "string" },
+    "ci-attempt": { type: "string" },
+    related: { type: "string", multiple: true }, // trace flush: traceparent of a related trace, such as stamp's review
   },
 });
 
@@ -208,8 +228,31 @@ if (command === "install") {
   // Default window: the last seven days, which the weekly gardener covers exactly.
   const since = opts.since ?? new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
   const repos = [sub, ...(skillRef ? [skillRef] : []), ...rest];
+  const files = opts.traces ?? orExit(() => z.array(z.string()).parse(JSON.parse(process.env.GARDEN_TRACE_FILES || "[]")));
+  const endpoint = opts["tempo-url"] ?? process.env.GARDEN_TEMPO_URL;
+  const headers = orExit(() => tempoHeaders(endpoint, process.env.GARDEN_TEMPO_URL, process.env.GARDEN_TEMPO_HEADERS));
+  const { GARDEN_DATADOG_SITE: site, GARDEN_DATADOG_API_KEY: apiKey, GARDEN_DATADOG_APP_KEY: appKey } = process.env;
+  const datadog = site && apiKey && appKey ? { site, apiKey, appKey } : undefined;
+  const positive = (v: string | undefined, fallback: number) => orExit(() => z.coerce.number().finite().positive().parse(v ?? fallback));
+  const limits = { retries: positive(opts["trace-retries"], traceLimits.retries), waitMs: positive(opts["trace-wait-ms"], traceLimits.waitMs), costUsd: positive(opts["trace-cost-usd"], traceLimits.costUsd) };
+  const reports = [];
 
-  console.log(JSON.stringify(repos.map((repo) => ({ repo, since, ...score(orExit(() => collect(repo, since)), Number(opts["min-prs"])), escapes: orExit(() => collectEscapes(repo, since)) })), null, 2));
+  orExit(() => z.iso.date().parse(since));
+
+  for (const repo of repos) {
+    const records = orExit(() => collect(repo, since));
+    const report = { repo, since, ...score(records, Number(opts["min-prs"])), escapes: orExit(() => collectEscapes(repo, since)) };
+
+    if (!files.length && !endpoint && !datadog) {
+      reports.push(report);
+      continue;
+    }
+
+    const traces = traceScores(await collectTraces(files, endpoint, headers, repo, since, datadog), repo, records, since, limits);
+    reports.push({ ...report, prs: report.prs.map((pr) => ({ ...pr, signals: [...pr.signals, ...(traces.summaries.get(pr.number)?.signals ?? [])], telemetry: traces.summaries.get(pr.number) ?? null })), telemetry: { coverage: { ...traces.coverage, untouchedPrs: [...traces.summaries.keys()].filter((n) => !report.prs.some((pr) => pr.number === n)).length }, limits: traces.limits } });
+  }
+
+  console.log(JSON.stringify(reports, null, 2));
 } else if (command === "local" && sub === "change") {
   console.log(JSON.stringify(orExit(() => captureChange(repoRoot, opts.base)), null, 2));
 } else if (command === "local" && sub === "finish" && skillRef) {
@@ -233,6 +276,33 @@ if (command === "install") {
   for (const b of demoBugs()) console.log(`  ${`${b.file}:${b.lines[0]}`.padEnd(18)} ${b.class} (${b.enters_as})`);
 
   console.log(`\nNext: cd ${app}, open your coding agent there, and run /shepherd --local.`);
+} else if (command === "trace" && (sub === "event" || sub === "flush")) {
+  const pr = Number(opts.pr);
+
+  const count = (flag: string, v: string | undefined) =>
+    v === undefined
+      ? undefined
+      : orExit(() => {
+          if (!/^\d+$/.test(v)) throw new Error(`trace needs --${flag} as a whole number`);
+
+          return Number(v);
+        });
+
+  if (!Number.isInteger(pr) || pr <= 0) orExit(() => {
+    throw new Error("trace needs --pr <number>");
+  });
+
+  if (sub === "event") {
+    orExit(() => recordEvent(traceFile(repoRoot, pr), { stage: skillRef ?? "", phase: rest[0] ?? "", round: count("round", opts.round), outcome: opts.outcome, retries: count("retries", opts.retries), head_sha: opts.head }));
+  } else {
+    if (!opts.repo || !opts.head || !opts.outcome) orExit(() => {
+      throw new Error("trace flush needs --repo, --head and --outcome");
+    });
+
+    const result = await flush(traceFile(repoRoot, pr), { repo: opts.repo ?? "", pr, headSha: opts.head ?? "", baseSha: opts.base, outcome: opts.outcome ?? "", ciRun: count("ci-run", opts["ci-run"]), ciAttempt: count("ci-attempt", opts["ci-attempt"]), links: opts.related ?? [] });
+
+    console.log(JSON.stringify(result, null, 2));
+  }
 } else if (command === "init") {
   const file = path.join(repoRoot, TEAM_FILES[0]!);
 
