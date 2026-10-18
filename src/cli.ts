@@ -18,6 +18,8 @@
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
 // shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
+// shepherd workflows                               (copy the shepherd and incident workflows into .github/workflows)
+// shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>
 // shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
 //
 // Default: skills to ~/.claude/skills, the /shepherd command to ~/.claude/commands.
@@ -36,9 +38,10 @@ import { z } from "zod";
 import { type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
+import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
-import { install, uninstall, type Outcome } from "./install.ts";
+import { install, type Outcome, pinWorkflow, uninstall } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
 import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
@@ -64,7 +67,9 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd doctor [--json]
        shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...
        shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
-       shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...`;
+       shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
+       shepherd workflows
+       shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
@@ -96,7 +101,8 @@ const { values: opts, positionals } = parseArgs({
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
     retries: { type: "string" },
-    head: { type: "string" }, // trace: the head SHA
+    head: { type: "string" }, // trace, notify: the head SHA
+    state: { type: "string" }, // notify: the commit status state just set
     repo: { type: "string" }, // trace flush: owner/repo
     "ci-run": { type: "string" },
     "ci-attempt": { type: "string" },
@@ -303,6 +309,41 @@ if (command === "install") {
 
     console.log(JSON.stringify(result, null, 2));
   }
+} else if (command === "workflows") {
+  const dest = path.join(repoRoot, ".github", "workflows");
+
+  mkdirSync(dest, { recursive: true });
+
+  for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
+    const to = path.join(dest, name);
+
+    if (existsSync(to)) {
+      console.log(`kept      .github/workflows/${name} (exists)`);
+      continue;
+    }
+
+    // Pin the workflow to the version that wrote it, so its skills match this CLI.
+    const version = z.object({ version: z.string() }).parse(JSON.parse(readFileSync(path.join(BUNDLE_ROOT, "package.json"), "utf8"))).version;
+
+    writeFileSync(to, pinWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), version));
+    console.log(`wrote     .github/workflows/${name}`);
+  }
+
+  console.log("\nNext: name your CI workflow in each file's `workflows:` list, add the SHEPHERD_TOKEN and OPENCODE_API_KEY secrets, then merge.\nOptional: SHEPHERD_LABEL (handoff label), SHEPHERD_NOTIFY_WEBHOOK (Slack or any JSON endpoint).");
+} else if (command === "notify") {
+  const pr = Number(opts.pr);
+  const state = STATES.find((s) => s === opts.state);
+
+  if (!Number.isInteger(pr) || pr <= 0 || !opts.repo || !opts.head || !state || !opts.file) orExit(() => {
+    throw new Error("notify needs --pr, --repo, --head, --state success|failure|pending|error and --file");
+  });
+
+  // The description comes from a file: it can quote PR-authored text, which must never reach a shell.
+  const description = orExit(() => readFileSync(opts.file ?? "", "utf8")).trim().slice(0, 300);
+  const url = `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${opts.repo}/pull/${pr}`;
+  const event = { event: "shepherd.state" as const, repo: opts.repo ?? "", pr, url, head_sha: opts.head ?? "", state: state ?? "pending", description };
+
+  console.log(`notify: ${await notify(process.env.SHEPHERD_NOTIFY_WEBHOOK, event, notifyOn(process.env.SHEPHERD_NOTIFY_ON), [fileLedger(repoRoot, pr), statusLedger(opts.repo ?? "", opts.head ?? "", repoRoot)])}`);
 } else if (command === "init") {
   const file = path.join(repoRoot, TEAM_FILES[0]!);
 

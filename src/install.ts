@@ -6,6 +6,9 @@ import path from "node:path";
 
 export const MARKER = ".shepherd-installed";
 
+/** A workflow template with every `SHEPHERD_VERSION:` pin set to `version`, so each job runs the CLI that wrote it. */
+export const pinWorkflow = (text: string, version: string) => text.replaceAll(/SHEPHERD_VERSION: \S+/g, `SHEPHERD_VERSION: ${version}`);
+
 // Command files are single files, so they carry the marker as a comment line instead.
 const COMMAND_MARKER = "<!-- shepherd-installed -->";
 

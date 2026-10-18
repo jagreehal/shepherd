@@ -1,0 +1,156 @@
+# shepherd incident in CI: a red run on main, or an error sent in by hand or by an alerting tool, becomes an
+# incident issue, a reproducing test and a fix PR. The PR then goes through CI, stamp and the shepherd
+# workflow like any other. Installed by `shepherd workflows`.
+#
+# Triggers:
+#   CI fails on a push to the default branch           -> the run URL is the signal
+#   workflow_dispatch with `error`                     -> paste an error or stack trace
+#   repository_dispatch type `incident`, payload.error -> an alerting tool (Sentry, Grafana, PagerDuty, a script):
+#     gh api repos/<owner>/<repo>/dispatches -f event_type=incident -F 'client_payload[error]=<error text>'
+# Edit `workflows: [ci]` to name your CI workflow. workflow_run runs this file from the default branch only.
+#
+# The signal is untrusted text (alert payloads carry user input), so the agent's job can read the repo and
+# file issues, nothing more: no contents write, no credential in its checkout. It hands its commit over as a
+# git bundle; the `open` job, which runs no model, pushes only an `incident/<n>` branch that builds on the
+# default branch and changes nothing outside INCIDENT_PATHS (no workflows, manifests, lockfiles or config:
+# CI on the PR installs and runs them), then opens the PR. The agent still holds the model key.
+#
+# Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and stamp;
+#            with github.token the PR opens but no workflow runs on it. OPENCODE_API_KEY for the model.
+# Variables: SHEPHERD_MODEL (provider/model), INCIDENT_PATHS (extended regex; empty = ^src/).
+name: shepherd-incident
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      error:
+        description: Error, stack trace or alert text
+        required: true
+  repository_dispatch:
+    types: [incident]
+
+permissions: {}
+
+jobs:
+  investigate:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == github.event.repository.default_branch)
+      || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # On the job, not the workflow: every green CI run starts this workflow and skips, and a workflow-level group
+    # would hand that skip the one pending slot a real incident needs. One at a time, so a repeat signal dedupes.
+    concurrency:
+      group: shepherd-incident
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    env:
+      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
+      # Install your project's dependencies here so the reproducing test can run, with install scripts off and no
+      # dependency cache (npm ci --ignore-scripts; setup-node without `cache:`): this job runs the model.
+      - shell: bash # -eo pipefail: a failed download fails here, not three steps later
+        run: |
+          # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+          [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
+          shepherd install
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0 # 1.x: this installer refuses 2.x
+          "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p "$RUNNER_TEMP/handoff"
+      - name: Write the signal
+        env: # through env, never ${{ }} in the script: the error text is untrusted
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          INPUT_ERROR: ${{ github.event.inputs.error }}
+          PAYLOAD_ERROR: ${{ github.event.client_payload.error }}
+        run: |
+          if [ -n "$RUN_URL" ]; then echo "$RUN_URL" > "$RUNNER_TEMP/signal.txt"
+          else printf '%s\n' "${INPUT_ERROR:-$PAYLOAD_ERROR}" > "$RUNNER_TEMP/signal.txt"; fi
+      - name: Incident
+        timeout-minutes: 20 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1"
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
+          HANDOFF: ${{ runner.temp }}/handoff
+        run: |
+          opencode run --auto -m "$MODEL" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
+          (a run URL, or an error or alert text).
+          You are running in GitHub Actions on the default branch, already checked out, with no push access.
+          At Step 6 do not push or open the PR: commit on incident/<issue>, write the PR title to $HANDOFF/pr-title.txt
+          and the body to $HANDOFF/pr-body.md; the next job pushes and opens it.
+          Nobody is watching this session: never wait for an answer. Anything you would ask is reported in the final JSON."
+      - name: Bundle the fix branch
+        env:
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          branch=$(git branch --list 'incident/*' --format='%(refname:short)' | head -1)
+          [ -n "$branch" ] || { echo "no fix branch: see the incident issue"; exit 0; }
+          echo "$branch" > "$RUNNER_TEMP/handoff/branch"
+          git bundle create "$RUNNER_TEMP/handoff/fix.bundle" "origin/$DEFAULT..$branch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: incident-handoff
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: ignore
+
+  open:
+    needs: investigate
+    runs-on: ubuntu-latest
+    env:
+      INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS || '^src/' }} # extended regex every changed path must match
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        id: handoff
+        continue-on-error: true # no artifact: no fix branch
+        with:
+          name: incident-handoff
+          path: handoff
+      - if: steps.handoff.outcome == 'success' && hashFiles('handoff/fix.bundle') != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          path: repo
+          token: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+      - if: steps.handoff.outcome == 'success' && hashFiles('handoff/fix.bundle') != ''
+        working-directory: repo
+        shell: bash # -eo pipefail
+        env:
+          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          branch=$(cat ../handoff/branch)
+          [[ "$branch" =~ ^incident/[0-9]+$ ]] || { echo "::error::unexpected branch name"; exit 1; }
+          git fetch -q ../handoff/fix.bundle "$branch:$branch"
+          git merge-base "origin/$DEFAULT" "$branch" >/dev/null || { echo "::error::$branch shares no history with $DEFAULT"; exit 1; } # behind is fine: ci-repair updates it
+          # NUL-delimited and rename-free: a quoted or renamed path cannot slip past the match. The diff runs on
+          # its own so a failure stops here instead of passing an empty list; an empty change is refused too.
+          git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" > ../changed
+          [ -s ../changed ] || { echo "::error::$branch changes nothing"; exit 1; }
+          outside=$(tr '\0' '\n' < ../changed | grep -Ev -- "$INCIDENT_PATHS" || [ $? -eq 1 ])
+          [ -z "$outside" ] || { echo "::error::the fix changes paths outside $INCIDENT_PATHS; a person should look:"; echo "$outside"; exit 1; }
+          git push origin "$branch:refs/heads/$branch"
+          gh pr create --base "$DEFAULT" --head "$branch" --title "$(head -c 200 ../handoff/pr-title.txt)" --body-file ../handoff/pr-body.md

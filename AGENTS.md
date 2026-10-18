@@ -48,6 +48,11 @@ to all of them.
   short must never be possible. This is shepherd's only status write.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
+- **In CI the model holds no write credential.** Handoff mode commits and
+  never pushes; a job with no model pushes the bundle after its fast-forward
+  and path checks. Never name `SHEPHERD_TOKEN` anywhere in the model's job (a secret any
+  step uses sits in the job's runner memory), persist a checkout token, or
+  grant `contents: write`; `src/workflow.test.ts` pins this.
 - **Local mode touches nothing on GitHub.** `--local` never pushes, posts,
   resolves, sets a status, or commits: fixes stay in the working tree for the
   developer. It reports "local checks passed", never merge-ready.

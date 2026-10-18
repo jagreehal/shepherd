@@ -2,3 +2,7 @@ node_modules
 *.tgz
 .env
 .executable-stories/
+
+# Documentation build output
+docs/.astro/
+docs/dist/

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runsStamp } from "./doctor.ts";
+import { pinWorkflow } from "./install.ts";
 import path from "node:path";
 
 const CLI = path.resolve(import.meta.dir, "cli.ts");
@@ -145,6 +146,42 @@ describe("adoption", () => {
     expect(r.out).toContain("problem: no SKILL.md found");
     expect(r.out).toMatch(/mine\s+personal preview/);
     expect(r.code).toBe(1);
+  });
+
+  test("workflows copies the shepherd and incident workflows pinned to this version, and keeps a file you edited", () => {
+    const { dir, run } = repo({ ".github/workflows/shepherd-incident.yml": "name: mine\n" });
+    const { version } = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8"));
+    const out = run("workflows").out;
+
+    expect(out).toContain("wrote     .github/workflows/shepherd.yml");
+    expect(out).toContain("kept      .github/workflows/shepherd-incident.yml (exists)");
+    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain(`SHEPHERD_VERSION: ${version} `);
+    expect(readFileSync(path.join(dir, ".github/workflows/shepherd-incident.yml"), "utf8")).toBe("name: mine\n");
+  });
+
+  test("pinWorkflow sets every SHEPHERD_VERSION pin in both templates, not just the first", () => {
+    for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
+      const text = readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
+
+      const pins = pinWorkflow(text, "9.9.9").match(/SHEPHERD_VERSION: \S+/g) ?? [];
+
+      expect(pins.length).toBe(text.match(/SHEPHERD_VERSION: \S+/g)?.length ?? -1);
+      expect(new Set(pins)).toEqual(new Set(["SHEPHERD_VERSION: 9.9.9"]));
+    }
+  });
+
+  test("both workflow templates put the pinned CLI on PATH, so no skill step reaches an unpinned bunx", () => {
+    for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
+      const text = readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
+
+      expect(text).toContain('bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"');
+      expect(text).toContain('echo "$HOME/.bun/bin" >> "$GITHUB_PATH"');
+      expect(text).not.toMatch(/bunx\s+"?@jagreehal\/shepherd/);
+
+      // Third-party actions run on a commit SHA, and the write token never sits in job-level env where they could read it.
+      for (const [, ref] of text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) if (!ref!.startsWith("actions/")) expect(ref).toMatch(/@[0-9a-f]{40}$/);
+      expect(text).not.toMatch(/^ {6}GH_TOKEN: \$\{\{ secrets\.SHEPHERD_TOKEN/m);
+    }
   });
 
   test("doctor names what is missing and how to fix it", () => {
