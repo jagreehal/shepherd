@@ -85,6 +85,18 @@ already read. Tell runners to read a file only where the patch is not enough.
   push. Return the files changed (or 'no changes') with one line each, plus any
   `validation_request`."
 
+## Handoff addition (CI handoff mode only)
+
+Append to every brief when `SHEPHERD_HANDOFF` is set (`../SKILL.md`, Handoff
+mode):
+
+> Handoff mode: this session cannot push, and a later job pushes your commits.
+> Commit, never push. Resolve no thread; the next iteration does once the fix
+> is pushed. Never run `gh pr update-branch`: to update the branch, merge
+> `origin/<base>` locally and commit the merge with your trailer. Never run
+> `gh run rerun`: put the job in your `rerun` result with status `requested`.
+> Report `new_head_sha` as your local HEAD.
+
 ## Validation flow
 
 A runner that meets a risky change returns a `validation_request` (file,

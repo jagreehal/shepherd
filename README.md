@@ -1,462 +1,67 @@
-# shepherd
+# Shepherd
 
-shepherd takes a pull request from "opened" to "ready to merge".
+Shepherd reviews changes, fixes findings and repairs CI through skills in your coding agent. Use it before you open a PR, on an existing PR, or through GitHub Actions.
 
-It is a pack of agent skills that runs inside your coding agent (Claude Code, Codex, or any harness with skills and subagents), on your machine, as you. A review swarm reads the change through five lenses, plus a spec lens when the change links an issue, and posts inline comments. Triage works through every thread. CI repair fixes what the PR broke. The loop repeats until a round finds nothing new, then hands the head to [stamp](https://github.com/jagreehal/stamp) for the approval verdict.
+Use Shepherd to work through review comments and failing CI logs under your team's policy. It leaves human decisions for you. [Stamp](https://github.com/jagreehal/stamp) supplies the approval verdict; you decide when to merge.
 
-```mermaid
-flowchart LR
-    PR[You open a PR] --> SH[shepherd loop<br/>in your coding agent]
-    SH --> R[Review, fix,<br/>repair CI]
-    R --> SH
-    SH --> ST[stamp in CI<br/>decides approval]
-    ST --> M[You merge]
-```
+## Start here
 
-shepherd gets the PR ready; stamp decides whether it gets approved. shepherd works on GitHub only and reads and writes through `gh`.
+- [Run your first review](docs/src/content/docs/start/quickstart.md)
+- [Choose local review, a PR loop, or CI](docs/src/content/docs/start/choose-a-setup.md)
+- [Browse the documentation](docs/src/content/docs/index.md)
 
-## Why you want it
+You need Bun 1.2 or later, Git, an authenticated GitHub CLI and a coding agent that can load skills and run subagents.
 
-An agent-written PR lands with review comments, bot findings, a red CI job and a stale branch. You end up copying each one back into your agent by hand. shepherd runs that loop for you and stops when a decision belongs to you.
-
-```mermaid
-flowchart TD
-    subgraph Without["Without shepherd"]
-        A1[Read bot comments] --> A2[Paste into agent]
-        A2 --> A3[Push fix]
-        A3 --> A4[CI fails]
-        A4 --> A5[Paste log into agent]
-        A5 --> A3
-    end
-    subgraph With["With shepherd"]
-        B1["/loop 5m /shepherd 42"] --> B2[Review, triage,<br/>CI repair, verdict]
-        B2 --> B3{Needs you?}
-        B3 -- no --> B2
-        B3 -- yes --> B4[Commit status names<br/>what you need to do]
-    end
-```
-
-- Machines check first: your lint, typecheck, nearby tests and installed scanners run before any model reads the diff.
-- Repos that write [executable stories](https://github.com/jagreehal/executable-stories) get scenario-level evidence: the failed step with expected and actual values, the code each scenario covers, and scenarios a change switched off or removed. Fixes are verified by rerunning those scenarios, and an incident fix is done when `executable-stories goal` passes for its issue.
-- A second model verifies each serious finding before it posts, so you read fewer false alarms.
-- shepherd never replies to people and never approves. Those stay yours.
-- A `shepherd` commit status shows where the loop got to, and a branch rule can require it.
-
-## Install
+In your terminal, from the repository clone:
 
 ```bash
-bunx @jagreehal/shepherd install              # ~/.claude/skills and the /shepherd command
-bunx @jagreehal/shepherd install --project    # ./.claude in the current repository
-bunx @jagreehal/shepherd install --target ~/.codex/skills   # any other agent's skills directory
+bun add -g @jagreehal/shepherd
+shepherd install
+shepherd init --preset review-only
+shepherd config validate
+shepherd preview --working-tree
 ```
 
-The [skills CLI](https://skills.sh) installs them too, into any agent it supports:
+The default install targets Claude Code. For another harness, use `shepherd install --target <skills-directory>`. Commit and merge the generated review-only policy before you run it against a PR: PR reviews read policy from the default branch. Without policy, the built-in fix mode is `push`.
 
-```bash
-npx skills add jagreehal/shepherd             # pick the agents and skills to install
-npx skills add jagreehal/shepherd --skill '*' -a claude-code   # every skill, for Claude Code
-```
-
-Install every skill: they point at each other by relative path. Your agent then runs `/shepherd` as a skill, and the CLI steps fall back to `bunx @jagreehal/shepherd`.
-
-`shepherd install` copies the skills and marks each copy. It replaces only what it installed; a skill of yours with the same name stays unless you pass `--force`. `shepherd uninstall` removes only its own copies. From a clone you edit, add `--link` to symlink instead.
-
-## Use
+In your coding agent:
 
 ```text
-/shepherd 42                 # one full iteration on PR #42
-/loop 5m /shepherd 42        # hands-off: an iteration every five minutes
-/swarm 42                    # the review on its own
-/triage 42                   # thread triage on its own
-/ci-repair 42                # CI on its own
-/review-security             # one lens on the current diff
-/shepherd --local            # before a PR: review and fix your change on this machine
-/swarm --local               # before a PR: review only, print the findings
-/incident <run-url|issue|error.txt>   # after merge: a failure becomes an issue, a reproducing test and a fix PR
+/shepherd 42
 ```
 
-## Before you open a PR
-
-`/shepherd --local` reviews and fixes your change before it reaches GitHub. It uses the same lenses, verification and fix rules as the PR loop, and it never pushes, comments, commits or sets a status. You commit the fixes.
-
-```mermaid
-flowchart TD
-    C[shepherd local change<br/>unpushed commits, staged,<br/>unstaged, untracked] --> S[swarm --local<br/>checks, router, lenses, verify]
-    S --> F{shepherd local finish}
-    F -- incomplete --> I[Review incomplete:<br/>what was not reviewed]
-    F -- complete --> T[triage, local:<br/>fix in the working tree]
-    T --> SI[simplify]
-    SI --> Q{Clean round?}
-    Q -- no --> C
-    Q -- "a decision is yours" --> Y[Needs you:<br/>each option listed]
-    Q -- yes --> P[Local checks passed]
-    P --> PR[Open the PR,<br/>then /shepherd &lt;pr&gt;]
-```
-
-The change covers the commits your branch has that its upstream (or the remote's default branch) lacks, staged and unstaged edits, and untracked files `.gitignore` does not exclude. shepherd reads untracked files through a copy of the index, so your own staging stays as you left it.
-
-`shepherd local finish` checks each review against the change before anyone reads it as clean:
-
-- every stage ran, and every lens ended `ok`;
-- every changed line range reached at least one reviewer;
-- each finding names a line its file has;
-- each check finding was raised or dropped with a reason;
-- the files did not change while the review ran.
-
-Anything short of that reports **review incomplete** with what is missing. It proves each line was put in front of a reviewer, which is less than proof that the reviewer understood it.
-
-A complete review writes a receipt keyed to a fingerprint of the exact content. `shepherd local status` tells you whether the files on disk still match a reviewed change; any edit since makes it `changed`. Wire it into a pre-push hook if you want one.
-
-Local mode ends with **local checks passed**, **needs you**, **review incomplete**, or the round cap. Merge readiness still belongs to the PR loop and stamp.
-
-Try it on planted bugs:
-
-```bash
-bunx @jagreehal/shepherd local demo    # prints the repository path and the bugs to expect
-```
-
-The demo repository carries seven bugs, one per way a change reaches the review: an unpushed commit, a staged edit, an unstaged edit, an untracked file and a deleted check. `examples/local-demo/expected.json` lists each one with its lines.
-
-## How it works
-
-### One iteration
-
-```mermaid
-flowchart TD
-    S[Resolve the PR] --> Q[Quality round]
-    subgraph Round["Quality loop, up to 4 rounds"]
-        Q --> SW[swarm: review]
-        SW --> TR[triage: work every thread]
-        TR --> SI[simplify]
-        SI --> DRY{Dry round?}
-        DRY -- no --> Q
-    end
-    DRY -- yes --> CI[ci-repair]
-    CI --> V[stamp verdict]
-    V --> SUM[Summary and<br/>commit status]
-```
-
-A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. On a repo with Claude Code Review, shepherd reads its check run to know when the review finished or did not run, fixes 🔴 Important and 🟡 Nit findings like any bot finding, and leaves 🟣 Pre-existing ones to you as follow-ups. Round 1's fixes always get a second review round.
-
-### The review swarm
-
-```mermaid
-flowchart LR
-    D[Diff] --> CK[Repo checks and installed scanners:<br/>lint, typecheck, nearby tests,<br/>gitleaks, semgrep, osv-scanner and more]
-    CK --> RT[Cheap router review]
-    RT --> L1[review-correctness]
-    RT --> L2[review-security]
-    RT --> L3[review-simplicity]
-    RT --> L4[review-maintainability]
-    RT --> L5[review-slop]
-    RT --> L6[review-spec<br/>when an issue or spec is linked]
-    RT --> LT[Your team's lenses]
-    L1 & L2 & L3 & L4 & L5 & L6 & LT --> VF{HIGH or CRITICAL?}
-    VF -- yes --> V2[Second model quotes<br/>the code or drops it]
-    VF -- no --> P
-    V2 --> P[Inline comments<br/>and one summary comment]
-```
-
-The router hands risky hunks to the lenses in parallel. The lenses don't repeat what the tools already found.
-
-### Triage
-
-```mermaid
-flowchart TD
-    T[Open review thread] --> H{A human has joined?}
-    H -- yes --> W[Leave it for you]
-    H -- no --> J{Judgement}
-    J --> F[Fixed, with a commit]
-    J --> R[Resolved]
-    J --> DF[Deferred]
-```
-
-Triage ends each thread fixed, resolved or deferred. It never replies and never touches a thread a person is in.
-
-## The skills
-
-| Skill | Does |
-|---|---|
-| `shepherd` | Runs the loop: review rounds until dry, then CI, then the stamp verdict. Owns state, model choice, and when to ask you. |
-| `swarm` | Runs the repo's own checks, then a cheap router review that hands risky hunks to the lenses in parallel, verifies serious findings, and posts inline comments plus one summary comment. |
-| `triage` | Ends every review thread fixed, resolved, or deferred. Never replies, never touches a thread a human is in. |
-| `ci-repair` | Updates a stale branch, diagnoses failing checks to the leaf job, makes one verified fix, reruns flaky jobs once. |
-| `incident` | After merge: turns a red default-branch run or a production error into an `incident` issue, a reproducing test, the PR that caused it (by bisecting with that test), and a fix PR the loop then takes over. |
-| `pair` | The act / act-and-say / stop-and-ask ladder that decides when to ask you. |
-| `review-correctness` | Bugs: data, concurrency, performance, API contracts, frontend state, tests. |
-| `review-security` | Exploitable source-to-sink paths, each with its data flow and fix. |
-| `review-simplicity` | The four rules of simple design; what to delete and what replaces it. |
-| `review-maintainability` | Coupling, rollout safety, observability, naming, and the repo's own written rules. |
-| `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
-| `review-spec` | The change against its issue or spec: requirements missing, built wrong, or not asked for. |
-| `code-review`, `diagnosing-bugs`, `pr`, `retro`, `writing-for-agents` | [Matt Pocock's skills](https://github.com/mattpocock/skills), copied unchanged. `review-spec` runs code-review's Spec axis, `review-simplicity` adds its smell baseline, ci-repair diagnoses with diagnosing-bugs, shepherd writes PR bodies with pr when the repo has no PR skill, and garden sorts causes with retro and writes skill text by writing-for-agents. |
-| `garden` | The outer loop: scores shepherd's recent runs from GitHub and opens PRs with skill edits and lint rules for findings that keep recurring. |
-
-### When it asks you
-
-```mermaid
-flowchart LR
-    X[Something to do] --> P{pair ladder}
-    P -- clearly better,<br/>one sensible way --> A[Just do it]
-    P -- more than one<br/>reasonable answer --> AS[Do it, then say so]
-    P -- breaks simple design, unclear,<br/>or changes relied-on behaviour --> SA[Stop and ask]
-```
-
-## Add your own reviewers
-
-Any skill can review code as a swarm lens: React performance rules, your design system, your API conventions. Point shepherd at the skill and the files it cares about:
-
-```bash
-bunx @jagreehal/shepherd lens new react --applies '**/*.tsx'   # scaffolds .shepherd/lenses/react/SKILL.md
-bunx @jagreehal/shepherd lens add vercel-react-best-practices --name react-perf \
-  --applies '**/*.tsx' --applies '**/*.jsx'          # an existing skill, into .shepherd/lenses.yml
-bunx @jagreehal/shepherd lens add ~/skills/house-style --name house --global   # personal preview
-bunx @jagreehal/shepherd lens list
-```
-
-```yaml
-# .shepherd/lenses.yml
-lenses:
-  react:
-    skill: vercel-react-best-practices   # an installed skill, or a path to one in the repo
-    applies_to: ['**/*.tsx', '**/*.jsx'] # runs whenever a matching file changes
-```
-
-```mermaid
-flowchart TD
-    L[Lens in .shepherd/lenses.yml<br/>read from the default branch] --> A{applies_to set?}
-    A -- yes --> M[Runs on each PR that<br/>touches a matching file]
-    A -- no --> R[Router calls it when<br/>its description fits]
-    M & R --> RV["Skill's ## Review section<br/>is the checklist"]
-    RV --> P["Findings post as [lens/rule-id]"]
-    P --> T["Triage fixes them,<br/>following the skill's ## Fix"]
-```
-
-Swarm wraps the skill in a review-only brief. The skill's `## Review` section is the checklist, and its findings post like any other lens's (`[react/async-parallel]`). Triage fixes them, following the skill's `## Fix` section when it has one. Nothing in a lens can loosen shepherd's own rules.
-
-shepherd reads the repository's lens file from the default branch, so a PR cannot pick its own reviewers. Run `/swarm --preview` to try a lens from your working tree before you merge it: it reports which files each lens matched and what it found, and posts nothing. `lens list` checks each lens (a description, a `## Review` with unique rule ids) and exits non-zero on a problem.
-
-A `--global` lens is a personal preview. Swarm prints its findings locally and never posts them, so you can try a lens on real PRs before you commit it for the team.
-
-### Starter lenses
-
-A team that wants every change checked for observability can start from the bundled pack instead of a blank file:
-
-```bash
-bunx @jagreehal/shepherd lens new observability --from observability --applies 'src/**'
-```
-
-That copies `lenses/observability/SKILL.md` into `.shepherd/lenses/observability/` and registers it. Its seven rules flag outbound calls with no span or log, errors that lose their cause, unstructured logs, secrets or personal data in telemetry, silent data drops, unbounded labels, and user-facing changes with no signal. Its `## Fix` section has triage reach for the repository's existing logger and tracer, and send anything that adds a telemetry dependency to you. Edit the rules to fit; `shepherd lens list` shows the templates.
-
-### The same pack in stamp
-
-A lens is a `SKILL.md` with id'd rules under `## Review`. [stamp](https://github.com/jagreehal/stamp) reads the same file as a rule pack, so one pack steers the review that fixes code and the gate that approves it:
-
-```mermaid
-flowchart LR
-    P[.shepherd/lenses/observability/SKILL.md] --> L[shepherd lens:<br/>findings, then triage fixes<br/>following its Fix section]
-    P --> R[stamp rule pack:<br/>the reviewer refuses, escalates<br/>or notes a broken rule]
-```
-
-```yaml
-# .stamp/policy.yml
-rules:
-  observability:
-    skill: .shepherd/lenses/observability
-    applies_to: ['src/**']
-    on_break: escalate
-```
-
-Both read the pack from the default branch, so a PR cannot change the rules it is judged by. stamp also sends any PR that edits a configured pack to a human, since the pack's rules are trusted context for every later review.
-
-## Team policy
-
-`.shepherd/config.yml` holds a team's policy: its lenses and models, plus the checks to run, how far fixes go, what a person must decide, and named recipes. An organisation keeps a pack, and each repository extends it and overrides what it needs.
-
-```yaml
-# .shepherd/config.yml
-extends:
-  - .shepherd/packs/acme.yml                                  # in this repository
-  - github:acme/policy/shepherd.yml@0123456789abcdef0123456789abcdef01234567   # another, pinned to a commit
-
-lenses:
-  payments:
-    skill: .shepherd/lenses/payments
-    applies_to: ["src/payments/**"]
-
-checks:                     # swarm runs exactly these; ci-repair and incident use them too
-  unit: { command: bun test }
-  types: { command: bun run typecheck }
-
-fixes:
-  mode: local               # suggest: change nothing | local: fix, never commit | push (default)
-
-escalate:
-  paths: ["migrations/**", "src/public-api/**"]
-  reason: a person decides schema and public API changes
-
-recipes:                    # /shepherd 42 --recipe quick
-  quick: { steps: [swarm, triage, swarm] }
-```
-
-Settings apply in one order: built-in defaults, then each pack in the order listed, then the repository file. A later layer replaces a setting, and merges `lenses`, `checks`, `models` and `recipes` by name. A pack cannot extend another pack. A pack from another repository must name a full commit, since a branch or tag can move under you. shepherd reads the file and its packs from the default branch, so a PR cannot change the policy it is reviewed under. Personal settings in `~/.config/shepherd/lenses.yml` stay a preview: their lenses print locally and never post, their ladder and pins fill in only where the team set none, and they cannot touch checks, fixes, escalation or recipes. A repository with only `.shepherd/lenses.yml` keeps working; it is read the same way.
-
-A recipe composes shepherd's own steps: `swarm`, `triage`, `simplify`, `ci-repair`, `stamp`, `incident`. They run one at a time, and a recipe reports success only when a review ran after its last change. Validation rejects an order that cannot hold: triage before any swarm, stamp anywhere but last, a change nothing reviews afterwards, a fixing step under `fixes.mode: suggest`, or, under `local`, a fix only stamp reviews (stamp sees the pushed head, which local fixes never reach). The built-in `review`, `fix`, `pr` and `incident` recipes are listed by `config explain`; one the fix mode rules out shows as blocked in `preview`. Custom runners come later, once their contracts are defined.
-
-```bash
-bunx @jagreehal/shepherd init                     # review-only: shepherd posts findings and changes no code
-bunx @jagreehal/shepherd init --preset local-fix  # fixes land in your working tree, never committed
-bunx @jagreehal/shepherd init --preset push       # fixes are committed and pushed to the PR branch
-bunx @jagreehal/shepherd init --from .shepherd/packs/acme.yml   # extend a pack and keep its fix mode
-bunx @jagreehal/shepherd config validate          # your edits: exits 1 on a problem, so CI can run it
-bunx @jagreehal/shepherd config explain           # effective policy on the default branch, and each setting's source
-bunx @jagreehal/shepherd preview --recipe pr      # on your change: the full plan (see below)
-```
-
-Run `preview --working-tree` before you merge a policy change. It lists every reviewer, built-in and custom, with the model each one runs on and where that model came from; the checks; what each step can write, locally or to GitHub; anything escalated to a person; and how the recipe finishes. A finished `review` recipe means findings were posted, not that the PR is ready. Under `local-fix` the result is fixes left uncommitted. A PR is ready only when stamp approves its head, CI is green and no review thread is open. Running `init` in a repository that has only `.shepherd/lenses.yml` carries its settings over and keeps push mode.
-
-A lens can travel with a pinned pack: a path in the pack (`skill: lenses/payments`) names a directory in the pack's repository at the pinned commit, and shepherd fetches it into a cache keyed by that commit. [docs/onboarding.md](docs/onboarding.md) shows the layout and how CI reads a private pack. `config validate` and `doctor` report a lens skill they cannot find.
-
-New to shepherd? [docs/onboarding.md](docs/onboarding.md) walks through install, `doctor`, `init`, validate, preview, merging the policy and the first review.
-
-`config explain --working-tree` and `preview --working-tree` read your uncommitted edits instead of the default branch. The skills load the policy with `config explain --json` (`skills/shepherd/references/policy.md`).
-
-## Choose the models
-
-Use any provider your harness can reach. Model ids pass straight to its agent tool: `haiku` on Claude Code, `provider/model` on OpenCode.
-
-```bash
-shepherd models ladder opencode-go/deepseek-v4-flash opencode-go/glm-5.3 opencode-go/kimi-k3   # cheapest first
-shepherd models pin security opencode-go/qwen3.8-max     # a lens or runner always on this model
-shepherd lens add react-rules --applies '**/*.tsx' --model opencode-go/kimi-k2.7-code
-shepherd models                                          # what will run
-shepherd opencode-agents                                 # agents per rung and pin, for OpenCode 1.x
-```
-
-```mermaid
-flowchart LR
-    subgraph Ladder["Model ladder, cheapest first"]
-        R1[rung 1] --> R2[rung 2] --> R3[rung 3] --> R4[rung 4]
-    end
-    RD[Reading work:<br/>router, simplify] --> R1
-    WR[Runners that push commits<br/>or resolve threads] --> R2
-    VF[Validating risky changes<br/>and serious findings] -- a stronger model --> R4
-    PIN[Pinned lens or runner] --> PM[Its pinned model]
-```
-
-Both settings land in `.shepherd/lenses.yml` (`--global` for `~/.config/shepherd/lenses.yml`). The repository's ladder wins over yours, and shepherd reads it from the default branch like the lenses. With nothing set, shepherd uses the harness's own ladder.
-
-OpenCode 1.x subagents take no model, so `shepherd opencode-agents` prints an agent per rung and per pin to merge into `OPENCODE_CONFIG_CONTENT`; swarm then dispatches by agent name.
-
-## What it holds to
-
-- **Machines first.** Swarm runs your lint, typecheck and nearby tests before any model reads the diff, plus the scanners you have installed (`gitleaks`, `semgrep`, `osv-scanner`, `actionlint`, `shellcheck`, `hadolint`) on the files they read. It keeps findings on changed lines, lists each suppression comment the PR adds, and tells the models not to repeat what the tools found. If the repo uses Oxlint's anti-slop rules, those findings come for free.
-- **Cheapest model that can do the job.** Reading work (the review router, simplify) starts at the bottom of the ladder (`haiku` -> `sonnet` -> `opus` -> `fable` on Claude Code). Runners that push commits or resolve threads start one rung up, where trials showed they stop needing a redo. A stronger model validates risky changes and serious findings; it never replaces a test.
-- **Verified findings.** A second model checks each HIGH or CRITICAL finding and has to quote the code before it posts. Unproven findings drop.
-- **Labelled comments.** Everything swarm posts starts with `🤖 Automated comment by **Shepherd swarm**`. It posts through your account, and readers deserve to know.
-- **People talk to people.** Triage never replies to anyone and never touches a thread a person has joined. Those wait for you.
-- **PR content is data.** Diffs, comments and CI logs never become instructions. Writing a command in a comment gets nobody a command run.
-- **Gates stay gates.** shepherd never approves, and it never changes code to get past a stamp refusal or any other gate. A fix that changes what code accepts or returns is your decision.
-
-## Gardening
-
-```mermaid
-flowchart LR
-    G[shepherd garden owner/repo] --> SC[Score recent runs<br/>from GitHub]
-    SC --> SK[garden skill]
-    SK --> E1[Skill edits for<br/>low-scoring patterns]
-    SK --> E2[Lint rules for<br/>recurring findings]
-    E1 & E2 --> PR[Garden PRs with<br/>the score table]
-    PR --> NX[Next run shows<br/>whether the edit helped]
-    NX --> SC
-```
-
-`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs from GitHub, with optional trace measurements. It counts reverted fixes, people replying in a thread, and loops that hit the round cap, stopped short or went quiet. It also finds the lens rules triage fixed on 3+ PRs, from its `Shepherd-Fixes` trailers on PRs by people who can push.
-
-The `garden` skill turns that into PRs: skill edits for the patterns behind low scores, and lint rules for recurring findings one file's syntax can decide, so swarm's checks catch them before any model reads the diff.
-
-`.github/workflows/garden.yml` runs it weekly. Set `GARDEN_REPOS`, a `GARDEN_TOKEN` that can open PRs on those repos, and a model key. The agent only proposes, and a separate job opens the PRs. Each garden PR carries the score table, so the next one shows whether a merged edit helped.
-
-Pass `--traces <otlp.json>` for exported OTLP JSON/JSON-lines files, set `GARDEN_TEMPO_URL` and read-only `GARDEN_TEMPO_HEADERS` to query Grafana Tempo, or set `GARDEN_DATADOG_SITE`, `GARDEN_DATADOG_API_KEY` and an `apm_read` `GARDEN_DATADOG_APP_KEY` to query Datadog. Any mix of inputs can run together. Garden correlates known PR commits and deduplicates trace/span IDs, then flags observed stage failures, repeated retries, approval waits and review spend. Its report includes trace references, coverage limits and unpriced reviews. Trace measurements cannot count a fix as accepted or justify weakening a check. [Configure trace scoring](docs/gardener-telemetry.md), including the bundled weekly workflow.
-
-## Where the loop got to
-
-Every iteration sets a `shepherd` commit status on the head.
-
-```mermaid
-stateDiagram-v2
-    [*] --> pending: iteration starts
-    pending --> pending: work left, or waiting on a verdict
-    pending --> failure: only you can move it
-    pending --> success: stamp approved, nothing open
-    failure --> pending: you act, next iteration
-    success --> pending: new push
-```
-
-- `pending` while there is work or a verdict to wait for.
-- `failure` names what you need to do when only you can move it (`stamp refused: ...`, `3 threads need you`).
-- `success` only when stamp approved and nothing is left open.
-
-Require the status in a branch rule, and a PR cannot merge while shepherd is mid-loop, stopped short, or behind a push it has not seen.
-
-## After merge
-
-shepherd needs no spec. A failure after merge is the requirement, and the test that reproduces it is the acceptance check. `/incident` takes a red run on the default branch, an error or stack trace, an alert payload, or an issue labelled `incident`, and:
-
-```mermaid
-flowchart LR
-    S[Signal: red main,<br/>production error] --> I[incident issue<br/>with evidence]
-    I --> T[Reproducing test]
-    T --> B[Bisect with the test:<br/>which PR caused it,<br/>did stamp approve it]
-    T --> F[Fix PR<br/>Fixes #issue]
-    F --> SH[shepherd loop]
-    SH --> ST[stamp: incident flag,<br/>needs the reproducing test]
-    ST --> M[You merge]
-    B --> G[garden tunes<br/>lenses and policy]
-```
-
-It dedupes on a fingerprint of the error, never pushes to the default branch, and stops without a fix when it cannot reproduce the failure. stamp refuses an incident fix that has no reproducing test or that hides the symptom.
-
-To run it when the default branch goes red, add a workflow on `workflow_run` of your CI with `conclusion == 'failure'` and `head_branch` set to the default branch, and run one `/incident <run url>` the same way the `shepherd` workflow runs an iteration. An alerting tool can call the same workflow through `repository_dispatch` with the error in the payload.
-
-## Traces
-
-Each iteration records its stages with `shepherd trace event` and closes with `shepherd trace flush`. With `OTEL_EXPORTER_OTLP_ENDPOINT` set, the flush exports one `shepherd.iteration` span with a child span per stage (checks, swarm, verify, triage, simplify, ci-repair, the wait on stamp), carrying the outcome, round, retries and head SHA. The iteration span carries the repository, PR number, head and base SHAs and CI run under the same attribute names stamp's review span uses, and links to related traces by traceparent. The CLI times the stages; model usage inside them is the harness's to report. Without an endpoint nothing loads and nothing exports. The flush clears the record either way and prints the export's error in its JSON when the collector is unreachable.
-
-## With stamp
-
-```mermaid
-sequenceDiagram
-    participant SH as shepherd
-    participant GH as GitHub
-    participant ST as stamp (CI)
-    participant You
-    SH->>GH: push fixes, apply label in label mode
-    GH->>ST: workflow runs on the head
-    ST->>GH: verdict review
-    SH->>GH: read the verdict
-    alt APPROVED
-        SH->>GH: status success
-    else REFUSED
-        SH->>SH: triage the refusal's issues
-    else ESCALATE
-        SH->>You: leave it for you
-    end
-```
-
-stamp's deterministic gates and approval sit at the end of the loop. In label mode shepherd applies the label once per head; in all-PRs mode stamp runs on each push by itself. Either way shepherd reads the verdict, acts on a refusal's issues through triage, and leaves an escalation to you. stamp keeps an approval across a base merge that leaves the diff unchanged, so ci-repair's branch updates cost no re-review.
-
-Swarm's comments post through the author's account. A gate that treats another reviewer's comment as assurance must not count them; the comment header tells them apart.
-
-## Credits
-
-`code-review`, `diagnosing-bugs`, `pr`, `retro` and `writing-for-agents` come from [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock, under the MIT License. They are copied unchanged so they can be refreshed as he improves them; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the commit and how to update. `pr`'s Summary section credits Dex Horthy's `show-me` in `skills/pr/CREDITS.md`.
+Replace `42` with your PR number. Expect findings on the PR and a `reviewed` result under review-only policy. Read the [first-run guide](docs/src/content/docs/start/quickstart.md) for setup checks and expected results.
+
+## Choose what the agent may change
+
+| Mode | Result |
+| --- | --- |
+| `suggest` | Findings posted; no code edits |
+| `local` | Fixes left in your working tree; you commit and push |
+| `push` | Fixes committed and pushed under the skill rules |
+
+`/shepherd --local` provides a pre-PR review-and-fix path with no GitHub writes. A completed review does not establish merge readiness. The PR loop reports ready only when Stamp approves the current head, CI passes and no review thread remains open.
+
+## Configure it for your team
+
+| Task | Guide |
+| --- | --- |
+| Review before opening a PR | [Local review](docs/src/content/docs/guides/local-review.md) |
+| Compose checks, modes and recipes | [Configuration reference](docs/src/content/docs/reference/configuration.md) |
+| Share organisation policy | [Team examples](docs/src/content/docs/configuration/examples.md) |
+| Add domain-specific reviewers | [Lenses](docs/src/content/docs/configuration/lenses.md) |
+| Select models by role | [Model routing](docs/src/content/docs/configuration/models.md) |
+| Run without your laptop | [GitHub Actions](docs/src/content/docs/integrations/github-actions.md) |
+| Get told when a PR needs you | [Notifications](docs/src/content/docs/integrations/notifications.md) |
+| Investigate a failure after merge | [Incidents](docs/src/content/docs/guides/incidents.md) |
+| Improve recurring findings | [Gardening](docs/src/content/docs/operations/gardening.md) |
+| Diagnose a stopped loop | [Troubleshooting](docs/src/content/docs/operations/troubleshooting.md) |
 
 ## Development
 
 ```bash
 bun install
-bun run check    # oxlint (with anti-slop), tsc, bun test
+bun run check
 ```
 
-The tests check the skill pack itself: each skill's frontmatter, each relative path a skill points at, each JSON contract a runner returns, and the comment header triage relies on. They also exercise the installer against temporary directories, and run local capture, `finish` and receipts against the demo repository. Contributor rules live in [AGENTS.md](AGENTS.md).
+For the docs site, run `bun install --cwd docs --frozen-lockfile`, then `bun run docs:dev`. Run `bun run docs:build` to validate and build it. Read [documentation maintenance](docs/src/content/docs/contributing/docs.md), [contributor rules](AGENTS.md) and [third-party credits](THIRD_PARTY_NOTICES.md).

@@ -161,7 +161,7 @@ As a sub-step, end with exactly this and nothing after it:
     "committed": false,
     "commit_sha": null,
     "fixed": [{"root_cause": "", "checks": [""], "validation": [""]}],
-    "rerun": [{"name": "", "job_id": "", "status": "queued|already-retried"}],
+    "rerun": [{"name": "", "job_id": "", "status": "queued|already-retried|requested"}],
     "unresolved": [{"name": "", "classification": "gate|unrelated|needs-decision|unresolved", "reason": ""}]
   },
   "narration": ["[ci] ..."]

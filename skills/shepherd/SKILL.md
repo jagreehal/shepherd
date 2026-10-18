@@ -83,6 +83,39 @@ deferred finding with its options:
 - **review incomplete:** what was not reviewed, and why.
 - **stopped at the round cap:** what the last round still found.
 
+## Handoff mode
+
+When `SHEPHERD_HANDOFF` names a directory, this session holds no push
+credential: the CI workflow (`templates/shepherd.yml`) runs the model with a
+token that can comment and read but not write code, and a later job with no
+model pushes what you hand it. An iteration then differs in five places:
+
+- **Commit, never push.** Commit on the PR branch as usual. Append the handoff
+  addition from `references/dispatch.md` to every runner brief. After a runner,
+  the remote head must still be `H0` and your local HEAD is its
+  `new_head_sha`; a remote that moved means someone pushed, so stop and
+  re-baseline next iteration.
+- **One quality round.** Swarm posts inline comments on lines GitHub has, so it
+  cannot review commits that are not pushed yet. Run round 1 and stop the loop;
+  the push starts CI, and CI finishing starts the next iteration, which reviews
+  these commits.
+- **No thread resolves on an unpushed fix.** The next iteration's triage sees
+  the pushed fix and resolves the thread then.
+- **Step 4 runs only when HEAD is still `H0`.** Otherwise stamp has nothing to
+  judge until the push; report `pending`.
+- **Step 5 writes, the workflow posts.** Do not set the commit status or run
+  `shepherd notify`. Write `$SHEPHERD_HANDOFF/status.json` with your file tool:
+  `{"state": "<success|pending|failure>", "description": "<the line>"}`, and
+  each job id ci-repair wants rerun on its own line in
+  `$SHEPHERD_HANDOFF/rerun-jobs.txt`. The publish job pushes your commits,
+  sets the status on the head it pushed (`pending` whenever it pushed: those
+  commits are not reviewed yet), reruns the jobs, and notifies. It refuses a
+  push that is not a fast-forward of `H0` or that touches a protected path
+  (workflows, hooks, package manager config, manifests, lockfiles), and sets
+  `failure` naming why.
+
+Done when every commit is on the local PR branch and `status.json` exists.
+
 ## Team policy and recipes
 
 Load the team policy once, as `references/policy.md` says, and pass it to
@@ -407,6 +440,18 @@ shepherd trace flush --pr <n> --repo <owner/repo> --head <H2> --base <base_sha> 
   need you`, `base conflict`.
 - `pending`: anything else: work remains, stamp has not judged `H2`, or bot
   reviews are on their way.
+
+Then tell people, when the repo has opted in. Write the same description to a
+file with your file tool (it can quote PR text, so it never goes in a command)
+and run:
+
+```bash
+shepherd notify --pr <n> --repo <owner/repo> --head <H2> --state <same state> --file <that file>
+```
+
+It does nothing unless `SHEPHERD_NOTIFY_WEBHOOK` is set, posts only when the
+state or description changed since the last call for this PR, and never fails
+the iteration. Run it every iteration; it does the deduplication.
 
 A session that dies mid-iteration leaves the last `pending`, never a green.
 A push that shepherd did not make lands on a head with no `shepherd` status,
