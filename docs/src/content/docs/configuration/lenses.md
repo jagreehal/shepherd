@@ -44,7 +44,17 @@ A team that wants every change checked for observability can start from the bund
 bunx @jagreehal/shepherd lens new observability --from observability --applies 'src/**'
 ```
 
-That copies `lenses/observability/SKILL.md` into `.shepherd/lenses/observability/` and registers it. Its seven rules flag outbound calls with no span or log, errors that lose their cause, unstructured logs, secrets or personal data in telemetry, silent data drops, unbounded labels, and user-facing changes with no signal. Its `## Fix` section has triage reach for the repository's existing logger and tracer, and send anything that adds a telemetry dependency to you. Edit the rules to fit; `shepherd lens list` shows the templates.
+That copies `lenses/observability/SKILL.md` into `.shepherd/lenses/observability/` and registers it. Its thirteen rules ask whether an on-call engineer could debug the change in production from its telemetry alone. They flag:
+
+- entry points and outbound calls with no span, and trace context lost across services, queues and background work
+- errors that lose their cause, logs that are unstructured or not tied to the trace, and handlers that record nothing about whom a request was for
+- secrets or personal data in telemetry, silent data drops, and unbounded names and labels
+- new dependencies and jobs no alert could isolate, user-facing changes with no signal, and renamed telemetry that dashboards still read
+- telemetry setup that can crash the app or lose its buffer on exit, and sampling or redaction changes that drop what the team relies on
+
+Its `## Fix` section has triage reach for the repository's existing logger and tracer, and send you anything that adds a telemetry dependency or changes telemetry configuration. Edit the rules to fit; `shepherd lens list` shows the templates.
+
+A repository with no tracer or logger yet gets every finding escalated. Add the tracer and logger first, then let the lens hold every later PR to the standard.
 
 ## The same pack in stamp
 
