@@ -1,5 +1,21 @@
 # @jagreehal/shepherd
 
+## 0.4.0
+
+### Minor Changes
+
+- 1deaaf6: - `shepherd workflows` installs the PR loop and incident workflows for GitHub Actions, pinned to your version.
+  - The PR loop gives the model a token that reads and comments. A job with no model checks its commits, pushes them to the PR branch as a fast-forward, and refuses changes to protected paths.
+  - Handoff mode lets an iteration commit and leave the push to that job.
+  - `shepherd notify` tells Slack or any JSON endpoint when a PR needs you, is ready to merge, or the CI iteration stopped. It sends once per change.
+  - A documentation site covers setup, configuration, CI and operations.
+- b6ed516: The observability lens grows to thirteen rules that ask whether an on-call engineer could debug a change in production from its telemetry: spans on entry points and outbound calls, trace context across services and queues, errors with their cause, trace-linked structured logs, request identifiers and decisions, no sensitive data, counted drops, bounded names, alertable signals, feature signals, stable telemetry names, safe startup and shutdown, and sampling and redaction changes.
+- f2239fd: - Swarm, triage, ci-repair and incident read executable-stories runs as evidence, and compare runs of the same scope.
+  - `shepherd trace event` and `shepherd trace flush` export each iteration as a `shepherd.iteration` span with a span per stage.
+  - `shepherd garden` adds trace measurements from OTLP files, Grafana Tempo or Datadog to its GitHub scores.
+  - Triage reads Claude Code Review's severity markers, and the loop waits on its check run.
+  - Updated autotel, zod and yaml.
+
 ## 0.3.0
 
 ### Minor Changes
