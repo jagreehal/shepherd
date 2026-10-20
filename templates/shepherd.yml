@@ -12,11 +12,16 @@
 # Secrets:
 #   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only
 #                     `gate` and `publish` see it. Pushes made with github.token start no workflows, so the loop would stall.
-#   OPENCODE_API_KEY  the models (any provider: set the matching key and SHEPHERD_MODEL).
+#   SHEPHERD_API_KEY  the model key, for whichever provider the session model names (Bedrock: a Bedrock API key).
+#                     Or each provider's own secret (OPENCODE_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
+#                     DEEPSEEK_API_KEY, AWS_BEARER_TOKEN_BEDROCK...) when the ladder mixes providers.
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
 #                     you, is ready to merge, or the iteration stopped on an error.
 # Variables:
-#   SHEPHERD_MODEL    provider/model for opencode; empty = opencode-go/kimi-k3.
+#   SHEPHERD_MODEL    optional: the session model, a model id or a tier from .shepherd/config.yml. Empty = the
+#                     team's models.loop, else the top of its ladder, else opencode-go/kimi-k3. Runners take
+#                     their own models from the team's tiers, ladder and pins (shepherd models shows them).
+#   AWS_REGION        the Bedrock region, for a bedrock: model.
 #   SHEPHERD_LABEL    optional: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
 #                     Code, Codex, another agent) hands one over by adding it.
 #   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure,error.
@@ -219,12 +224,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHEPHERD_HANDOFF: ${{ runner.temp }}/handoff
+          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md are PR content
           OPENCODE_DISABLE_AUTOUPDATE: "1"
-          MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
         run: |
-          opencode run --auto -m "$MODEL" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
+          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
+          plan=$(shepherd ci-models)
+          model=$(jq -r .model <<<"$plan")
+          echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          key_env=$(jq -r '.key_env // empty' <<<"$plan")
+          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
+          unset SHEPHERD_API_KEY
+          # An unset secret arrives as "": a blank key would hide the provider's other credentials.
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do [ -n "${!k:-}" ] || unset "$k"; done
+          OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further

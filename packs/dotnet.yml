@@ -1,0 +1,6 @@
+# C# and ASP.NET Core services. Extend pinned: github:jagreehal/shepherd/packs/dotnet.yml@<sha>
+lenses:
+  dotnet:
+    skill: lenses/dotnet
+    applies_to: ['**/*.cs']
+    gate: escalate

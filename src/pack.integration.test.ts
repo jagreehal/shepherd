@@ -24,6 +24,7 @@ const PUBLIC = "jagreehal/shepherd/lenses/observability@6476b73e0941c5abf4d13863
 const OFF_MAIN = "978ea77b5f29da7ce43c70494e9488064a44952a";
 
 const policyWith = (ref: string): Effective => ({
+  tiers: {},
   ladder: null,
   models: {},
   lenses: { it: { value: { skill: `github:${ref}` }, source: "test", scope: "team" } },
@@ -78,7 +79,7 @@ describe.skipIf(!signedIn)("pinned pack lenses on GitHub", () => {
     const home = mkdtempSync(path.join(tmpdir(), "shepherd-it-"));
 
     const script = `import { fetchPackLenses, ghFetchDir } from ${JSON.stringify(path.join(import.meta.dir, "config.ts"))};
-fetchPackLenses({ ladder: null, models: {}, lenses: { it: { value: { skill: ${JSON.stringify(`github:${PUBLIC}`)} }, source: "t", scope: "team" } }, checks: {}, fixes: { value: { mode: "suggest" }, source: "t" }, escalate: null, recipes: {}, ignored: [] }, ${JSON.stringify(home)}, ghFetchDir);`;
+fetchPackLenses({ tiers: {}, ladder: null, models: {}, lenses: { it: { value: { skill: ${JSON.stringify(`github:${PUBLIC}`)} }, source: "t", scope: "team" } }, checks: {}, fixes: { value: { mode: "suggest" }, source: "t" }, escalate: null, recipes: {}, ignored: [] }, ${JSON.stringify(home)}, ghFetchDir);`;
 
     try {
       const codes = await Promise.all(Array.from({ length: 4 }, () => new Promise<number | null>((resolve) => spawn("bun", ["-e", script], { stdio: "inherit" }).on("exit", resolve))));

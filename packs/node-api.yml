@@ -1,0 +1,7 @@
+# Node.js HTTP services (Express, Fastify, Hono, Koa, NestJS). Extend pinned: github:jagreehal/shepherd/packs/node-api.yml@<sha>
+# Every JS/TS file by default: narrow applies_to to the service directories in your repository.
+lenses:
+  node-api:
+    skill: lenses/node-api
+    applies_to: ['**/*.ts', '**/*.js', '**/*.mts', '**/*.mjs']
+    gate: escalate

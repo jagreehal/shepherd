@@ -1,7 +1,7 @@
 // The adoption path end to end, through the real CLI: a repository with an origin, a throwaway HOME.
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { runsStamp } from "./doctor.ts";
 import { pinWorkflow } from "./install.ts";
@@ -85,6 +85,91 @@ describe("adoption", () => {
 
     expect(pr).toContain("blocked   recipe pr: fixes.mode is suggest");
     expect(pr).toContain("completes cannot run under this policy");
+  });
+
+  test("init detects the stacks a repository uses and, with --stacks, adds a lens for each that validates", () => {
+    const files = { "web/package.json": JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }), "svc/go.mod": "module x\n", "api/App.csproj": "<Project />\n" };
+
+    const later = repo(files);
+
+    expect(later.run("init").out).toContain("detected dotnet, go, nextjs, owasp-asvs, react: run shepherd init --stacks");
+    // The follow-up it suggests works on the policy it just wrote, and keeps that policy's settings.
+    const follow = later.run("init", "--stacks");
+
+    expect(follow.code).toBe(0);
+    expect(follow.out).toContain("lens go: .shepherd/lenses/go");
+    expect(readFileSync(path.join(later.dir, ".shepherd/config.yml"), "utf8")).toMatch(/mode: suggest[\s\S]*skill: \.shepherd\/lenses\/go|skill: \.shepherd\/lenses\/go[\s\S]*mode: suggest/);
+    expect(later.run("init", "--stacks").out).toContain("lens go: kept, from .shepherd/config.yml");
+    const { dir, run } = repo(files);
+    const init = run("init", "--stacks");
+
+    expect(init.code).toBe(0);
+    expect(init.out).toContain("lens go: .shepherd/lenses/go from the go starter");
+    const config = readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8");
+
+    expect(config).toContain("skill: .shepherd/lenses/nextjs");
+    expect(config).toContain("gate: escalate");
+    expect(readFileSync(path.join(dir, ".shepherd/lenses/dotnet/SKILL.md"), "utf8")).toMatch(/^name: dotnet$/m);
+    expect(run("lens", "list").code).toBe(0);
+  });
+
+  test("--stacks keeps a lens a pack already provides: its skill, scope and gate stay the team's", () => {
+    const pack = {
+      "web/package.json": JSON.stringify({ dependencies: { react: "19.0.0" } }),
+      "svc/go.mod": "module x\n",
+      "team/react-house/SKILL.md": "---\nname: react-house\ndescription: House React rules\n---\n\n## Review\n\n- **no-any-props**: typed props.\n",
+      ".shepherd/packs/web.yml": "lenses:\n  react: { skill: team/react-house, applies_to: ['web/**'], gate: refuse }\n",
+    };
+
+    const expectKept = (run: (...args: string[]) => { code: number | null; out: string }, dir: string) => {
+      const config = readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8");
+
+      expect(config).not.toContain("react:");
+      expect(config).toContain("skill: .shepherd/lenses/go");
+      expect(existsSync(path.join(dir, ".shepherd/lenses/react"))).toBe(false);
+      const explain = run("config", "explain", "--working-tree", "--json").out;
+      const react = JSON.parse(explain).lenses.react;
+
+      expect(react.value).toEqual({ skill: "team/react-house", applies_to: ["web/**"], gate: "refuse" });
+      expect(react.source).toBe("pack .shepherd/packs/web.yml");
+    };
+
+    // An existing policy that extends the pack.
+    const existing = repo({ ...pack, ".shepherd/config.yml": "extends: [.shepherd/packs/web.yml]\nfixes: { mode: suggest }\n" });
+    const add = existing.run("init", "--stacks");
+
+    expect(add.code).toBe(0);
+    expect(add.out).toContain("lens react: kept, from pack .shepherd/packs/web.yml");
+    expectKept(existing.run, existing.dir);
+
+    // A new policy started from the pack.
+    const fresh = repo(pack);
+    const init = fresh.run("init", "--from", ".shepherd/packs/web.yml", "--stacks");
+
+    expect(init.code).toBe(0);
+    expect(init.out).toContain("lens react: kept, from pack .shepherd/packs/web.yml");
+    expectKept(fresh.run, fresh.dir);
+  });
+
+  test("name models once as tiers, pin roles to them, and CI reads the result from the default branch", () => {
+    const { run, merge } = repo();
+
+    expect(run("init").code).toBe(0);
+    expect(run("models", "tier", "fast", "opencode/deepseek-v4.1-flash-free").code).toBe(0);
+    expect(run("models", "tier", "smart", "bedrock:eu.amazon.nova-micro-v1:0").code).toBe(0);
+    expect(run("models", "ladder", "fast", "smart").code).toBe(0);
+    expect(run("models", "pin", "reviewers", "fast").code).toBe(0);
+    const shown = run("models", "pin", "loop", "smart").out;
+
+    expect(shown).toContain("tier    smart");
+    expect(shown).toContain("amazon-bedrock/eu.amazon.nova-micro-v1:0");
+    merge();
+    const plan = JSON.parse(run("ci-models").out);
+
+    expect(plan.model).toBe("amazon-bedrock/eu.amazon.nova-micro-v1:0");
+    expect(plan.key_env).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
+    expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
   });
 
   test("presets set how far fixes go, and preview says what each step writes", () => {

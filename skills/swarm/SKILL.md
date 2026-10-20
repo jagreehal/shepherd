@@ -128,11 +128,21 @@ where `$TMPDIR` can differ inside and outside a sandbox.
 
 ```bash
 mkdir -p "$(git rev-parse --git-common-dir)/shepherd"
+shepherd stack <number>   # JSON: wrong_base, parent, range
 gh pr diff <number> > "$(git rev-parse --git-common-dir)/shepherd/swarm-<short_sha>.patch"
 gh pr diff <number> --name-only
 ```
 
-When `shepherd` invokes you it passes `diff_path`, `head_sha`, the model ladder and `models` pins,
+Run `shepherd stack` first; when it exits non-zero, review `gh pr diff` and name
+the error in the summary. With `wrong_base` set, post nothing and stop: report
+"retarget to `<branch>`: `<on>` of `<total>` commits are already there". With
+`parent` set, the PR is stacked on another open PR: write `git diff <range>` and
+`git diff --name-only <range>` instead of `gh pr diff`, and review only that
+change. Post no finding on a line the delta does not touch; the parent's code
+is reviewed in the parent's PR, and posting it again here duplicates it across
+the stack.
+
+When `shepherd` invokes you it passes `diff_path` (already the stacked delta when there is a parent), `stacked_on`, `head_sha`, the model ladder and `models` pins,
 `skip_checks` (true when it already ran Step 2 this round), and `since_sha` (the
 head swarm last reviewed, on round 2 onwards). Use them and do not re-derive.
 

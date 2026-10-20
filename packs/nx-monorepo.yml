@@ -1,0 +1,6 @@
+# Nx monorepos: project boundaries and the build graph. Extend pinned: github:jagreehal/shepherd/packs/nx-monorepo.yml@<sha>
+lenses:
+  nx-monorepo:
+    skill: lenses/nx-monorepo
+    applies_to: ['**/project.json', 'nx.json', 'libs/**', 'packages/**', '**/tsconfig*.json']
+    gate: escalate

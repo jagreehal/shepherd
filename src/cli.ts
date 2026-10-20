@@ -11,14 +11,15 @@
 // shepherd local finish <record.json> [--base <ref>]  (check a local review against that change; complete writes a receipt)
 // shepherd local status [--base <ref>]              (is the change on disk the one a complete review covered?)
 // shepherd local demo [<dir>]                       (a repository with planted bugs to try /shepherd --local on)
-// shepherd init [--preset review-only|local-fix|push] [--from <pack>]  (scaffold .shepherd/config.yml)
+// shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks]  (scaffold .shepherd/config.yml)
 // shepherd config validate                          (the working tree's policy: exits 1 on a problem)
 // shepherd config explain [--json] [--working-tree] (effective policy and where each setting came from)
 // shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]  (what would run on your change)
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
 // shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
-// shepherd workflows                               (copy the shepherd and incident workflows into .github/workflows)
+// shepherd stack <pr>                              (JSON: a stacked parent and the range to review, or a wrong base)
+// shepherd workflows [--audit]                     (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
 // shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>
 // shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
 //
@@ -35,7 +36,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
 import { z } from "zod";
-import { type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
+import { CI_DEFAULT_MODEL, ciModel, type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
@@ -43,8 +44,9 @@ import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
 import { install, type Outcome, pinWorkflow, uninstall } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
+import { prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
+import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -53,14 +55,15 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd lens new <name> [--from <template>] [--applies <glob>]... [--description <text>]
        shepherd lens add <skill> [--name <name>] [--applies <glob>]... [--description <text>] [--global]
        shepherd lens list
-       shepherd models [ladder <model>... | pin <lens-or-runner> <model>] [--global]
+       shepherd models [tier <name> <model> | ladder <model-or-tier>... | pin <runner-lens-or-group> <model-or-tier>] [--global]
+       shepherd ci-models
        shepherd opencode-agents [--file <lenses.yml>]
        shepherd garden <owner/repo>... [--since YYYY-MM-DD] [--min-prs <n>] [--traces <otlp.json>]... [--tempo-url <url>] [--trace-retries <n>] [--trace-wait-ms <ms>] [--trace-cost-usd <usd>]
        shepherd local change [--base <ref>]
        shepherd local finish <record.json> [--base <ref>]
        shepherd local status [--base <ref>]
        shepherd local demo [<dir>]
-       shepherd init [--preset review-only|local-fix|push] [--from <pack>]
+       shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks]
        shepherd config validate
        shepherd config explain [--json] [--working-tree]
        shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]
@@ -68,7 +71,9 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...
        shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
        shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
-       shepherd workflows
+       shepherd stack <pr>
+       shepherd model-id <provider:model | provider/model>
+       shepherd workflows [--audit]
        shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
 
 const { values: opts, positionals } = parseArgs({
@@ -97,6 +102,8 @@ const { values: opts, positionals } = parseArgs({
     "working-tree": { type: "boolean", default: false }, // explain, preview: your edits instead of the default branch
     recipe: { type: "string" },
     preset: { type: "string" }, // init: how far fixes go
+    audit: { type: "boolean", default: false }, // workflows: also the scheduled OWASP playbook audit
+    stacks: { type: "boolean", default: false }, // init: add a lens for each stack the repository uses
     pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
@@ -209,17 +216,24 @@ if (command === "install") {
       process.exitCode = 1;
     }
   }
-} else if (command === "models" && (sub === undefined || (sub === "ladder" && skillRef) || (sub === "pin" && skillRef && rest.length === 1))) {
+} else if (command === "models" && (sub === undefined || (sub === "ladder" && skillRef) || ((sub === "pin" || sub === "tier") && skillRef && rest.length === 1))) {
   const file = opts.global ? globalLensFile(homedir()) : repoLensFile(repoRoot);
+
+  if (sub === "tier") orExit(() => setTier(file, skillRef!, rest[0]!));
 
   if (sub === "ladder") orExit(() => setLadder(file, [skillRef!, ...rest]));
 
   if (sub === "pin") orExit(() => pinModel(file, skillRef!, rest[0]!));
-  const { ladder, models } = choice(policy(true));
+  const effective = policy(true);
+  const { ladder, models } = choice(effective);
 
-  console.log(`ladder  ${ladder?.join(" -> ") ?? "the harness's own (skills/shepherd/references/models.md)"}`);
+  const spelled = (id: string) => (opencodeModel(id) === id ? id : `${id} (OpenCode: ${opencodeModel(id)})`);
 
-  for (const [name, model] of Object.entries(models)) console.log(`pin     ${name.padEnd(18)} ${model}`);
+  for (const [name, t] of Object.entries(effective.tiers)) console.log(`tier    ${name.padEnd(18)} ${spelled(t.value)}  (${t.source})`);
+
+  console.log(`ladder  ${ladder?.map(spelled).join(" -> ") ?? "the harness's own (skills/shepherd/references/models.md)"}`);
+
+  for (const [name, model] of Object.entries(models)) console.log(`pin     ${name.padEnd(18)} ${spelled(model)}`);
 
   if (sub) console.log(`\nwritten to ${file}${opts.global ? "" : `\n${MERGE_NOTE}`}`);
 } else if (command === "opencode-agents") {
@@ -309,12 +323,26 @@ if (command === "install") {
 
     console.log(JSON.stringify(result, null, 2));
   }
+} else if (command === "ci-models") {
+  // Everything a workflow needs to run OpenCode on the team's models, read from the default branch: the session
+  // model, the variable its key goes in, and the agents that carry the ladder and pins.
+  const p = orExit(() => loadPolicy(orExit(() => defaultBranchReader(repoRoot)), ghFetch, null));
+  const { model, source } = ciModel(p, process.env.SHEPHERD_MODEL || undefined);
+  const session = opencodeModel(model);
+
+  console.log(JSON.stringify({ model: session, source, key_env: providerKeyEnv(session), opencode: opencodeAgents(choice(p)) }));
+} else if (command === "model-id" && sub) {
+  // A model id as OpenCode spells it, so stamp's provider:model spelling works in a local OpenCode run too.
+  console.log(opencodeModel(sub));
+} else if (command === "stack" && sub) {
+  // Which diff to review: the delta over an open stacked parent, or nothing at all when the base is wrong.
+  console.log(JSON.stringify(orExit(() => prStack(Number(sub), repoRoot)), null, 2));
 } else if (command === "workflows") {
   const dest = path.join(repoRoot, ".github", "workflows");
 
   mkdirSync(dest, { recursive: true });
 
-  for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
+  for (const name of ["shepherd.yml", "shepherd-incident.yml", ...(opts.audit ? ["shepherd-audit.yml"] : [])]) {
     const to = path.join(dest, name);
 
     if (existsSync(to)) {
@@ -347,7 +375,15 @@ if (command === "install") {
 } else if (command === "init") {
   const file = path.join(repoRoot, TEAM_FILES[0]!);
 
-  if (existsSync(file)) orExit(() => { throw new Error(`${TEAM_FILES[0]} already exists; edit it, then run shepherd config validate`); });
+  // With --stacks on an existing policy, add the detected stacks' lenses it lacks and keep everything else.
+  if (existsSync(file) && opts.stacks) {
+    addStackLenses(file);
+    validate();
+    console.log(MERGE_NOTE);
+    process.exit(process.exitCode ?? 0);
+  }
+
+  if (existsSync(file)) orExit(() => { throw new Error(`${TEAM_FILES[0]} already exists; edit it, add stack lenses with shepherd init --stacks, then run shepherd config validate`); });
   const legacy = workingTree(TEAM_FILES[1]!);
   const seed = legacy ? orExit(() => ConfigSchema.parse(parseYaml(legacy) ?? {})) : { lenses: {} };
   // A new repository starts review-only. A migration keeps pushing, as it did, and says so in the file; a pack keeps the pack's mode.
@@ -361,9 +397,22 @@ if (command === "install") {
   if (opts.from) config.extends = [opts.from, ...(seed.extends ?? [])];
 
   if (mode) config.fixes = { mode };
+  const stacks = detectStacks(trackedFiles(), workingTree);
+
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.\n${stringify(config)}`);
   console.log(`wrote ${TEAM_FILES[0]}${preset ? ` (preset ${preset})` : ""}${legacy ? ` from ${TEAM_FILES[1]} (delete it: ${TEAM_FILES[0]} now wins)` : ""}`);
+
+  // After the file exists, so a pack named by --from counts as already providing its lenses.
+  if (opts.stacks) addStackLenses(file);
+  else if (stacks.length) console.log(`detected ${stacks.join(", ")}: run shepherd init --stacks to add their lenses, or extend github:jagreehal/shepherd/packs/<stack>.yml@<sha>`);
+
+  const named = policy(true);
+
+  if (!Object.keys(named.tiers).length && !named.ladder && !Object.keys(named.models).length) {
+    console.log(`models: none named. Locally runners use your harness's models; in CI the session runs on ${CI_DEFAULT_MODEL}.\n  Name a cheap and a strong model, then give roles to them:\n    shepherd models tier fast <provider:model>\n    shepherd models tier smart <provider:model>\n    shepherd models ladder fast smart\n    shepherd models pin reviewers fast   (and: pin fixers smart, pin loop smart)`);
+  }
+
   validate();
   console.log(`\nBefore you merge it:\n  shepherd config explain --working-tree   every setting and where it came from\n  shepherd preview --working-tree          what would run on your change, and what it can write\n${MERGE_NOTE}`);
 } else if (command === "config" && sub === "validate") {
@@ -424,6 +473,14 @@ if (command === "install") {
   process.exit(2);
 }
 
+function trackedFiles(): string[] {
+  try {
+    return execFileSync("git", ["-C", repoRoot, "ls-files", "-z"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function workingTree(rel: string): string | null {
   const file = path.join(repoRoot, rel);
 
@@ -434,6 +491,29 @@ function personal(): Config | null {
   const file = globalLensFile(homedir());
 
   return existsSync(file) ? ConfigSchema.parse(parseYaml(readFileSync(file, "utf8")) ?? {}) : null;
+}
+
+/**
+ * Add a starter lens for each detected stack the effective team policy lacks. A lens a pack provides, or the
+ * file declares, is kept as it is: its skill, scope and gate are the team's.
+ */
+function addStackLenses(file: string): void {
+  const have = policy(true).lenses;
+  const stacks = detectStacks(trackedFiles(), workingTree);
+
+  for (const s of stacks) {
+    const lens = have[s];
+
+    if (lens?.scope === "team") {
+      console.log(`lens ${s}: kept, from ${lens.source}`);
+      continue;
+    }
+
+    orExit(() => addLens(file, s, stackLens(repoRoot, s)));
+    console.log(`lens ${s}: .shepherd/lenses/${s} from the ${s} starter; trim its rules with only or disable`);
+  }
+
+  if (!stacks.length) console.log("no stack detected");
 }
 
 /** Team policy from the default branch, the source swarm reviews under, or from your working tree. */
@@ -472,6 +552,9 @@ function explain(p: Effective & { teamFile: string | null }): void {
 
   console.log(`policy file: ${p.teamFile ?? "none (built-in defaults)"}${opts["working-tree"] ? ", working tree" : ", default branch"}\n`);
   row("fixes.mode", p.fixes.value.mode, p.fixes.source);
+
+  for (const [k, v] of Object.entries(p.tiers)) row(`tiers.${k}`, v.value, v.source);
+
   row("ladder", p.ladder?.value.join(" -> ") ?? "the harness's own", p.ladder?.source ?? "built-in");
 
   for (const [k, v] of Object.entries(p.models)) row(`models.${k}`, v.value, v.source);

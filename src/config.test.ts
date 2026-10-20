@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type Fetch, type FetchDir, fetchPackLenses, lensCache, loadPolicy, policyProblems, preview, type Read, recipeProblems } from "./config.ts";
+import { ciModel, type Fetch, type FetchDir, fetchPackLenses, modelPlan, lensCache, loadPolicy, policyProblems, preview, type Read, recipeProblems } from "./config.ts";
 import { lensProblems, resolveSkill } from "./lens.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -69,8 +69,44 @@ describe("policy layering", () => {
     expect(fetched).toEqual([`acme/policy/packs/shepherd.yml@${SHA}`]);
   });
 
-  test("a pack cannot extend another, escape the repository, or be missing", () => {
-    expect(() => loadPolicy(files({ ".shepherd/config.yml": "extends: [a.yml]\n", "a.yml": "extends: [b.yml]\n" }), noFetch, null)).toThrow("cannot extend another pack");
+  test("a pack extends packs before itself, with no cycle and a bounded depth", () => {
+    const p = loadPolicy(files({ ".shepherd/config.yml": "extends: [next.yml]\n", "next.yml": "extends: [react.yml]\nchecks:\n  a: { command: next }\n", "react.yml": "checks:\n  a: { command: react }\n  b: { command: react }\n" }), noFetch, null);
+
+    expect(p.checks.a).toEqual({ value: { command: "next" }, source: "pack next.yml" });
+    expect(p.checks.b?.source).toBe("pack react.yml");
+    expect(() => loadPolicy(files({ ".shepherd/config.yml": "extends: [a.yml]\n", "a.yml": "extends: [b.yml]\n", "b.yml": "extends: [a.yml]\n" }), noFetch, null)).toThrow("a.yml > b.yml > a.yml: packs extend each other in a cycle");
+    const chain = Object.fromEntries(["p0", "p1", "p2", "p3", "p4"].map((n, i) => [`${n}.yml`, `extends: [p${i + 1}.yml]\n`]));
+
+    expect(() => loadPolicy(files({ ".shepherd/config.yml": "extends: [p0.yml]\n", ...chain }), noFetch, null)).toThrow("more than 4 deep");
+  });
+
+  test("a pinned pack's relative extends names its own repository at the same commit", () => {
+    const fetched: string[] = [];
+
+    const fetch: Fetch = (owner, repo, file, sha) => {
+      fetched.push(`${owner}/${repo}/${file}@${sha}`);
+
+      return file === "packs/next.yml" ? "extends: [packs/react.yml]\nlenses:\n  next: { skill: lenses/next }\n" : "lenses:\n  react: { skill: lenses/react }\n";
+    };
+
+    const p = loadPolicy(files({ ".shepherd/config.yml": `extends: ['github:acme/packs/packs/next.yml@${SHA}']\n` }), fetch, null);
+
+    expect(fetched).toEqual([`acme/packs/packs/next.yml@${SHA}`, `acme/packs/packs/react.yml@${SHA}`]);
+    expect(p.lenses.react?.value.skill).toBe(`github:acme/packs/lenses/react@${SHA}`);
+    expect(() => loadPolicy(files({ ".shepherd/config.yml": `extends: ['github:acme/packs/x.yml@${SHA}']\n` }), () => "extends: [../y.yml]\n", null)).toThrow("relative to the pack's repository");
+  });
+
+  test("a repository trims a pack's lens without restating it; a lens with no skill anywhere is refused", () => {
+    const read = files({
+      ".shepherd/config.yml": "extends: [react.yml]\nlenses:\n  react: { disable: [rendering-*], applies_to: ['web/**'] }\n",
+      "react.yml": "lenses:\n  react: { skill: lenses/react, applies_to: ['**/*.tsx'], gate: refuse }\n",
+    });
+
+    expect(loadPolicy(read, noFetch, null).lenses.react?.value).toEqual({ skill: "lenses/react", applies_to: ["web/**"], gate: "refuse", disable: ["rendering-*"] });
+    expect(() => loadPolicy(files({ ".shepherd/config.yml": "lenses:\n  react: { only: [x] }\n" }), noFetch, null)).toThrow("lens react: no skill");
+  });
+
+  test("a pack cannot escape the repository or be missing", () => {
     expect(() => loadPolicy(files({ ".shepherd/config.yml": "extends: [../outside.yml]\n" }), noFetch, null)).toThrow("repository-relative");
     expect(() => loadPolicy(files({ ".shepherd/config.yml": "extends: [gone.yml]\n" }), noFetch, null)).toThrow("pack not found");
     expect(() => loadPolicy(files({ ".shepherd/config.yml": "fixes: { mode: yolo }\n" }), noFetch, null)).toThrow(".shepherd/config.yml: fixes.mode");
@@ -214,5 +250,64 @@ describe("the pinned lens cache recovers", () => {
       expect(readFileSync(path.join(dest, "SKILL.md"), "utf8")).toContain("pay");
       expect(readdirSync(path.dirname(dest))).toEqual(["pay"]);
     });
+  });
+});
+
+describe("model tiers and role groups", () => {
+  const read = files({
+    ".shepherd/config.yml": "extends: [org.yml]\nladder: [fast, smart]\nmodels:\n  reviewers: fast\n  fixers: smart\n  security: smart\n  loop: smart\nlenses:\n  house: { skill: h }\n",
+    "org.yml": "tiers:\n  fast: opencode/deepseek-v4.1-flash-free\n  smart: bedrock:eu.anthropic.claude-sonnet-4-6\n",
+  });
+
+  test("a tier is named once, in a pack or the file, and the ladder and pins hold its model", () => {
+    const p = loadPolicy(read, noFetch, null);
+
+    expect(p.tiers.fast).toEqual({ value: "opencode/deepseek-v4.1-flash-free", source: "pack org.yml" });
+    expect(p.ladder?.value).toEqual(["opencode/deepseek-v4.1-flash-free", "bedrock:eu.anthropic.claude-sonnet-4-6"]);
+    expect(p.models.loop).toEqual({ value: "bedrock:eu.anthropic.claude-sonnet-4-6", source: ".shepherd/config.yml, tier smart" });
+  });
+
+  test("a group pins every member; a pin on one runner or lens beats its group", () => {
+    const plan = Object.fromEntries(modelPlan(loadPolicy(read, noFetch, null)).map((r) => [r.runner, r.model]));
+
+    expect(plan.router).toBe("opencode/deepseek-v4.1-flash-free");
+    expect(plan.correctness).toBe("opencode/deepseek-v4.1-flash-free");
+    expect(plan.house).toBe("opencode/deepseek-v4.1-flash-free"); // a custom lens is a reviewer too
+    expect(plan.security).toBe("bedrock:eu.anthropic.claude-sonnet-4-6");
+    expect(plan.triage).toBe("bedrock:eu.anthropic.claude-sonnet-4-6");
+    expect(plan.verifier).toBe("bedrock:eu.anthropic.claude-sonnet-4-6"); // no validators pin: rung 1 of the ladder
+    expect(loadPolicy(read, noFetch, null).models.reviewers).toBeUndefined();
+  });
+
+  test("swapping a tier's model swaps it everywhere; a personal tier fills only a name the team left open", () => {
+    const p = loadPolicy(read, noFetch, { lenses: {}, tiers: { fast: "mine", spare: "haiku" } });
+
+    expect(p.tiers.fast?.value).toBe("opencode/deepseek-v4.1-flash-free");
+    expect(p.tiers.spare).toEqual({ value: "haiku", source: "personal" });
+    const swapped = loadPolicy(files({ ".shepherd/config.yml": "tiers: { fast: groq:openai/gpt-oss-120b }\nladder: [fast]\nmodels: { reviewers: fast }\n" }), noFetch, null);
+
+    expect(swapped.models.router?.value).toBe("groq:openai/gpt-oss-120b");
+    expect(swapped.ladder?.value).toEqual(["groq:openai/gpt-oss-120b"]);
+  });
+
+  test("a personal pin never beats a team pin, even one the team set through a group", () => {
+    const team = files({ ".shepherd/config.yml": "models:\n  reviewers: team-model\n  fixers: team-model\n" });
+    const p = loadPolicy(team, noFetch, { lenses: {}, models: { security: "personal-model", triage: "personal-model", verifier: "personal-model", validators: "mine" } });
+
+    expect(p.models.security).toEqual({ value: "team-model", source: ".shepherd/config.yml (models.reviewers)" });
+    expect(p.models.triage?.value).toBe("team-model");
+    // What the team left open, the personal file fills: a runner, or a group's members.
+    expect(p.models.verifier).toEqual({ value: "personal-model", source: "personal" });
+    expect(p.models.validator).toEqual({ value: "mine", source: "personal (models.validators)" });
+  });
+
+  test("CI's session model: SHEPHERD_MODEL (a model or a tier), then models.loop, then the top rung, then a default that says so", () => {
+    const p = loadPolicy(read, noFetch, null);
+
+    expect(ciModel(p, "fast")).toEqual({ model: "opencode/deepseek-v4.1-flash-free", source: "SHEPHERD_MODEL, tier fast" });
+    expect(ciModel(p, "groq:openai/gpt-oss-120b")).toEqual({ model: "groq:openai/gpt-oss-120b", source: "SHEPHERD_MODEL" });
+    expect(ciModel(p, undefined).source).toStartWith("models.loop");
+    expect(ciModel(loadPolicy(files({ ".shepherd/config.yml": "ladder: [a, b]\n" }), noFetch, null), undefined)).toEqual({ model: "b", source: "top of the ladder, .shepherd/config.yml" });
+    expect(ciModel(loadPolicy(files({}), noFetch, null), undefined).source).toStartWith("default: name one with SHEPHERD_MODEL");
   });
 });

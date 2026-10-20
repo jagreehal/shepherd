@@ -10,18 +10,22 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | --- | --- |
 | `shepherd install` | `--project`, `--target <dir>`, `--link`, `--force`; install the skill pack |
 | `shepherd uninstall` | `--project`, `--target <dir>`; remove files the installer owns |
-| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`; create repository policy |
+| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`; create repository policy, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
 | `shepherd doctor` | `--json`; diagnose local setup and repository policy |
 | `shepherd config validate` | Validate working-tree policy and lens resolution |
 | `shepherd config explain` | `--json`, `--working-tree`; show effective values and their sources |
 | `shepherd preview` | `--recipe <name>`, `--base <ref>`, `--working-tree`; show the plan for the change |
-| `shepherd workflows` | Copy `shepherd.yml` and `shepherd-incident.yml` into `.github/workflows`, keep files that exist, and pin `SHEPHERD_VERSION` to this CLI's version |
-| `shepherd lens new <name>` | `--from <template>`, repeatable `--applies <glob>`, `--description <text>`, `--model`; scaffold a lens |
+| `shepherd model-id <id>` | Print a model id as OpenCode spells it: `bedrock:<id>` becomes `amazon-bedrock/<id>`, and an OpenCode id or Claude Code alias passes through. `ci-models` applies the same spelling in the workflows |
+| `shepherd stack <pr>` | Print, as JSON, the open PR this one is stacked on and the range to review (`parent_head...head`), or the long-lived branch it should target when most of its commits already sit there. Git ancestry only; the loop and swarm run it before they write the diff |
+| `shepherd workflows [--audit]` | Copy `shepherd.yml` and `shepherd-incident.yml` into `.github/workflows` (with `--audit`, also `shepherd-audit.yml`), keep files that exist, and pin `SHEPHERD_VERSION` to this CLI's version |
+| `shepherd lens new <name>` | `--from <template>` (react, nextjs, node-api, go, rust, java, dotnet, python, observability), repeatable `--applies <glob>`, `--description <text>`, `--model`; scaffold a lens |
 | `shepherd lens add <skill>` | `--name`, repeatable `--applies`, `--description`, `--model`, `--global`; register a skill |
 | `shepherd lens list` | List configured lenses and report problems |
 | `shepherd models` | Show model routing |
-| `shepherd models ladder <model>...` | `--global`; set the ladder in cheapest-first order |
-| `shepherd models pin <lens-or-runner> <model>` | `--global`; pin named work to a model |
+| `shepherd models ladder <model-or-tier>...` | `--global`; set the ladder in cheapest-first order |
+| `shepherd models pin <runner-lens-or-group> <model-or-tier>` | `--global`; pin named work, or a role group (`reviewers`, `fixers`, `validators`), to a model or tier |
+| `shepherd models tier <name> <model>` | `--global`; name a model once, for the ladder and pins |
+| `shepherd ci-models` | Print, as JSON, the CI session model, the key variable its provider reads, and the OpenCode agents for the ladder and pins, from the default branch. The workflows run it |
 | `shepherd opencode-agents` | `--file <lenses.yml>`; print model agents for OpenCode 1.x |
 
 ## Local records: terminal

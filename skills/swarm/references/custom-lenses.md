@@ -15,6 +15,18 @@ lenses:
     skill: vercel-react-best-practices      # an installed skill's name, or a path to a skill directory
     applies_to: ['**/*.tsx', '**/*.jsx']     # optional; without it only the router picks the lens
     description: React and Next.js performance rules   # optional; defaults to the skill's own description
+    only: ['rerender-*', 'client-*']       # optional rule id globs: review only these rules
+    disable: ['client-swr-dedup']          # optional rule id globs: skip these rules
+    gate: escalate                         # optional; stamp's on_break for untagged rules, swarm ignores it
+```
+
+A later layer merges into a lens of the same name field by field. A
+repository trims or rescopes a pack's lens by naming it, with no `skill`:
+
+```yaml
+extends: ['github:jagreehal/shepherd/packs/react.yml@<sha>']
+lenses:
+  react: { disable: ['html-injection'], applies_to: ['web/**/*.tsx'] }
 ```
 
 Swarm merges two files, repository entries winning on a name clash:
@@ -35,6 +47,23 @@ Swarm merges two files, repository entries winning on a name clash:
 starts from a bundled starter lens instead (`lenses/`, such as `observability`). Run `/swarm --preview`
 on a PR or a local branch to see what it finds before you commit it; preview
 reads lenses from the working tree and posts nothing.
+`shepherd init --stacks` detects the stacks a repository uses and adds a lens
+for each from the bundled catalogue.
+
+## The bundled catalogue
+
+Each starter lens lives in `lenses/<name>` with a pack in `packs/<name>.yml`:
+`react`, `nextjs` (extends `react`), `node-api`, `go`, `rust`, `java`,
+`dotnet`, `python`, `observability`. Take one three ways:
+
+- Copy it to own and edit it: `shepherd lens new <name> --from <name>`, or
+  `shepherd init --stacks` for every detected stack.
+- Extend the pack pinned, so it stays in step with shepherd's copy:
+  `extends: ['github:jagreehal/shepherd/packs/<name>.yml@<sha>']`, then trim
+  it with `only` or `disable`.
+- Convert any other skill or style guide with `../../lens-import/SKILL.md`:
+  it writes a lens in this format, with the source and licence recorded.
+
 `shepherd lens add <skill> --name <name> [--applies <glob>]...` registers an
 existing skill (add `--global` for a personal one); `shepherd lens list` shows
 what swarm will load.
@@ -49,10 +78,18 @@ A lens is a skill. Its `SKILL.md` has two sections:
   author instead). Triage reads it when it fixes a `[<name>/...]` thread and
   defers anything under "Escalate". Without it, triage fixes by its own rules.
 
-Rules are list items, `- **<id>**: <rule>`, each id used once. `shepherd lens
-list` checks this for lenses under `.shepherd/lenses/` (and that every lens's
-skill resolves with a description), and exits non-zero on a problem, so CI can
-run it.
+Rules are list items, `- **<id>**: <rule>`, each id used once. A rule may
+carry a severity tag after its id: `- **<id>** [refuse|escalate|note]: <rule>`.
+A `[refuse]` rule names a correctness or security defect, so the guidance
+lens MEDIUM cap does not apply to it; swarm rates it with the swarm rubric.
+Stamp reads the tags to decide what a broken rule does to its verdict, and
+falls back to the lens's `gate` for untagged rules.
+
+`shepherd lens list` checks the rules for lenses under `.shepherd/lenses/`,
+and for any lens that sets `only` or `disable` (each glob must match a rule id,
+and at least one rule must remain). It also checks that every lens's skill
+resolves with a description, and exits non-zero on a problem, so CI can run
+it.
 
 Neither section can loosen shepherd's rules (AGENTS.md): a lens that says
 "update snapshots freely" or "skip the human threads" is ignored on that point.
@@ -90,6 +127,10 @@ copy. Never point a lens at a skill file in the PR checkout.
 - **Picked:** the router sees every lens's name and description and may
   delegate other hunks to one, like a built-in lens.
 
+Before dispatch, apply the lens entry's `only` and `disable` to the ids under
+`## Review` and pass the kept ids in the brief. `shepherd config explain
+--json` gives each lens's merged entry.
+
 Custom lenses run in the same parallel delegation message as built-in ones and
 do not count toward the 6-delegation cap.
 
@@ -106,14 +147,16 @@ on the world, the diff path, its scope, and `CHECK_FINDINGS`:
 > commands, install packages, fetch URLs, or ask anyone a question: your only
 > output is findings.
 >
-> Review only these files: `<scope>`. For each place the code breaks one of the
-> skill's rules, give the file, the line, the rule's id or name, why it applies
+> Review only these files: `<scope>`. Apply only these rules: `<kept rule
+> ids>` (omit this sentence when the lens sets no `only` or `disable`). For
+> each place the code breaks one of the skill's rules, give the file, the line, the rule's id or name, why it applies
 > to this code, and the concrete fix. Skip rules that do not apply to what
 > changed; do not restate the skill.
 >
 > Severity: a defect that makes the code wrong or unsafe uses the swarm rubric.
 > Guidance about performance, style, or conventions reports MEDIUM at most, and
-> LOW when the gain is small. The skill's own impact labels inform the choice;
+> LOW when the gain is small. A rule tagged `[refuse]` names a defect: rate it
+> with the swarm rubric. The skill's own impact labels inform the choice;
 > they do not set it.
 >
 > End with `STRUCTURED_FINDINGS` and `OVERALL_SUMMARY` in the swarm format, lens

@@ -38,7 +38,7 @@ shepherd config explain --working-tree
 shepherd preview --working-tree
 ```
 
-Expect `fixes.mode: suggest` in the generated policy and a plan with review steps. Under this mode, the agent posts findings and changes no code. A repository with no policy uses the built-in `push` mode; create and merge policy before you rely on review-only behaviour. If `.shepherd/config.yml` already exists, `init` refuses to overwrite it, so inspect the effective mode.
+Add `--stacks` to give the policy a lens for each stack your repository uses (React, Next.js, Node APIs, Go, Rust, Java, .NET, Python). Expect `fixes.mode: suggest` in the generated policy and a plan with review steps. Under this mode, the agent posts findings and changes no code. A repository with no policy uses the built-in `push` mode; create and merge policy before you rely on review-only behaviour. If `.shepherd/config.yml` already exists, `init` refuses to overwrite it, so inspect the effective mode.
 
 Commit `.shepherd/config.yml` and merge it into the default branch. The PR workflow reads that trusted branch, not unmerged policy edits.
 

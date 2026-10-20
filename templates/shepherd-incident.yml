@@ -16,8 +16,9 @@
 # CI on the PR installs and runs them), then opens the PR. The agent still holds the model key.
 #
 # Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and stamp;
-#            with github.token the PR opens but no workflow runs on it. OPENCODE_API_KEY for the model.
-# Variables: SHEPHERD_MODEL (provider/model), INCIDENT_PATHS (extended regex; empty = ^src/).
+#            with github.token the PR opens but no workflow runs on it. SHEPHERD_API_KEY (or the provider's own key) for the model.
+# Variables: SHEPHERD_MODEL (a model or tier; empty = the team's models.loop or top rung), AWS_REGION (Bedrock),
+#            INCIDENT_PATHS (extended regex; empty = ^src/).
 name: shepherd-incident
 on:
   workflow_run:
@@ -87,13 +88,36 @@ jobs:
         timeout-minutes: 20 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
+          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1"
           OPENCODE_DISABLE_AUTOUPDATE: "1"
-          MODEL: ${{ vars.SHEPHERD_MODEL || 'opencode-go/kimi-k3' }}
           HANDOFF: ${{ runner.temp }}/handoff
         run: |
-          opencode run --auto -m "$MODEL" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
+          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
+          plan=$(shepherd ci-models)
+          model=$(jq -r .model <<<"$plan")
+          echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          key_env=$(jq -r '.key_env // empty' <<<"$plan")
+          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
+          unset SHEPHERD_API_KEY
+          # An unset secret arrives as "": a blank key would hide the provider's other credentials.
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do [ -n "${!k:-}" ] || unset "$k"; done
+          OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          opencode run --auto -m "$model" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
           (a run URL, or an error or alert text).
           You are running in GitHub Actions on the default branch, already checked out, with no push access.
           At Step 6 do not push or open the PR: commit on incident/<issue>, write the PR title to $HANDOFF/pr-title.txt

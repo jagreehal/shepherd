@@ -1,0 +1,6 @@
+# Java and Spring services. Extend pinned: github:jagreehal/shepherd/packs/java.yml@<sha>
+lenses:
+  java:
+    skill: lenses/java
+    applies_to: ['**/*.java']
+    gate: escalate

@@ -39,3 +39,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## OWASP Secure Agent Playbook
+
+These lenses adapt material from the [OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook) at commit `65d4efd2cd0b081d52101e9708792b944e4ddebb`. Each rule condenses the source's requirements into one review line, cut to what a diff can show:
+
+| Here | Adapted from |
+| --- | --- |
+| `lenses/owasp-asvs/` | `plugins/code-security-skills/skills/security-guidance/` and `plugins/code-security-skills/data/asvs/` (OWASP ASVS 5.0) |
+| `lenses/owasp-llm/` | `plugins/ai-security-skills/` plays and skills for the OWASP LLM Top 10 2025, the Agentic Top 10 2026 and MCP server review |
+
+The source is licensed under the [Creative Commons Attribution 4.0 International License](https://creativecommons.org/licenses/by/4.0/) (CC-BY-4.0). The adapted lenses carry the same licence and name their source commit in their frontmatter.

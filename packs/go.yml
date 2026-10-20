@@ -1,0 +1,6 @@
+# Go services and libraries. Extend pinned: github:jagreehal/shepherd/packs/go.yml@<sha>
+lenses:
+  go:
+    skill: lenses/go
+    applies_to: ['**/*.go']
+    gate: escalate

@@ -1,0 +1,6 @@
+# Production observability for any service. Extend pinned: github:jagreehal/shepherd/packs/observability.yml@<sha>
+lenses:
+  observability:
+    skill: lenses/observability
+    applies_to: ['**/*.ts', '**/*.js', '**/*.go', '**/*.rs', '**/*.java', '**/*.cs', '**/*.py']
+    gate: escalate

@@ -66,7 +66,10 @@ L0  shepherd local change                 -> fingerprint, patch_path, ranges
 - **A round is clean** when swarm's `local.status` is `complete`, its checks
   ran without a failure on changed lines, triage fixed and promoted nothing,
   and simplify changed nothing. A finding triage dismissed with a reason does
-  not block a clean round; a deferred one ends the loop for the developer.
+  not block a clean round; a deferred one ends the loop for the developer,
+  after one more swarm whenever triage fixed anything that round. Never stop
+  with fixes no review has seen: the report's `shepherd local status` must say
+  `reviewed` for the files as they are now.
 - **Incomplete is not clean.** When `finish` says `incomplete`, retry the
   missing lens or stage once; still incomplete, stop and list what was not
   reviewed.
@@ -236,10 +239,28 @@ Otherwise `gh pr checkout <number>`, `git pull --ff-only`, and confirm
 own PR head. On a PR by someone other than the logged-in user, confirm with
 `AskUserQuestion` before the first push to their branch.
 
-**Write the diff once** for the round and pass the path:
-`gh pr diff <number> > "$(git rev-parse --git-common-dir)/shepherd/<short_sha>.patch"` (create the directory
-first). The repo's git directory is the same path for every process and never
-committed; `$TMPDIR` can differ inside and outside a sandbox.
+**Check the base, then write the diff once** for the round. Run
+`shepherd stack <number>`; it prints JSON from git ancestry alone:
+
+- `wrong_base` set: most of the PR's commits already sit on another long-lived
+  branch, so the diff is mostly other people's merged work. Review nothing. Set
+  the `shepherd` status to `failure` with "retarget to `<branch>`: `<on>` of
+  `<total>` commits are already there (`gh pr edit <number> --base <branch>`)",
+  report the same line, and stop.
+- `parent` set: the PR is stacked on open PR `#<parent.number>` into the same
+  base. Review only this PR's change: write
+  `git diff <range>` (the delta over the parent's head) as the round's patch and
+  pass `stacked_on: <parent.number>` to swarm and triage. The parent's code is
+  reviewed in the parent's PR. stamp holds its approval until the parent is
+  approved on its current head, so a stacked PR finishes `pending`, "waiting on
+  #<parent>", until then.
+- Neither, or the command exits non-zero: `gh pr diff <number>`. On an error,
+  name it in the round's summary.
+
+Write the patch to `"$(git rev-parse --git-common-dir)/shepherd/<short_sha>.patch"`
+(create the directory first) and pass the path. The repo's git directory is the
+same path for every process and never committed; `$TMPDIR` can differ inside
+and outside a sandbox.
 
 ## Step 2: Quality loop
 

@@ -1,0 +1,8 @@
+# OWASP LLM Top 10 and Agentic Top 10 for code that calls models, runs agents or serves MCP tools.
+# Extend pinned: github:jagreehal/shepherd/packs/owasp-llm.yml@<sha>
+# No applies_to: a file glob cannot tell which files call a model, so swarm's router picks this lens from its
+# description. Add applies_to for the directories that hold your prompts, agents and tools to run it on every change there.
+lenses:
+  owasp-llm:
+    skill: lenses/owasp-llm
+    gate: escalate
