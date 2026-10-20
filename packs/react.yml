@@ -1,0 +1,6 @@
+# React components and hooks. Extend pinned: github:jagreehal/shepherd/packs/react.yml@<sha>
+lenses:
+  react:
+    skill: lenses/react
+    applies_to: ['**/*.tsx', '**/*.jsx']
+    gate: escalate

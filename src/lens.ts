@@ -5,7 +5,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
-import { type Config, ConfigSchema, type Lens, LensSchema, lensCache, ModelId, TEAM_FILES } from "./config.ts";
+import { type Config, ConfigSchema, type Lens, LensSchema, lensCache, ModelId, SEVERITIES, TEAM_FILES } from "./config.ts";
+
+type Severity = (typeof SEVERITIES)[number];
 
 export const BUILT_IN_LENSES = ["correctness", "security", "simplicity", "maintainability", "slop", "spec"];
 
@@ -29,7 +31,7 @@ export const repoLensFile = (repoRoot: string) => {
 
 const readFile = (file: string): LensFile => (existsSync(file) ? LensFileSchema.parse(parse(readFileSync(file, "utf8")) ?? {}) : { lenses: {} });
 
-export const readLenses = (file: string): Record<string, Lens> => readFile(file).lenses;
+export const readLenses = (file: string) => readFile(file).lenses;
 
 /**
  * OpenCode agents for a harness whose subagent tool takes no model (OpenCode 1.x): one per rung,
@@ -37,7 +39,7 @@ export const readLenses = (file: string): Record<string, Lens> => readFile(file)
  * OPENCODE_CONFIG_CONTENT; swarm and the loop then dispatch by agent name.
  */
 export function opencodeAgents(choice: { ladder: string[] | null; models: Record<string, string> }) {
-  const agent = (model: string, about: string) => ({ mode: "subagent", model, description: `shepherd runner on ${model} (${about})` });
+  const agent = (model: string, about: string) => ({ mode: "subagent", model: opencodeModel(model), description: `shepherd runner on ${model} (${about})` });
 
   return {
     agent: Object.fromEntries([
@@ -47,6 +49,20 @@ export function opencodeAgents(choice: { ladder: string[] | null; models: Record
   };
 }
 
+// stamp's `provider:model` names where OpenCode's provider id differs; every other provider keeps its name.
+const OPENCODE_PROVIDER = new Map([["bedrock", "amazon-bedrock"], ["vertex", "google-vertex"]]);
+
+/**
+ * A model id as OpenCode spells it. stamp's canonical `provider:model` (`bedrock:eu.anthropic.claude-…-v1:0`)
+ * becomes `provider/model` (`amazon-bedrock/eu.anthropic.claude-…-v1:0`), so one ladder serves both tools.
+ * An OpenCode id or a Claude Code alias passes through.
+ */
+export function opencodeModel(id: string): string {
+  const m = /^([a-z][a-z0-9-]*):(.+)$/.exec(id);
+
+  return m ? `${OPENCODE_PROVIDER.get(m[1]!) ?? m[1]}/${m[2]}` : id;
+}
+
 /** Pin `name` (a lens or runner) to `model`, keeping everything else in the file. */
 export function pinModel(file: string, name: string, model: string): void {
   if (!LENS_NAME.test(name)) throw new Error(`"${name}" must be lowercase letters, digits, and dashes`);
@@ -54,6 +70,33 @@ export function pinModel(file: string, name: string, model: string): void {
 
   write(file, { ...current, models: { ...current.models, [name]: ModelId.parse(model) } });
 }
+
+/** Name a model: `tier` becomes usable in the ladder and in pins, and swapping its model swaps it everywhere. */
+export function setTier(file: string, tier: string, model: string): void {
+  if (!LENS_NAME.test(tier)) throw new Error(`"${tier}" must be lowercase letters, digits, and dashes`);
+  const current = readFile(file);
+
+  write(file, { ...current, tiers: { ...current.tiers, [tier]: ModelId.parse(model) } });
+}
+
+// The environment variable each OpenCode provider reads its key from. SHEPHERD_API_KEY fills the one the session
+// model's provider needs, so a single-provider team sets one secret.
+const PROVIDER_KEY_ENV = new Map([
+  ["opencode", "OPENCODE_API_KEY"],
+  ["opencode-go", "OPENCODE_API_KEY"],
+  ["anthropic", "ANTHROPIC_API_KEY"],
+  ["openai", "OPENAI_API_KEY"],
+  ["openrouter", "OPENROUTER_API_KEY"],
+  ["deepseek", "DEEPSEEK_API_KEY"],
+  ["groq", "GROQ_API_KEY"],
+  ["mistral", "MISTRAL_API_KEY"],
+  ["google", "GOOGLE_GENERATIVE_AI_API_KEY"],
+  ["xai", "XAI_API_KEY"],
+  ["amazon-bedrock", "AWS_BEARER_TOKEN_BEDROCK"],
+]);
+
+/** The key variable for an OpenCode model id's provider, or null when shepherd does not know it. */
+export const providerKeyEnv = (opencodeId: string): string | null => PROVIDER_KEY_ENV.get(opencodeId.split("/")[0]!) ?? null;
 
 /** Replace the ladder, cheapest model first. */
 export function setLadder(file: string, ladder: string[]): void {
@@ -97,7 +140,33 @@ fixes by its own rules. Nothing here can loosen shepherd's rules.
 - Escalate: <changes that go to the author instead of being fixed>.
 `;
 
-const RULE_ID = /^- \*\*([a-z0-9][a-z0-9-]*)\*\*/gm;
+// `- **<id>**: <rule>`, or `- **<id>** [refuse|escalate|note]: <rule>` to set that rule's severity for stamp.
+const RULE = /^- \*\*([a-z0-9][a-z0-9-]*)\*\*(?: \[(refuse|escalate|note)\])?:/gm;
+
+export type LensRule = { id: string; severity?: Severity };
+
+/** The rules in a lens's `## Review` section, with any severity tag; null when the section is missing. */
+export function reviewRules(text: string): LensRule[] | null {
+  const review = /^## Review\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text.replace(/\r\n/g, "\n"))?.[1];
+
+  if (review === undefined) return null;
+
+  return [...review.matchAll(RULE)].map((m) => {
+    const rule: LensRule = { id: m[1]! };
+    const severity = z.enum(SEVERITIES).optional().parse(m[2]);
+
+    if (severity) rule.severity = severity;
+
+    return rule;
+  });
+}
+
+/** Whether a lens entry's `only` and `disable` keep this rule. */
+export const keepsRule = (lens: Pick<Lens, "only" | "disable">, id: string) => {
+  const hit = (globs: string[]) => globs.some((g) => new Bun.Glob(g).match(id));
+
+  return (!lens.only || hit(lens.only)) && !(lens.disable && hit(lens.disable));
+};
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 
@@ -112,16 +181,24 @@ export function lensProblems(lens: Lens, home: string, repoRoot: string): string
   const problems: string[] = [];
 
   if (front === undefined || !skillDescription(dir)) problems.push(`${file}: frontmatter needs a description`);
+  const ownLens = path.posix.normalize(lens.skill.replaceAll("\\", "/")).startsWith(".shepherd/lenses/");
 
-  if (!path.posix.normalize(lens.skill.replaceAll("\\", "/")).startsWith(".shepherd/lenses/")) return problems;
-  const review = /^## Review\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)?.[1];
+  // Rule ids are required under .shepherd/lenses/, and wherever only or disable must match them.
+  if (!ownLens && !lens.only && !lens.disable) return problems;
+  const rules = reviewRules(text);
 
-  if (review === undefined) return [...problems, `${file}: add a "## Review" section`];
-  const ids = [...review.matchAll(RULE_ID)].map((m) => m[1]);
+  if (rules === null) return [...problems, `${file}: add a "## Review" section`];
+  const ids = rules.map((r) => r.id);
 
   if (ids.length === 0) problems.push(`${file}: "## Review" has no rules; write each as "- **<id>**: <rule>", the id lowercase with dashes`);
 
   for (const id of new Set(ids.filter((id, i) => ids.indexOf(id) !== i))) problems.push(`${file}: rule id "${id}" is used more than once`);
+
+  for (const g of [...(lens.only ?? []), ...(lens.disable ?? [])]) {
+    if (!ids.some((id) => new Bun.Glob(g).match(id))) problems.push(`${file}: "${g}" in only or disable matches no rule id`);
+  }
+
+  if (ids.length && !ids.some((id) => keepsRule(lens, id))) problems.push(`${file}: only and disable leave no rule`);
 
   return problems;
 }
@@ -153,6 +230,64 @@ export function newLens(repoRoot: string, name: string, lens: Omit<Lens, "skill"
   return dir;
 }
 
+/** The bundled packs (packs/<name>.yml): one starter lens each, with the files it applies to and its gate. */
+export const PACKS_DIR = path.resolve(import.meta.dir, "..", "packs");
+
+/** The lens entry a bundled pack declares for its own lens, minus the skill path. */
+export function packLens(stack: string): Omit<Lens, "skill"> {
+  const { skill: _, ...rest } = LensSchema.parse(ConfigSchema.parse(parse(readFileSync(path.join(PACKS_DIR, `${stack}.yml`), "utf8"))).lenses[stack]);
+
+  return rest;
+}
+
+// A dependency in any package.json that marks a stack. next implies react: its pack extends react's.
+const NPM_STACKS: [RegExp, string[]][] = [
+  [/^next$/, ["react", "nextjs"]],
+  [/^(react|react-dom)$/, ["react"]],
+  [/^(express|fastify|hono|koa|@nestjs\/core)$/, ["node-api"]],
+];
+
+// A tracked file, anywhere in the repository, that marks a stack.
+const FILE_STACKS: [RegExp, string][] = [
+  [/(^|\/)go\.mod$/, "go"],
+  [/(^|\/)Cargo\.toml$/, "rust"],
+  [/(^|\/)(pom\.xml|build\.gradle(\.kts)?)$/, "java"],
+  [/\.(csproj|fsproj|sln)$/, "dotnet"],
+  [/(^|\/)(pyproject\.toml|setup\.py|requirements\.txt)$/, "python"],
+  [/(^|\/)nx\.json$/, "nx-monorepo"],
+];
+
+const PackageJson = z.object({ dependencies: z.record(z.string(), z.string()).optional(), devDependencies: z.record(z.string(), z.string()).optional() });
+
+/** JSON, or null when malformed: a broken package.json marks nothing. */
+const parseJson = (text: string) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+/** The bundled stack packs this repository's tracked files point at, sorted by name. `files` is `git ls-files`. */
+export function detectStacks(files: string[], read: (rel: string) => string | null): string[] {
+  const found = new Set<string>();
+
+  for (const f of files) {
+    for (const [re, stack] of FILE_STACKS) if (re.test(f)) found.add(stack);
+
+    if (!/(^|\/)package\.json$/.test(f)) continue;
+    const pkg = PackageJson.safeParse(parseJson(read(f) ?? "{}"));
+    const deps = pkg.success ? Object.keys({ ...pkg.data.dependencies, ...pkg.data.devDependencies }) : [];
+
+    for (const [re, stacks] of NPM_STACKS) if (deps.some((d) => re.test(d))) for (const s of stacks) found.add(s);
+  }
+
+  // ASVS holds for every language, so any detected stack brings it.
+  if (found.size) found.add("owasp-asvs");
+
+  return lensTemplates().filter((t) => found.has(t));
+}
+
 /** The directory holding the skill's SKILL.md: a path against the repository, or a name in the usual skills directories. */
 export function resolveSkill(ref: string, home: string, repoRoot: string): string | null {
   const pinned = lensCache(home, ref);
@@ -175,4 +310,20 @@ export function skillDescription(skillDir: string): string | null {
   const parsed = z.object({ description: z.string() }).passthrough().safeParse(parse(front));
 
   return parsed.success ? parsed.data.description.replace(/\s+/g, " ").trim() : null;
+}
+
+/**
+ * A detected stack's lens, copied from its starter into .shepherd/lenses/<stack> so the team owns and trims it,
+ * with the pack's applies_to and gate. An existing lens directory is kept as it is.
+ */
+export function stackLens(repoRoot: string, stack: string): Lens {
+  const skill = path.posix.join(".shepherd", "lenses", stack);
+  const dir = path.join(repoRoot, skill);
+
+  if (!existsSync(path.join(dir, "SKILL.md"))) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "SKILL.md"), fromTemplate(stack, stack));
+  }
+
+  return { skill, ...packLens(stack) };
 }

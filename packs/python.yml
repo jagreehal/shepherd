@@ -1,0 +1,6 @@
+# Python services and workers. Extend pinned: github:jagreehal/shepherd/packs/python.yml@<sha>
+lenses:
+  python:
+    skill: lenses/python
+    applies_to: ['**/*.py']
+    gate: escalate

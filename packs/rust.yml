@@ -1,0 +1,6 @@
+# Rust crates and services. Extend pinned: github:jagreehal/shepherd/packs/rust.yml@<sha>
+lenses:
+  rust:
+    skill: lenses/rust
+    applies_to: ['**/*.rs']
+    gate: escalate

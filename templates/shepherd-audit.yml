@@ -1,0 +1,178 @@
+# shepherd audit in CI: a scheduled whole-repository security audit that runs plays from the OWASP Secure Agent
+# Playbook (github.com/OWASP/secure-agent-playbook, CC-BY-4.0) on the default branch. Per-PR review stays with
+# the owasp-asvs and owasp-llm lenses; these plays read the whole tree and run scanners, so they run weekly.
+# Installed by `shepherd workflows --audit`.
+#
+# The agent's job reads the repository and writes a report, nothing more: no write credential, no persisted
+# checkout token. A report carrying a credential shape is withheld before anything is uploaded. The report
+# job runs no model and files or updates one `shepherd-audit` issue on a private repository. On a public
+# repository issues and artifacts are public, so the audit runs there only when AUDIT_PUBLIC is `true`: the
+# report then becomes a public artifact.
+#
+# Secrets:   SHEPHERD_API_KEY (or the provider's own key) for the model.
+# Variables: SHEPHERD_MODEL (a model or tier; empty = the team's models.loop or top rung), AWS_REGION (Bedrock),
+#            AUDIT_PLAYS (space-separated play names; empty = the default below),
+#            AUDIT_PUBLIC (`true` to run on a public repository, publishing the report).
+name: shepherd-audit
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      plays:
+        description: Plays to run, space-separated (empty = AUDIT_PLAYS or the default)
+        required: false
+
+permissions: {}
+
+jobs:
+  repo:
+    # Visibility and default branch from the API, so a scheduled run reads the same values as a manual one.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      private: ${{ steps.repo.outputs.private }}
+      default_branch: ${{ steps.repo.outputs.default_branch }}
+    steps:
+      - id: repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY" --jq '"private=\(.private)\ndefault_branch=\(.default_branch)"' >> "$GITHUB_OUTPUT"
+
+  audit:
+    needs: repo
+    if: needs.repo.outputs.private == 'true' || vars.AUDIT_PUBLIC == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: shepherd-audit
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      PLAYBOOK_SHA: 65d4efd2cd0b081d52101e9708792b944e4ddebb # OWASP/secure-agent-playbook, pinned: the plays are instructions
+      PLAYS: ${{ github.event.inputs.plays || vars.AUDIT_PLAYS || 'secrets-scan sca-audit iac-security-review code-review-security' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.repo.outputs.default_branch }}
+          fetch-depth: 0 # secrets-scan reads history
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: OWASP/secure-agent-playbook
+          ref: ${{ env.PLAYBOOK_SHA }}
+          path: .shepherd-playbook # checkout writes only inside the workspace; moved out below
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the model key
+      # Install your project's dependencies here if sca-audit should read the resolved tree, with install scripts
+      # off and no dependency cache (npm ci --ignore-scripts; setup-node without `cache:`): this job runs the model.
+      - shell: bash # -eo pipefail: a failed download fails here, not three steps later
+        run: |
+          mv "$GITHUB_WORKSPACE/.shepherd-playbook" "$RUNNER_TEMP/playbook" # out of the repository tree, so the plays never read as its content
+          for play in $PLAYS; do
+            [[ "$play" =~ ^[a-z0-9-]+$ ]] || { echo "::error::play names are lowercase with dashes: $play"; exit 1; }
+            ls "$RUNNER_TEMP"/playbook/plugins/*/plays/"$play.md" >/dev/null 2>&1 || { echo "::error::no play named $play at $PLAYBOOK_SHA"; exit 1; }
+          done
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0 # 1.x: this installer refuses 2.x
+          "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/audit"
+      - name: Audit
+        timeout-minutes: 45 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
+          SHEPHERD_DEFAULT_BRANCH: ${{ needs.repo.outputs.default_branch }}
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md stay out of the agent's config
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+        run: |
+          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
+          plan=$(shepherd ci-models)
+          model=$(jq -r .model <<<"$plan")
+          echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          key_env=$(jq -r '.key_env // empty' <<<"$plan")
+          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
+          unset SHEPHERD_API_KEY
+          # An unset secret arrives as "": a blank key would hide the provider's other credentials.
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do [ -n "${!k:-}" ] || unset "$k"; done
+          OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          opencode run --auto -m "$model" --title "shepherd audit" "Run a security audit of this repository (the current directory, its default branch).
+          For each play name in: $PLAYS
+          follow the play at $RUNNER_TEMP/playbook/plugins/*/plays/<name>.md, reading the templates and data it points at
+          under the same plugin directory. Where a play asks for a scanner that is not installed, use what is available and
+          say which steps you could not run. Never install global tools, push, open issues or call any URL beyond package
+          advisory databases and GitHub's API for this repository.
+          Write one Markdown report to $RUNNER_TEMP/audit/report.md: a summary table (play, findings by severity, steps not run),
+          then each finding with severity, CWE, file:line and the fix. Never write a secret's value: name its type, file and
+          line, and the first 4 characters at most. Nobody is watching this session: never wait for an answer."
+          test -s "$RUNNER_TEMP/audit/report.md" || { echo "::error::the audit wrote no report"; exit 1; }
+      - name: Withhold a report that carries a credential
+        shell: bash
+        run: |
+          # Before any upload: a credential shape means the redaction failed. Name the kind, never the match.
+          found=""
+          while IFS='=' read -r kind re; do
+            grep -Eq -- "$re" "$RUNNER_TEMP/audit/report.md" && found="$found $kind"
+          done <<'PATTERNS'
+          aws-key=AKIA[0-9A-Z]{16}
+          github-token=gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}
+          api-key=sk-[A-Za-z0-9_-]{20,}
+          slack-token=xox[abprs]-[A-Za-z0-9-]{10,}
+          private-key=-----BEGIN [A-Z ]*PRIVATE KEY
+          PATTERNS
+          if [ -n "$found" ]; then
+            rm -f "$RUNNER_TEMP/audit/report.md"
+            echo "::error::the report carried a credential shape ($found ) and was withheld. Rerun the secrets-scan play locally and rotate what it finds."
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shepherd-audit
+          path: ${{ runner.temp }}/audit
+          retention-days: 30
+
+  report:
+    needs: [repo, audit]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: shepherd-audit
+          path: audit
+      - shell: bash # -eo pipefail
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PRIVATE: ${{ needs.repo.outputs.private }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PRIVATE" != "true" ]; then
+            echo "Public repository (AUDIT_PUBLIC): the report is in the run's shepherd-audit artifact ($RUN_URL)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          body=$(printf '> 🤖 Automated comment by **Shepherd audit**, not written by a human\n\nRun: %s\n\n%s' "$RUN_URL" "$(head -c 60000 audit/report.md)")
+          gh label create shepherd-audit --repo "$REPO" --color B60205 --description "shepherd's scheduled security audit" 2>/dev/null || true
+          issue=$(gh issue list --repo "$REPO" --label shepherd-audit --state open --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then gh issue comment "$issue" --repo "$REPO" --body "$body"
+          else gh issue create --repo "$REPO" --label shepherd-audit --title "Security audit" --body "$body"; fi

@@ -71,4 +71,17 @@ checks:
 
 Replace the example SHA with a commit on the policy repository's default branch. Give `gh` access to that repository. The consumer keeps the payments lens, replaces the unit command and selects review-only mode. Remote resolution requires the real pack and credentials; the docs checker validates syntax and recipe contracts without fetching placeholder repositories.
 
+The organisation pack can extend shepherd's stack packs itself, so every consumer gets them with one line:
+
+```yaml validate-config
+extends:
+  - github:jagreehal/shepherd/packs/node-api.yml@0123456789abcdef0123456789abcdef01234567
+  - github:jagreehal/shepherd/packs/observability.yml@0123456789abcdef0123456789abcdef01234567
+lenses:
+  node-api:
+    applies_to: ['services/**/*.ts']
+```
+
+[Compose reviews for your stack](/shepherd/configuration/stacks/) lists the catalogue.
+
 Inspect `shepherd config explain --working-tree` to see each value's source. Merge after the preview matches your intended permissions. Read [team policy](/shepherd/configuration/team-policy/) for precedence and private-pack access.

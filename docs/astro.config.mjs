@@ -49,6 +49,10 @@ export default defineConfig({
       {
         "label": "Investigate an incident",
         "slug": "guides/incidents"
+      },
+      {
+        "label": "Run a scheduled security audit",
+        "slug": "guides/security-audit"
       }
     ]
   },
@@ -70,6 +74,10 @@ export default defineConfig({
       {
         "label": "Build and share review lenses",
         "slug": "configuration/lenses"
+      },
+      {
+        "label": "Compose reviews for your stack",
+        "slug": "configuration/stacks"
       },
       {
         "label": "Choose models",

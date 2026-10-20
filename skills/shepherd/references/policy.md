@@ -2,8 +2,9 @@
 
 A team sets shepherd's policy in `.shepherd/config.yml` (an older repository
 may have only `.shepherd/lenses.yml`; it reads the same way). It can extend
-packs, which apply first, and the repository file wins over them. Every
-runner reads the policy the same way and holds to it.
+packs, which apply first, and the repository file wins over them. A pack may
+extend packs of its own, which apply before it, up to four deep; shepherd
+refuses a cycle. Every runner reads the policy the same way and holds to it.
 
 ## Load it once per run
 
@@ -47,7 +48,9 @@ recipes.
   `escalate.reason` (or "team policy: a person changes <path>"); ci-repair
   classifies it `needs-decision`; incident stops with
   `outcome=needs_decision`. A gate or deny-list elsewhere still applies.
-- **`lenses`**, **`ladder`**, **`models`**: as in `../../swarm/references/custom-lenses.md`
+- **`lenses`**, **`ladder`**, **`models`**: a lens merges field by field
+  across layers, so a repository can set `only`, `disable` or `applies_to`
+  on a pack's lens by name; the rest is as in `../../swarm/references/custom-lenses.md`
   and `models.md`.
 - **`recipes`**: named step lists for `/shepherd <pr> --recipe <name>`. See
   below.
@@ -105,6 +108,7 @@ name a path in the pack's own repository (`skill: lenses/payments`). It
 resolves at the same commit, which must be on that repository's default branch: shepherd fetches that directory once into
 `~/.cache/shepherd/packs/`, keyed by the commit, and `config explain --json`
 gives the lens's `path` there. A bare name (`skill: payments-rules`) is an
-installed skill. A lens path in a pack inside this repository resolves in
-this repository. `shepherd config validate` reports a lens skill it cannot
+installed skill. A pinned pack's own relative `extends` entries resolve the
+same way, in its repository at its commit. A lens path in a pack inside this
+repository resolves in this repository. `shepherd config validate` reports a lens skill it cannot
 find.

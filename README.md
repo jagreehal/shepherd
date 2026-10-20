@@ -50,6 +50,7 @@ Replace `42` with your PR number. Expect findings on the PR and a `reviewed` res
 | Compose checks, modes and recipes | [Configuration reference](docs/src/content/docs/reference/configuration.md) |
 | Share organisation policy | [Team examples](docs/src/content/docs/configuration/examples.md) |
 | Add domain-specific reviewers | [Lenses](docs/src/content/docs/configuration/lenses.md) |
+| Review React, Next.js, Node, Go, Rust, Java, .NET or Python code, or import any skill as a lens | [Stack packs](docs/src/content/docs/configuration/stacks.md) |
 | Select models by role | [Model routing](docs/src/content/docs/configuration/models.md) |
 | Run without your laptop | [GitHub Actions](docs/src/content/docs/integrations/github-actions.md) |
 | Get told when a PR needs you | [Notifications](docs/src/content/docs/integrations/notifications.md) |

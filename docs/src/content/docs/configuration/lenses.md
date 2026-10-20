@@ -34,6 +34,8 @@ Swarm wraps the skill in a review-only brief. The skill's `## Review` section is
 
 shepherd reads the repository's policy file from the default branch, so a PR cannot pick its own reviewers. Run `/swarm --preview` to try a lens from your working tree before you merge it: it reports which files each lens matched and what it found, and posts nothing. `lens list` checks each lens (a description and, for a lens under `.shepherd/lenses/`, a `## Review` with unique rule ids) and exits non-zero on a problem.
 
+Give each rule an id, `- **<id>**: <rule>`. Add a severity tag when a rule names a security or data-loss defect: `- **<id>** [refuse]: <rule>`. Swarm rates a `[refuse]` rule with its full rubric instead of the MEDIUM cap for guidance, and stamp refuses a PR that breaks it. A lens entry can keep a subset of rules with `only` or drop some with `disable`, both rule id globs, and a repository can set either on a pack's lens by name. [Compose reviews for your stack](/shepherd/configuration/stacks/) shows the bundled catalogue and how layers combine, and `/lens-import` converts any other skill into this format.
+
 A `--global` lens is a personal preview. Swarm prints its findings locally and never posts them, so you can try a lens on real PRs before you commit it for the team.
 
 ## Starter lenses
@@ -74,5 +76,7 @@ rules:
     applies_to: ['src/**']
     on_break: escalate
 ```
+
+To declare every lens once, set `rules_from: { shepherd: {} }` in `.stamp/policy.yml` instead: stamp then reads every shepherd lens as a rule pack, with each lens's `gate` as its `on_break`.
 
 Both read the pack from the default branch, so a PR cannot change the rules it is judged by. stamp also sends any PR that edits a configured pack to a human, since the pack's rules are trusted context for every later review.

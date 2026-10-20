@@ -13,17 +13,30 @@ ladder applies only when the repository sets none. `models:` pins merge per
 name, the repository winning. `shepherd models` prints the result.
 
 ```yaml
-ladder: [opencode-go/deepseek-v4-flash, opencode-go/glm-5.3, opencode-go/kimi-k3, opencode-go/qwen3.8-max]
-models:                 # a name runs on exactly this model, whatever its rung
-  security: opencode-go/qwen3.8-max
-  router: opencode-go/deepseek-v4-flash
+tiers:                  # a name for a model, defined once; a pack can define them for every repo
+  fast: opencode/deepseek-v4.1-flash-free
+  smart: bedrock:eu.anthropic.claude-sonnet-4-6
+ladder: [fast, smart]   # tiers or model ids, cheapest first
+models:                 # a name runs on exactly this model or tier, whatever its rung
+  reviewers: fast       # role group: the router and every lens
+  fixers: smart         # role group: triage, simplify, ci-repair, incident
+  security: smart       # one runner or lens beats its group
 ```
 
 Pin names: `router`, `verifier`, `validator`, `triage`, `simplify`,
-`ci-repair`, and any lens, built-in (`correctness`, `security`, `simplicity`,
-`maintainability`, `slop`) or custom. A model id passes to the agent tool's
+`ci-repair`, `loop` (the session model in CI), any lens, built-in
+(`correctness`, `security`, `simplicity`, `maintainability`, `slop`) or
+custom, and the role groups `reviewers`, `fixers` and `validators`. Take the
+ladder and pins from `shepherd config explain --json`: tiers and groups are
+already resolved there, so every value is a model id and every pin names one
+runner. A model id passes to the agent tool's
 model parameter exactly as written: `haiku` on Claude Code, `provider/model`
-on OpenCode. Never translate one id into another provider's. A pin replaces
+on OpenCode. Never translate one id into another provider's yourself. The one
+translation is `shepherd opencode-agents`, which accepts stamp's canonical
+`provider:model` ids and writes them the OpenCode way (`bedrock:` becomes
+`amazon-bedrock/`, `vertex:` becomes `google-vertex/`, any other provider keeps
+its name), so one ladder serves stamp and shepherd. `shepherd models` shows
+both spellings. Claude Code aliases pass through. A pin replaces
 the rung for that runner only; climbing for validation starts from the pin's
 position on the ladder, or the top rung when the pin is not on it. A pin that
 the agent tool rejects falls back to the runner's rung, and the summary says

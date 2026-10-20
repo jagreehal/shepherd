@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
 import { parseCommit, parseEscape, parseThread, roundsOf, score } from "./garden.ts";
+import { loadPolicy } from "./config.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
-import { addLens, lensTemplates, lensProblems, newLens, opencodeAgents, pinModel, readLenses, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
+import { addLens, keepsRule, providerKeyEnv, lensTemplates, lensProblems, newLens, opencodeAgents, opencodeModel, pinModel, readLenses, reviewRules, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -26,7 +27,7 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] 
 
 describe("skill pack", () => {
   test("ships the loop, its runners, the ladder and every lens", () => {
-    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "incident", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
+    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "incident", "lens-import", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
   });
 
   test.each(names)("%s: frontmatter name matches its directory and has a description within the 1024-char limit", (name) => {
@@ -322,7 +323,7 @@ describe("custom lenses", () => {
     expect(text).toMatch(/^# obs$/m);
     expect(text).toContain("- **boundary-signal**:");
     expect(lensProblems({ skill: ".shepherd/lenses/obs" }, home, repo)).toEqual([]);
-    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: observability');
+    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: dotnet, go, java, nextjs, node-api, nx-monorepo, observability, owasp-asvs, owasp-llm, python, react, rust');
   });
 
   test("validates a team lens before it runs: rules with ids, each id once", () => {
@@ -344,6 +345,59 @@ describe("custom lenses", () => {
     // An installed third-party skill only needs to resolve and describe itself.
     skill(path.join(home, ".claude", "skills"), "react-rules", "React rules");
     expect(lensProblems({ skill: "react-rules" }, home, repo)).toEqual([]);
+  });
+
+  test("a rule may carry a severity tag, and only and disable must name rules the lens has", () => {
+    const { home, repo } = sandbox();
+    const file = path.join(newLens(repo, "react", {}), "SKILL.md");
+
+    writeFileSync(file, "---\nname: react\ndescription: d\n---\n\n## Review\n\n- **rerender-memo**: a.\n- **client-fetch** [refuse]: b.\n- **svg-precision** [note]: c.\n\n## Fix\n\n- **not-a-rule**: x.\n");
+    expect(reviewRules(readFileSync(file, "utf8"))).toEqual([{ id: "rerender-memo" }, { id: "client-fetch", severity: "refuse" }, { id: "svg-precision", severity: "note" }]);
+    expect(keepsRule({ only: ["rerender-*", "client-*"], disable: ["client-fetch"] }, "rerender-memo")).toBe(true);
+    expect(keepsRule({ only: ["rerender-*", "client-*"], disable: ["client-fetch"] }, "client-fetch")).toBe(false);
+    expect(keepsRule({}, "svg-precision")).toBe(true);
+    expect(lensProblems({ skill: ".shepherd/lenses/react", only: ["rerender-*"], disable: ["svg-*"] }, home, repo)).toEqual([]);
+    expect(lensProblems({ skill: ".shepherd/lenses/react", disable: ["typo-*"] }, home, repo)).toEqual([`${file}: "typo-*" in only or disable matches no rule id`]);
+    expect(lensProblems({ skill: ".shepherd/lenses/react", only: ["client-*"], disable: ["client-fetch"] }, home, repo)).toEqual([`${file}: only and disable leave no rule`]);
+  });
+
+  test("every bundled pack loads pinned, and every starter lens it names validates with ids under the cap stamp reads", () => {
+    const { home, repo } = sandbox();
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const root = path.resolve(import.meta.dir, "..");
+
+    for (const pack of readdirSync(path.join(root, "packs"))) {
+      const read = (rel: string) => (rel === ".shepherd/config.yml" ? `extends: ['github:jagreehal/shepherd/packs/${pack}@${sha}']\n` : null);
+      const p = loadPolicy(read, (_o, _r, file) => readFileSync(path.join(root, file), "utf8"), null);
+
+      for (const [name, lens] of Object.entries(p.lenses)) {
+        expect(lens.value.skill).toBe(`github:jagreehal/shepherd/lenses/${name}@${sha}`);
+        const text = readFileSync(path.join(root, "lenses", name, "SKILL.md"), "utf8");
+
+        expect(reviewRules(text)!.length).toBeGreaterThan(0);
+        expect(text.slice(text.indexOf("## Review"), text.indexOf("## Fix")).length).toBeLessThan(6000);
+      }
+    }
+
+    for (const t of lensTemplates()) {
+      newLens(repo, t, {}, t);
+      expect({ t, problems: lensProblems({ skill: `.shepherd/lenses/${t}` }, home, repo) }).toEqual({ t, problems: [] });
+    }
+  });
+
+  test("SHEPHERD_API_KEY goes in the variable the session model's provider reads", () => {
+    expect(providerKeyEnv("amazon-bedrock/eu.amazon.nova-micro-v1:0")).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(providerKeyEnv("opencode/deepseek-v4.1-flash-free")).toBe("OPENCODE_API_KEY");
+    expect(providerKeyEnv("deepseek/deepseek-flash")).toBe("DEEPSEEK_API_KEY");
+    expect(providerKeyEnv("someone/else")).toBeNull();
+  });
+
+  test("a canonical provider:model id reaches OpenCode in its own spelling", () => {
+    expect(opencodeModel("bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0")).toBe("amazon-bedrock/eu.anthropic.claude-sonnet-4-5-20250929-v1:0");
+    expect(opencodeModel("deepseek:deepseek-flash")).toBe("deepseek/deepseek-flash");
+    expect(opencodeModel("amazon-bedrock/eu.anthropic.claude-sonnet-4-5-20250929-v1:0")).toBe("amazon-bedrock/eu.anthropic.claude-sonnet-4-5-20250929-v1:0");
+    expect(opencodeModel("haiku")).toBe("haiku");
+    expect(opencodeAgents({ ladder: ["bedrock:zai.glm-4.7-flash"], models: {} }).agent["shepherd-r0"]?.model).toBe("amazon-bedrock/zai.glm-4.7-flash");
   });
 
   test("reads frontmatter saved with Windows line endings", () => {

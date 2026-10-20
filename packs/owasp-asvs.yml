@@ -1,0 +1,6 @@
+# OWASP ASVS 5.0 security requirements for any language. Extend pinned: github:jagreehal/shepherd/packs/owasp-asvs.yml@<sha>
+lenses:
+  owasp-asvs:
+    skill: lenses/owasp-asvs
+    applies_to: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.go', '**/*.rs', '**/*.java', '**/*.kt', '**/*.cs', '**/*.py', '**/*.rb', '**/*.php']
+    gate: escalate

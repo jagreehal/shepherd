@@ -17,6 +17,7 @@ title: "Skills and human decisions"
 | `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
 | `review-spec` | The change against its issue or spec: requirements missing, built wrong, or not asked for. |
 | `code-review`, `diagnosing-bugs`, `pr`, `retro`, `writing-for-agents` | [Matt Pocock's skills](https://github.com/mattpocock/skills), copied unchanged. `review-spec` runs code-review's Spec axis, `review-simplicity` adds its smell baseline, ci-repair diagnoses with diagnosing-bugs, shepherd writes PR bodies with pr when the repo has no PR skill, and garden sorts causes with retro and writes skill text by writing-for-agents. |
+| `lens-import` | Converts any skill, rule set or style guide into a lens with one id per rule, severity tags, Fix guidance and the source's licence, then registers and validates it. |
 | `garden` | The outer loop: scores shepherd's recent runs from GitHub and opens PRs with skill edits and lint rules for findings that keep recurring. |
 
 ## When it asks you

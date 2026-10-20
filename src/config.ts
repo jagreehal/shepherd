@@ -12,18 +12,26 @@ import { parse } from "yaml";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 
+export const SEVERITIES = ["refuse", "escalate", "note"] as const;
+
 export const LensSchema = z
   .object({
     skill: z.string().min(1),
     applies_to: z.array(z.string().min(1)).optional(),
     description: z.string().min(1).optional(),
+    gate: z.enum(SEVERITIES).optional(), // stamp's on_break for this lens's untagged rules; swarm reads the tags only
+    only: z.array(z.string().min(1)).min(1).optional(), // rule id globs to keep
+    disable: z.array(z.string().min(1)).min(1).optional(), // rule id globs to drop
   })
   .strict();
 
 export type Lens = z.infer<typeof LensSchema>;
 
-// A model id is whatever the harness's agent tool accepts, passed through untouched: `haiku` on Claude Code,
-// `provider/model` on OpenCode (`opencode-go/deepseek-v4-flash`). shepherd never maps one to another.
+// In one layer a lens may leave out its skill: it then trims or rescopes the lens of that name an earlier layer defined.
+const LensLayerSchema = LensSchema.partial({ skill: true });
+
+// A model id is whatever the harness's agent tool accepts: `haiku` on Claude Code, `provider/model` on OpenCode.
+// stamp's canonical `provider:model` also works: opencode-agents spells it the OpenCode way (lens.ts opencodeModel).
 export const ModelId = z.string().min(1);
 
 /** The steps a recipe can run: shepherd's own runners and stamp's verdict. */
@@ -39,9 +47,10 @@ const REVIEWS = new Set<Step>(["swarm", "stamp"]);
 export const ConfigSchema = z
   .object({
     extends: z.array(z.string().min(1)).optional(),
+    tiers: z.record(z.string().regex(NAME), ModelId).optional(), // a name for a model, defined once: ladder and models may use it
     ladder: z.array(ModelId).min(1).optional(), // cheapest first; replaces the harness's ladder
-    models: z.record(z.string().regex(NAME), ModelId).optional(), // a lens or runner name -> the model it always runs on
-    lenses: z.record(z.string().regex(NAME), LensSchema).default({}),
+    models: z.record(z.string().regex(NAME), ModelId).optional(), // a runner, lens or role group -> the model or tier it runs on
+    lenses: z.record(z.string().regex(NAME), LensLayerSchema).default({}),
     checks: z.record(z.string().regex(NAME), z.object({ command: z.string().min(1) }).strict()).optional(),
     fixes: z.object({ mode: z.enum(["suggest", "local", "push"]) }).strict().optional(),
     escalate: z.object({ paths: z.array(z.string().min(1)).min(1), reason: z.string().min(1).optional() }).strict().optional(),
@@ -74,6 +83,8 @@ type Sourced<T> = { value: T; source: string };
 type Layer = { source: string; config: Config };
 
 export type Effective = {
+  /** Named models. The ladder and models below hold them resolved: a model id, never a tier name. */
+  tiers: Record<string, Sourced<string>>;
   ladder: Sourced<string[]> | null;
   models: Record<string, Sourced<string>>;
   lenses: Record<string, Sourced<Lens> & { scope: "team" | "personal" }>;
@@ -99,8 +110,17 @@ const parseConfig = (text: string, source: string): Config => {
   return result.data;
 };
 
-/** One `extends` entry as a layer. A pack extends nothing itself, so the order stays the one the file lists. */
-function readPack(ref: string, read: Read, fetch: Fetch): Layer {
+// How deep packs may extend packs. Enough for org > stack > framework; past it a chain is a mistake.
+const MAX_PACK_DEPTH = 4;
+
+/**
+ * One `extends` entry as layers: the packs it extends, in order, then the pack itself. A pinned pack's own
+ * relative entries name files in its repository at the same commit, so a pack travels with what it builds on.
+ */
+function readPack(ref: string, read: Read, fetch: Fetch, chain: string[] = []): Layer[] {
+  if (chain.includes(ref)) throw new Error(`${[...chain, ref].join(" > ")}: packs extend each other in a cycle`);
+
+  if (chain.length >= MAX_PACK_DEPTH) throw new Error(`${[...chain, ref].join(" > ")}: packs extend more than ${MAX_PACK_DEPTH} deep`);
   const pinned = PINNED.exec(ref);
   let text: string | null;
 
@@ -112,26 +132,32 @@ function readPack(ref: string, read: Read, fetch: Fetch): Layer {
   if (text === null) throw new Error(`${ref}: pack not found`);
   const config = parseConfig(text, ref);
 
-  if (config.extends?.length) throw new Error(`${ref}: a pack cannot extend another pack; list both in the repository's extends`);
+  const inner = (config.extends ?? []).map((e) => {
+    if (!pinned || e.startsWith("github:")) return e;
+
+    if (pathEscapes(e)) throw new Error(`${ref}: extends ${e}: a path is relative to the pack's repository, with no leading / and no ..`);
+
+    return `github:${pinned[1]}/${pinned[2]}/${e}@${pinned[4]}`;
+  });
 
   // A pinned pack's lens paths name files in the pack's repository at the same commit, so the lens travels with it.
   if (pinned) {
     for (const [name, lens] of Object.entries(config.lenses)) {
-      if (!lens.skill.includes("/")) continue;
+      if (!lens.skill?.includes("/")) continue;
 
       if (pathEscapes(lens.skill)) throw new Error(`${ref}: lens ${name}: a skill path is relative to the pack's repository, with no leading / and no ..`);
       lens.skill = `github:${pinned[1]}/${pinned[2]}/${lens.skill.replace(/\/+$/, "")}@${pinned[4]}`;
     }
   }
 
-  return { source: `pack ${ref}`, config };
+  return [...inner.flatMap((e) => readPack(e, read, fetch, [...chain, ref])), { source: `pack ${ref}`, config }];
 }
 
 const pathEscapes = (rel: string) => rel.startsWith("/") || rel.split("/").includes("..");
 
-/** Merge layers in order: a later layer replaces a scalar and merges a map by name. */
+/** Merge layers in order: a later layer replaces a scalar and merges a map by name; a lens merges field by field. */
 function merge(layers: Layer[]): Effective {
-  const out: Effective = { ladder: null, models: {}, lenses: {}, checks: {}, fixes: { value: { mode: "push" }, source: "built-in" }, escalate: null, recipes: {}, ignored: [] };
+  const out: Effective = { tiers: {}, ladder: null, models: {}, lenses: {}, checks: {}, fixes: { value: { mode: "push" }, source: "built-in" }, escalate: null, recipes: {}, ignored: [] };
 
   for (const { source, config } of layers) {
     const tag = <T>(value: T) => ({ value, source });
@@ -142,9 +168,16 @@ function merge(layers: Layer[]): Effective {
 
     if (config.escalate) out.escalate = tag(config.escalate);
 
+    for (const [k, v] of Object.entries(config.tiers ?? {})) out.tiers[k] = tag(v);
+
     for (const [k, v] of Object.entries(config.models ?? {})) out.models[k] = tag(v);
 
-    for (const [k, v] of Object.entries(config.lenses)) out.lenses[k] = { ...tag(v), scope: "team" };
+    for (const [k, v] of Object.entries(config.lenses)) {
+      // SAFETY: a lens without a skill is refused in loadPolicy unless an earlier layer gave it one.
+      const lens = { ...out.lenses[k]?.value, ...v } as Lens;
+
+      out.lenses[k] = { ...tag(lens), scope: "team" };
+    }
 
     for (const [k, v] of Object.entries(config.checks ?? {})) out.checks[k] = tag(v);
 
@@ -161,12 +194,16 @@ function merge(layers: Layer[]): Effective {
 export function loadPolicy(read: Read, fetch: Fetch, personal: Config | null): Effective & { teamFile: string | null } {
   const teamFile = TEAM_FILES.find((f) => read(f) !== null) ?? null;
   const team = teamFile ? parseConfig(read(teamFile)!, teamFile) : null;
-  const packs = (team?.extends ?? []).map((ref) => readPack(ref, read, fetch));
+  const packs = (team?.extends ?? []).flatMap((ref) => readPack(ref, read, fetch));
   const effective = merge([{ source: "built-in", config: BUILT_IN }, ...packs, ...(team ? [{ source: teamFile!, config: team }] : [])]);
+
+  for (const [name, l] of Object.entries(effective.lenses)) {
+    if (!l.value.skill) throw new Error(`lens ${name}: no skill; name one, or extend the pack that defines ${name}`);
+  }
 
   // A lens may name a pinned pack directly; any skill spelled github: must be one that stays in the cache.
   for (const [name, l] of [...Object.entries(effective.lenses), ...Object.entries(personal?.lenses ?? {}).map(([k, v]) => [k, { value: v }] as const)]) {
-    if (l.value.skill.startsWith("github:") && !safePinned(l.value.skill)) throw new Error(`lens ${name}: ${l.value.skill} is not github:owner/repo/<path>@<40-hex sha> with a path that stays in that repository`);
+    if (l.value.skill?.startsWith("github:") && !safePinned(l.value.skill)) throw new Error(`lens ${name}: ${l.value.skill} is not github:owner/repo/<path>@<40-hex sha> with a path that stays in that repository`);
   }
 
   if (personal) {
@@ -175,16 +212,88 @@ export function loadPolicy(read: Read, fetch: Fetch, personal: Config | null): E
     // Personal fills in only what the team left open, and adds lenses that never post.
     if (!effective.ladder && personal.ladder) effective.ladder = { value: personal.ladder, source };
 
-    for (const [k, v] of Object.entries(personal.models ?? {})) effective.models[k] ??= { value: v, source };
+    for (const [k, v] of Object.entries(personal.tiers ?? {})) effective.tiers[k] ??= { value: v, source };
 
-    for (const [k, v] of Object.entries(personal.lenses)) effective.lenses[k] ??= { value: v, source, scope: "personal" };
+    for (const [k, v] of Object.entries(personal.lenses)) {
+      if (!v.skill) throw new Error(`personal lens ${k}: no skill`);
+      // SAFETY: skill checked on the line above.
+      effective.lenses[k] ??= { value: v as Lens, source, scope: "personal" };
+    }
 
     for (const key of ["extends", "checks", "fixes", "escalate", "recipes"] as const) {
       if (personal[key] !== undefined) effective.ignored.push(`personal ${key}: team policy, set it in ${TEAM_FILES[0]}`);
     }
   }
 
-  return { ...effective, teamFile };
+  // The team's groups expand before any personal pin, so a personal pin fills only a runner the team left open.
+  effective.models = expandGroups(effective, effective.models);
+
+  if (personal?.models) {
+    const own = expandGroups(effective, Object.fromEntries(Object.entries(personal.models).map(([k, v]) => [k, { value: v, source: "personal" }])));
+
+    for (const [k, v] of Object.entries(own)) effective.models[k] ??= v;
+  }
+
+  return { ...resolveModels(effective), teamFile };
+}
+
+/**
+ * Role groups a `models` entry can pin at once. A pin on one runner or lens beats its group's, so a team
+ * sets `reviewers: fast` and `security: smart` and gets both.
+ */
+export const ROLE_GROUPS = {
+  reviewers: (p: Effective) => ["router", ...BUILT_IN_REVIEWERS, ...Object.keys(p.lenses)],
+  fixers: () => ["triage", "simplify", "ci-repair", "incident"],
+  validators: () => ["verifier", "validator"],
+} as const;
+
+/** The merged team pins with role groups expanded: a pin on a runner or lens beats its group. */
+function expandGroups(p: Effective, pins: Effective["models"]): Effective["models"] {
+  const out: Effective["models"] = {};
+
+  for (const [group, members] of Object.entries(ROLE_GROUPS)) {
+    const pin = pins[group];
+
+    if (pin) for (const m of members(p)) out[m] = { value: pin.value, source: `${pin.source} (models.${group})` };
+  }
+
+  for (const [k, v] of Object.entries(pins)) if (!(k in ROLE_GROUPS)) out[k] = v;
+
+  return out;
+}
+
+/** Turn every tier name in the ladder and pins into its model id. */
+function resolveModels(p: Effective): Effective {
+  const tier = (v: Sourced<string>) => {
+    const t = p.tiers[v.value];
+
+    return t ? { value: t.value, source: `${v.source}, tier ${v.value}` } : v;
+  };
+
+  return {
+    ...p,
+    ladder: p.ladder && { value: p.ladder.value.map((m) => p.tiers[m]?.value ?? m), source: p.ladder.source },
+    models: Object.fromEntries(Object.entries(p.models).map(([k, v]) => [k, tier(v)])),
+  };
+}
+
+/** The model CI runs the shepherd session on when nothing chooses one. */
+export const CI_DEFAULT_MODEL = "opencode-go/kimi-k3";
+
+/**
+ * The session model for CI, in order: SHEPHERD_MODEL (a model id or a tier name), the `loop` pin, the top of the
+ * ladder, then the default, which says so.
+ */
+export type CiModel = { model: string; source: string };
+
+export function ciModel(p: Effective, override: string | undefined): CiModel {
+  if (override) return p.tiers[override] ? { model: p.tiers[override]!.value, source: `SHEPHERD_MODEL, tier ${override}` } : { model: override, source: "SHEPHERD_MODEL" };
+
+  if (p.models.loop) return { model: p.models.loop.value, source: `models.loop, ${p.models.loop.source}` };
+
+  if (p.ladder) return { model: p.ladder.value.at(-1)!, source: `top of the ladder, ${p.ladder.source}` };
+
+  return { model: CI_DEFAULT_MODEL, source: "default: name one with SHEPHERD_MODEL, models.loop or a ladder" };
 }
 
 type Mode = Effective["fixes"]["value"]["mode"];
@@ -247,11 +356,11 @@ const WRITES: Record<Step, Record<Mode, string>> = {
 // Built-in reviewers, and the ladder rung each runner starts on (skills/shepherd/references/models.md).
 const BUILT_IN_REVIEWERS = ["correctness", "security", "simplicity", "maintainability", "slop", "spec"];
 
-const RUNG = new Map([["router", 0], ["verifier", 1], ["triage", 1], ["simplify", 1], ["ci-repair", 1], ["validator", 2]]);
+const RUNG = new Map([["router", 0], ["verifier", 1], ["triage", 1], ["simplify", 1], ["ci-repair", 1], ["validator", 2], ["loop", 99]]); // loop: the top rung
 
 /** The model each runner uses: its pin, its rung of the team ladder, or the harness's own ladder. */
 export function modelPlan(p: Effective): { runner: string; model: string; source: string }[] {
-  const names = ["router", ...BUILT_IN_REVIEWERS, ...Object.keys(p.lenses), "verifier", "triage", "simplify", "ci-repair", "validator"];
+  const names = ["router", ...BUILT_IN_REVIEWERS, ...Object.keys(p.lenses), "verifier", "triage", "simplify", "ci-repair", "validator", "loop"];
 
   return [...new Set(names)].map((runner) => {
     const pin = p.models[runner];
@@ -259,7 +368,13 @@ export function modelPlan(p: Effective): { runner: string; model: string; source
 
     if (pin) return { runner, model: pin.value, source: `pinned, ${pin.source}` };
 
-    if (p.ladder) return { runner, model: p.ladder.value[Math.min(rung, p.ladder.value.length - 1)]!, source: `rung ${rung}, ${p.ladder.source}` };
+    if (p.ladder) {
+      const at = Math.min(rung, p.ladder.value.length - 1);
+
+      return { runner, model: p.ladder.value[at]!, source: `rung ${at}, ${p.ladder.source}` };
+    }
+
+    if (runner === "loop") return { runner, model: "the session model", source: `in CI, SHEPHERD_MODEL or ${CI_DEFAULT_MODEL}` };
 
     return { runner, model: `harness rung ${rung}`, source: "Claude Code: haiku > sonnet > opus; OpenCode with no ladder: the session model" };
   });
@@ -302,7 +417,8 @@ const gitIn = (repoRoot: string) => (...args: string[]) => execFileSync("git", [
 /** The fetched ref of `origin`'s default branch. The name comes from the remote, since a CI checkout sets no origin/HEAD. */
 export function defaultBranchRef(repoRoot: string): string {
   const git = gitIn(repoRoot);
-  const branch = /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(git("ls-remote", "--symref", "origin", "HEAD"))?.[1];
+  // CI names it (SHEPHERD_DEFAULT_BRANCH), since a checkout without a persisted token cannot ask a private origin.
+  const branch = process.env.SHEPHERD_DEFAULT_BRANCH || /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(git("ls-remote", "--symref", "origin", "HEAD"))?.[1];
 
   if (!branch) throw new Error("cannot tell origin's default branch");
   const ref = `refs/remotes/origin/${branch}`;
