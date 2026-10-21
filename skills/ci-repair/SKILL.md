@@ -118,14 +118,22 @@ One repair cycle across all PR-caused root causes:
 1. Reproduce with the narrowest faithful command. A mechanical error the log
    and diff prove (a type error on a changed symbol) may be fixed without a
    local reproduction; say so.
-2. Fix the root cause. Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and
+2. **Attack the premise before a third try.** Read the branch's earlier
+   `Shepherd: ci-repair` commits (`git log --grep='Shepherd: ci-repair'`). When
+   two of them already tried to fix the check that is failing now, both rested
+   on a premise that is wrong. Write it down ("the timeout comes from the
+   retry loop"), test it directly with one command, and fix only what that
+   result shows. If the premise cannot be tested here, classify the failure
+   `unresolved` with both commits and the premise as evidence; a third guess
+   is churn.
+3. Fix the root cause. Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and
    `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
    not count.
    **Never** weaken an assertion, skip or delete a test,
    loosen a type to `any`, or regenerate snapshots wholesale to go green.
-3. Run the targeted checks for every fix. If any fails, keep diagnosing; do not
+4. Run the targeted checks for every fix. If any fails, keep diagnosing; do not
    push an unverified repair.
-4. Commit once (`fix: resolve CI failures`, or something more specific), with
+5. Commit once (`fix: resolve CI failures`, or something more specific), with
    the trailer `Shepherd: ci-repair` and
    the repo's required trailers, and push.
 

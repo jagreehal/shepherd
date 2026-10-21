@@ -216,6 +216,21 @@ unless the PR's own change depends on the broken code.
 the commit, or the commit's message) is proof the fix did not hold. Before
 fixing again, say why it did not (it fixed a sibling path, the wrong root cause,
 or was reverted), and never resolve it as already fixed on the same evidence.
+When two `Shepherd:` commits have already tried to fix the same concern, both
+rested on a premise that is wrong: write the premise down, test it directly
+(one command, one read of the code it names), and fix only what that shows. If
+you cannot test it, defer the thread with both commits and the premise.
+
+**Bots that keep coming back.** Count each review bot's passes on this PR (its
+reviews, by head). From its third pass on, a finding that repeats a concern
+already dismissed on this PR with a reason from the code is resolved as a nit
+with that same reason, once you have checked the reason still holds on the
+current head: re-read the code it cites. A later commit can remove what made
+the concern harmless (validation, a guard, the only caller); when the reason
+no longer holds, classify the finding afresh. Re-litigating a reason that
+still holds is churn. Findings that touch security,
+auth, billing, data or migrations are the exception: defer those rather than
+dismiss them. Never change code only to quiet a bot.
 
 **Outdated threads.** GitHub marks a thread outdated when its line changed, not
 when its concern was met, so an outdated thread is never skipped. Read its

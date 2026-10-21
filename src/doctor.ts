@@ -6,7 +6,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { defaultBranchReader, defaultBranchRef, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, type Config } from "./config.ts";
 import { bundledSkills } from "./install.ts";
-import { lensProblems } from "./lens.ts";
+import { lensProblems, pluginRoots, skillDirs } from "./lens.ts";
 
 export type Check = { check: string; status: "ok" | "warn" | "fail"; detail: string; fix?: string };
 
@@ -20,15 +20,8 @@ const attempt = <T>(f: () => T): T | Error => {
   }
 };
 
-// Where a harness looks for skills: Claude Code, the shared .agents layout, Codex, OpenCode.
-const SKILL_DIRS = (home: string, repo: string) => [
-  path.join(home, ".claude/skills"),
-  path.join(repo, ".claude/skills"),
-  path.join(home, ".agents/skills"),
-  path.join(repo, ".agents/skills"),
-  path.join(home, ".codex/skills"),
-  path.join(home, ".config/opencode/skills"),
-];
+// Where a harness looks for skills: the bare-name directories, plus OpenCode's.
+const SKILL_DIRS = (home: string, repo: string) => [...skillDirs(home, repo), path.join(home, ".config/opencode/skills")];
 
 /**
  * True when a workflow runs stamp on pull requests: a step that uses stamp's action, runs its package, or
@@ -80,10 +73,20 @@ export function doctor(bundleRoot: string, home: string, repo: string, personal:
   if (read instanceof Error) add("default branch", "fail", read.message, "git fetch origin <default branch>: policy and lenses are read from it");
   else add("default branch", "ok", "fetched");
 
-  const missing = bundledSkills(path.join(bundleRoot, "skills")).filter((s) => !SKILL_DIRS(home, repo).some((d) => existsSync(path.join(d, s, "SKILL.md"))));
+  const bundled = bundledSkills(path.join(bundleRoot, "skills"));
+  const plugins = pluginRoots(home);
+  const asPlugin = plugins.get("shepherd");
+  const dirs = [...SKILL_DIRS(home, repo), ...(asPlugin ? [path.join(asPlugin, "skills")] : [])];
+  const missing = bundled.filter((s) => !dirs.some((d) => existsSync(path.join(d, s, "SKILL.md"))));
 
-  if (missing.length) add("skills", "fail", `not installed: ${missing.join(", ")}`, "bunx @jagreehal/shepherd install (or --project, or --target <your agent's skills dir>)");
-  else add("skills", "ok", "every bundled skill is installed");
+  if (missing.length) add("skills", "fail", `not installed: ${missing.join(", ")}`, "bunx @jagreehal/shepherd install (or --project, or --target <your agent's skills dir>), or install the shepherd plugin");
+  else add("skills", "ok", `every bundled skill is installed${asPlugin ? " (as a plugin)" : ""}`);
+
+  // Another plugin's skill under one of shepherd's names (pstack ships a `swarm`): Cursor does not namespace
+  // plugin skills, so `/swarm` there may load either. Shepherd's own loop loads its sub-skills by path.
+  const shared = [...plugins].filter(([name]) => name !== "shepherd").flatMap(([name, root]) => bundled.filter((s) => existsSync(path.join(root, "skills", s, "SKILL.md"))).map((s) => `${name}:${s}`));
+
+  if (shared.length) add("skill names", "warn", `other plugins ship skills under shepherd's names: ${shared.join(", ")}. /shepherd is unaffected; typed on its own, the name may load either`, "in Claude Code type the plugin prefix (/pstack:swarm); in Cursor, pick the skill from the / menu by its description");
 
   if (read instanceof Error) return checks;
 

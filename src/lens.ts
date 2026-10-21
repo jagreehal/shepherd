@@ -1,7 +1,7 @@
 // Custom lenses: any skill, wrapped by swarm as a review-only reviewer whose `## Fix` section steers
 // triage. This file reads and writes the lens files and finds skills on disk; swarm itself reads the
 // repository's file from the default branch at review time (skills/swarm/references/custom-lenses.md).
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
@@ -288,16 +288,68 @@ export function detectStacks(files: string[], read: (rel: string) => string | nu
   return lensTemplates().filter((t) => found.has(t));
 }
 
-/** The directory holding the skill's SKILL.md: a path against the repository, or a name in the usual skills directories. */
+// Claude Code's record of installed plugins, keyed `<plugin>@<marketplace>`.
+const InstallRecord = z.object({ plugins: z.record(z.string(), z.array(z.object({ installPath: z.string() }))) });
+
+// A skill an installed plugin ships, as Claude Code names it: `<plugin>:<skill>`, e.g. `pstack:principle-fix-root-causes`.
+const PLUGIN_SKILL = /^([\w.-]+):([\w.-]+)$/;
+
+const subdirs = (dir: string) => (existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(dir, d.name)) : []);
+
+/** The newest of a plugin's cached versions: harnesses keep old ones beside it until they prune. */
+const newest = (dirs: string[]) => dirs.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+
+/**
+ * Each installed plugin's root, by plugin name: Claude Code's from its install record, Cursor's from its
+ * plugin cache (`<marketplace>/<plugin>/<version>`) and local plugins. A plugin keeps its skills in `skills/`.
+ */
+export function pluginRoots(home: string): Map<string, string> {
+  const roots = new Map<string, string>();
+  const file = path.join(home, ".claude", "plugins", "installed_plugins.json");
+  const record = InstallRecord.safeParse(existsSync(file) ? parseJson(readFileSync(file, "utf8")) : null);
+
+  for (const [key, installs] of Object.entries(record.success ? record.data.plugins : {})) {
+    const root = installs.at(-1)?.installPath;
+
+    if (root) roots.set(key.split("@")[0]!, root);
+  }
+
+  const cursor = path.join(home, ".cursor", "plugins");
+
+  for (const plugin of subdirs(path.join(cursor, "cache")).flatMap(subdirs)) {
+    const root = newest(subdirs(plugin));
+
+    if (root && !roots.has(path.basename(plugin))) roots.set(path.basename(plugin), root);
+  }
+
+  for (const root of subdirs(path.join(cursor, "local"))) if (!roots.has(path.basename(root))) roots.set(path.basename(root), root);
+
+  return roots;
+}
+
+/** Where a harness looks for skills by bare name: Claude Code, the shared .agents layout, Codex, Cursor. */
+export const skillDirs = (home: string, repoRoot: string) =>
+  [".claude/skills", ".agents/skills", ".codex/skills", ".cursor/skills"].map((d) => path.join(home, d)).concat([".claude/skills", ".agents/skills", ".cursor/skills"].map((d) => path.join(repoRoot, d)));
+
+/**
+ * The directory holding the skill's SKILL.md: a pinned pack lens, a path against the repository, an
+ * installed plugin's skill (`<plugin>:<skill>`), or a name in the usual skills directories.
+ */
 export function resolveSkill(ref: string, home: string, repoRoot: string): string | null {
   const pinned = lensCache(home, ref);
 
   if (pinned) return existsSync(path.join(pinned, "SKILL.md")) ? pinned : null;
-  const expanded = ref.startsWith("~/") ? path.join(home, ref.slice(2)) : ref;
+  const plugin = PLUGIN_SKILL.exec(ref);
 
-  const candidates = expanded.includes("/")
-    ? [path.resolve(repoRoot, expanded)]
-    : [".claude/skills", ".agents/skills", ".codex/skills"].map((d) => path.join(home, d, expanded)).concat([".claude/skills", ".agents/skills"].map((d) => path.join(repoRoot, d, expanded)));
+  if (plugin) {
+    const root = pluginRoots(home).get(plugin[1]!);
+    const dir = root && path.join(root, "skills", plugin[2]!);
+
+    return dir && existsSync(path.join(dir, "SKILL.md")) ? dir : null;
+  }
+
+  const expanded = ref.startsWith("~/") ? path.join(home, ref.slice(2)) : ref;
+  const candidates = expanded.includes("/") ? [path.resolve(repoRoot, expanded)] : skillDirs(home, repoRoot).map((d) => path.join(d, expanded));
 
   return candidates.find((dir) => existsSync(path.join(dir, "SKILL.md"))) ?? null;
 }

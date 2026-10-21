@@ -249,8 +249,10 @@ jobs:
           key_env=$(jq -r '.key_env // empty' <<<"$plan")
           if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
           unset SHEPHERD_API_KEY
-          # An unset secret arrives as "": a blank key would hide the provider's other credentials.
-          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do [ -n "${!k:-}" ] || unset "$k"; done
+          # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
+          # provider's other credentials.
+          keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do { [ -n "${!k:-}" ] && [[ "$keys" == *" $k "* ]]; } || unset "$k"; done
           OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. You are running in GitHub Actions on the PR branch,

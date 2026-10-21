@@ -22,8 +22,9 @@ Each lens lives in `lenses/<name>/SKILL.md`, with a pack in `packs/<name>.yml` t
 | `observability` | Spans, trace context, structured logs, sensitive data in telemetry, alertable signals | source files in every language above |
 | `owasp-asvs` | OWASP ASVS 5.0 requirements a diff can break: injection, SSRF, access control, sessions, tokens, crypto, password storage, file handling, error leakage. Each rule cites its ASVS ids and CWE | source files in every language above; `init --stacks` adds it to every detected stack |
 | `owasp-llm` | OWASP LLM Top 10 2025, Agentic Top 10 2026 and MCP review: untrusted content in prompts, model output used as code or SQL, tool permissions, excessive agency, MCP auth | none: the router picks it; add `applies_to` for your AI directories |
+| `pstack` | pstack's engineering principles: root-cause fixes, checks at the boundary, types and structures that carry the domain, one-caller layers, legacy APIs kept beside their replacement, non-idempotent steps, tests that cannot fail, unproven claims. Gate `note`. Read [Use Shepherd with pstack](/shepherd/integrations/pstack/) | source files in every language above; not detected, add it with `lens new pstack --from pstack` |
 
-Rules tagged `[refuse]` name security or data-loss defects. The rest follow the pack's `gate`, `escalate` for every bundled pack.
+Rules tagged `[refuse]` name security or data-loss defects. The rest follow the pack's `gate`: `escalate` for every bundled pack except `pstack`, which is `note`.
 
 ## Add lenses for the stacks you use
 

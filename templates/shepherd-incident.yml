@@ -114,8 +114,10 @@ jobs:
           key_env=$(jq -r '.key_env // empty' <<<"$plan")
           if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
           unset SHEPHERD_API_KEY
-          # An unset secret arrives as "": a blank key would hide the provider's other credentials.
-          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do [ -n "${!k:-}" ] || unset "$k"; done
+          # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
+          # provider's other credentials.
+          keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
+          for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do { [ -n "${!k:-}" ] && [[ "$keys" == *" $k "* ]]; } || unset "$k"; done
           OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
           opencode run --auto -m "$model" --title "incident" "Load the incident skill and run it on the signal in $RUNNER_TEMP/signal.txt
           (a run URL, or an error or alert text).

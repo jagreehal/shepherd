@@ -502,11 +502,11 @@ describe("models in the model jobs", () => {
     const bin = path.join(dir, "bin");
 
     mkdirSync(bin);
-    const plan = JSON.stringify({ model: "amazon-bedrock/eu.amazon.nova-micro-v1:0", source: "models.loop", key_env: "AWS_BEARER_TOKEN_BEDROCK", opencode: { agent: { "shepherd-r0": { mode: "subagent", model: "opencode/deepseek-v4.1-flash-free" } } } });
+    const plan = JSON.stringify({ model: "amazon-bedrock/eu.amazon.nova-micro-v1:0", source: "models.loop", key_env: "AWS_BEARER_TOKEN_BEDROCK", key_envs: ["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"], opencode: { agent: { "shepherd-r0": { mode: "subagent", model: "opencode/deepseek-v4.1-flash-free" } } } });
 
     writeFileSync(path.join(bin, "shepherd"), `#!/bin/sh\necho '${plan}'\n`);
     // opencode reports what it was given: its model, which keys it can see, and its config.
-    writeFileSync(path.join(bin, "opencode"), `#!/bin/sh\necho "model=$4"\nenv | grep -E '^(AWS_BEARER_TOKEN_BEDROCK|OPENCODE_API_KEY|SHEPHERD_API_KEY|OPENCODE_CONFIG_CONTENT)=' | sort\n`);
+    writeFileSync(path.join(bin, "opencode"), `#!/bin/sh\necho "model=$4"\nenv | grep -E '^(AWS_BEARER_TOKEN_BEDROCK|OPENCODE_API_KEY|OPENAI_API_KEY|SHEPHERD_API_KEY|OPENCODE_CONFIG_CONTENT)=' | sort\n`);
     chmodSync(path.join(bin, "shepherd"), 0o755);
     chmodSync(path.join(bin, "opencode"), 0o755);
 
@@ -519,6 +519,11 @@ describe("models in the model jobs", () => {
     expect(one).not.toContain("SHEPHERD_API_KEY=");
     expect(one).not.toContain("OPENCODE_API_KEY="); // blank: unset
     expect(one).toContain('OPENCODE_CONFIG_CONTENT={"agent":{"shepherd-r0"');
+    // A key no model in the plan reads never reaches the model.
+    const scoped = go({ OPENCODE_API_KEY: "oc", OPENAI_API_KEY: "unused" });
+
+    expect(scoped).toContain("OPENCODE_API_KEY=oc");
+    expect(scoped).not.toContain("OPENAI_API_KEY=");
     // The provider's own secret wins over the shared one.
     expect(go({ SHEPHERD_API_KEY: "k1", AWS_BEARER_TOKEN_BEDROCK: "own" })).toContain("AWS_BEARER_TOKEN_BEDROCK=own");
     rmSync(dir, { recursive: true, force: true });
