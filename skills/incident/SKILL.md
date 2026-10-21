@@ -34,8 +34,10 @@ secrets before quoting anything, as `../diagnosing-bugs/SKILL.md` describes.
 
 - Create the `incident` label, open one issue per failure, push one branch
   `incident/<issue>` and open one PR from it. Nothing else on GitHub.
-- Every issue and PR body starts with
-  `> 🤖 Automated comment by **Shepherd incident**, not written by a human`.
+- Every issue and PR body starts with `headers.incident` from
+  `shepherd branding` (default
+  `> 🤖 Automated comment by **Shepherd incident**, not written by a human`),
+  copied exactly.
 - Never push to the default branch, merge, approve, or comment on someone
   else's thread.
 - Never weaken a test, skip one, loosen an assertion, swallow the error, raise

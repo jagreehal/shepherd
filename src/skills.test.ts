@@ -67,6 +67,22 @@ describe("skill pack", () => {
     expect(notices).toContain("Copyright (c) 2026 Matt Pocock");
   });
 
+  // Under suggest, posting is the review: the workflow posts handed-off findings only when swarm did not.
+  test("shepherd runs swarm itself, with no agent around it, and reads dot-directories through the CLI or git", () => {
+    const shepherd = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8").replace(/\s+/g, " ");
+
+    expect(shepherd).toContain("follow its steps yourself and start no agent to run it.");
+    expect(shepherd).toContain("Never glob or search for them: a glob can skip dot-directories");
+  });
+
+  test("in CI handoff mode swarm still posts, and nothing calls the statuses API with the read-only token", () => {
+    const handoff = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8").replace(/\s+/g, " ");
+
+    expect(handoff).toContain("**Swarm posts as on any PR.**");
+    expect(handoff).toContain("Never call the statuses API");
+    expect(readFileSync(path.join(SKILLS, "shepherd/references/dispatch.md"), "utf8").replace(/\s+/g, " ")).toContain("Post review comments as usual");
+  });
+
   test("every relative file a skill points at exists", () => {
     const missing: string[] = [];
 
@@ -156,9 +172,9 @@ describe("skill pack", () => {
       expect(triage).toContain("they never settle whether a finding is deliberate, out of scope, or safe to leave.");
     });
 
-    test("the verdict counts every open thread, and a large diff always gets a correctness lens", () => {
+    test("the verdict counts every open thread, and every diff gets a correctness lens in the first wave", () => {
       expect(swarm).toContain("**Verdict** from the surviving findings plus every thread still open on the PR");
-      expect(swarm).toContain("On a diff over ~400 lines the mandatory delegation is `correctness`");
+      expect(swarm).toContain("The JSON lists `correctness` on scope `full`, and every custom lens whose");
     });
 
     test("triage resolves only what is fixed and pins the behaviour it changes", () => {
@@ -176,12 +192,15 @@ describe("skill pack", () => {
     });
   });
 
-  test("swarm adds the mandatory spec and custom lenses before an empty plan can skip dispatch", () => {
+  // The first wave starts every lens that must run before the router's plan exists, so none waits on it.
+  test("swarm starts correctness, spec and the matching custom lenses with the router, before any plan can skip them", () => {
     const swarm = readFileSync(path.join(SKILLS, "swarm", "SKILL.md"), "utf8");
-    const skip = swarm.indexOf("Skip only when the plan is still empty after those additions.");
+    const wave = swarm.indexOf("Dispatch the router and every lens on that list **in one message**");
 
-    expect(skip).toBeGreaterThan(swarm.indexOf("Add a `spec` delegation"));
-    expect(skip).toBeGreaterThan(swarm.indexOf("Add a delegation for every custom lens"));
+    expect(wave).toBeGreaterThan(swarm.indexOf("shepherd fanout --base <base_sha>"));
+    expect(swarm.replace(/\s+/g, " ")).toContain("After a commit, its scopes are stale: run the command.");
+    expect(wave).toBeGreaterThan(swarm.indexOf("Add `spec`, scope `full`"));
+    expect(wave).toBeLessThan(swarm.indexOf("Skip only when the plan is still empty after those additions"));
     expect(swarm).not.toContain("Skip when the plan is empty.");
   });
 
@@ -190,11 +209,13 @@ describe("skill pack", () => {
     expect(JSON.parse(block).lenses[0]).toMatchObject({ status: "ok", findings: 0, skill_blob: "" });
   });
 
-  test("triage and shepherd read stamp's verdict heading the way stamp writes it", () => {
-    const heading = /\^## \\\\S\+ stamp: /;
-    expect(readFileSync(path.join(SKILLS, "triage", "SKILL.md"), "utf8")).toMatch(heading);
-    expect(readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8")).toMatch(heading);
-    expect("## ✅ stamp: APPROVED").toMatch(/^## \S+ stamp: /);
+  // Stamp's heading follows its branding (name, emoji); the hidden marker on every review it posts does not.
+  test("triage and shepherd find stamp's review by its hidden marker, never by its brandable heading", () => {
+    for (const name of ["triage", "shepherd", "swarm"]) {
+      const text = readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8");
+
+      expect({ name, marker: text.includes("<!-- stamp-run:"), heading: text.includes("S+ stamp: ") }).toEqual({ name, marker: true, heading: false });
+    }
   });
 });
 

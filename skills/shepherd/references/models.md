@@ -54,7 +54,7 @@ With nothing configured, use the harness's ladder:
 | Harness | Ladder, cheapest first |
 |---|---|
 | Claude Code | `haiku` -> `sonnet` -> `opus` -> `fable` |
-| OpenCode | none built in: list `opencode models` and take the operator's ladder; with none set, the session model is one rung |
+| OpenCode | none built in: take the operator's ladder; with none set, the session model is the only rung. Never pick a model from `opencode models`: a free model there is a provider the team did not choose |
 | Codex | the harness's own subagent models, cheapest first; with no per-agent model choice, one rung |
 | Anything else | whatever the agent tool accepts, cheapest first |
 

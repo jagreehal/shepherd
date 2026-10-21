@@ -4,6 +4,14 @@ title: "Compose team policy and recipes"
 
 `.shepherd/config.yml` holds a team's policy: its lenses and models, plus the checks to run, how far fixes go, what a person must decide, and named recipes. An organisation keeps a pack, and each repository extends it and overrides what it needs.
 
+`shepherd init` starts the file with a `# yaml-language-server: $schema=…` line pointing at the JSON Schema for the version that wrote it, so editors with a YAML language server (VS Code's YAML extension, JetBrains IDEs) autocomplete keys and flag a wrong one as you type. In a file you wrote by hand, add it yourself, with your shepherd version:
+
+```yaml
+# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@<version>/schema/config.json
+```
+
+`shepherd config schema` prints the same schema locally. Keep `shepherd config validate` as the check: it also resolves lenses and packs.
+
 ```yaml
 # .shepherd/config.yml
 extends:
@@ -44,10 +52,36 @@ bunx @jagreehal/shepherd config explain           # effective policy on the defa
 bunx @jagreehal/shepherd preview --recipe pr      # on your change: the full plan (see below)
 ```
 
-Run `preview --working-tree` before you merge a policy change. It lists every reviewer, built-in and custom, with the model each one runs on and where that model came from; the checks; what each step can write, locally or to GitHub; anything escalated to a person; and how the recipe finishes. A finished `review` recipe means findings were posted, not that the PR is ready. Under `local-fix` the result is fixes left uncommitted. A PR is ready only when stamp approves its head, CI is green and no review thread is open. Running `init` in a repository that has only `.shepherd/lenses.yml` carries its settings over and keeps push mode.
+Run `preview --working-tree` before you merge a policy change. It lists every reviewer, built-in and custom, with the model each one runs on and where that model came from; the checks; what each step can write, locally or to GitHub; anything escalated to a person; and how the recipe finishes. A finished `review` recipe means findings were posted, not that the PR is ready. Under `local-fix` the result is fixes left uncommitted. A PR is ready only when stamp approves its head, CI is green and no review thread is open. Running `init` in a repository that has only `.shepherd/lenses.yml` carries its settings over and starts review-only; it prints the `--preset push` command if you want to keep pushing.
 
 A lens can travel with a pinned pack: a path in the pack (`skill: lenses/payments`) names a directory in the pack's repository at the pinned commit, and shepherd fetches it into a cache keyed by that commit. [Team examples](/shepherd/configuration/examples/) show the layout, and [environment and credentials](/shepherd/reference/environment/) covers reading a private pack in CI. `config validate` and `doctor` report a lens skill they cannot find.
 
 New to shepherd? [Run your first review](/shepherd/start/quickstart/) walks through install, `doctor`, `init`, validate, preview, merging the policy and the first review.
 
 `config explain --working-tree` and `preview --working-tree` read your uncommitted edits instead of the default branch. The skills load the policy with `config explain --json` (`skills/shepherd/references/policy.md`).
+
+## Branding
+
+`branding` changes how shepherd's comments look. Leave it out and they post exactly as before.
+
+```yaml
+branding:
+  name: Acme Review              # "**Acme Review swarm**" in the header; default Shepherd
+  avatar: https://example.com/logo.png   # optional 16px image after the header prefix; https only
+  emoji:                         # any of these; the rest keep their defaults
+    critical: 🔴
+    high: 🟠
+    medium: 🟡
+    low: 🟢
+    nit: ⚪
+    blocked: 🚫
+    changes_needed: ⚠️
+    approve_with_nits: 💬
+    looks_good: ✅
+    resolved: ✅
+```
+
+- A glyph is one short token, at most 16 characters, with no spaces or markdown: garden reads a finding's severity from `**[tag]** <glyph> HIGH`.
+- `shepherd branding` prints the resolved values as JSON, escaped, from the default branch, so a PR cannot restyle its own review. The skills post with it.
+- Branding never changes what marks a comment as automated. The `🤖 Automated comment by` prefix stays, because triage, garden and stamp tell automated comments from people's by it, and the hidden `<!-- shepherd… -->` markers stay as they are.
+- **The profile picture is the posting account, not the avatar.** A comment shows the picture of whoever posted it: `github-actions[bot]` for `github.token`, the account that owns `SHEPHERD_TOKEN`, or your own account when shepherd runs locally. `avatar` only adds an image inside the comment. To change the picture itself, post as a bot account whose profile picture is your logo, or as a GitHub App (a token from an app installation posts as `<app>[bot]` with the app's logo).

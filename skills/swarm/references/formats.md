@@ -52,9 +52,9 @@ VERIFICATION:
 ```markdown
 <!-- shepherd-swarm-summary -->
 > [!NOTE]
-> 🤖 Automated comment by **Shepherd swarm**, not written by a human
+<headers.swarm from `shepherd branding`>
 
-## <emoji> <VERDICT> <sub>(round <N> @ <short_sha>)</sub>
+## <the verdict's emoji from the branding> <VERDICT> <sub>(round <N> @ <short_sha>)</sub>
 
 <one or two sentences on why>
 
@@ -68,7 +68,7 @@ VERIFICATION:
 
 ### Checks
 
-<one line per repo check that ran, with its finding count; say which were unavailable>
+<one line per repo check that ran, with its finding count; then `checks skipped: <tool> (<reason>)` for each one that did not>
 
 ### Lenses
 

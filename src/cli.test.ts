@@ -3,9 +3,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import Ajv from "ajv";
+import { ConfigSchema, configJsonSchema } from "./config.ts";
 import { runsStamp } from "./doctor.ts";
 import { pinWorkflow } from "./install.ts";
 import path from "node:path";
+import { parse, stringify } from "yaml";
 
 const CLI = path.resolve(import.meta.dir, "cli.ts");
 
@@ -184,6 +187,154 @@ describe("adoption", () => {
     expect(plan.key_envs).toEqual(["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"]);
     expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
     expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
+    expect(plan.opencode.enabled_providers).toEqual(["amazon-bedrock", "opencode"]); // the providers the team named, no others
+  });
+
+  // OpenCode's own agents and its small model choose for themselves when nothing names one. CI names one for each and
+  // enables only the plan's providers.
+  test("with only a session model, CI pins OpenCode's own agents and small model to it and enables no other provider", () => {
+    const { run, merge } = repo();
+
+    expect(run("init", "--model", "bedrock:minimax.minimax-m2.5").code).toBe(0);
+    merge();
+    const { model, opencode } = JSON.parse(run("ci-models").out);
+
+    expect(model).toBe("amazon-bedrock/minimax.minimax-m2.5");
+    expect(opencode.model).toBe(model);
+    expect(opencode.small_model).toBe(model);
+    expect(opencode.enabled_providers).toEqual(["amazon-bedrock"]);
+
+    for (const name of ["build", "plan", "general", "explore", "title", "summary", "compaction"]) expect({ name, model: opencode.agent[name]?.model }).toEqual({ name, model });
+  });
+
+  // An agent's glob can skip dot-directories such as .shepherd/. explain hands each lens its directory, taken from the
+  // default branch, and fails when a team lens is not there.
+  test("explain --json gives a repository lens the default branch's copy, never the checkout's, and fails on a missing one", () => {
+    const { dir, run, merge } = repo();
+
+    expect(run("init").code).toBe(0);
+    expect(run("lens", "new", "mine").code).toBe(0);
+    merge();
+    write(dir, { ".shepherd/lenses/mine/SKILL.md": "---\nname: mine\ndescription: rewritten by the PR\n---\n" });
+    const explained = run("config", "explain", "--json");
+    const lensPath: string = JSON.parse(explained.out).lenses.mine.path;
+
+    expect(explained.code).toBe(0);
+    expect(lensPath.startsWith(path.join(dir, ".shepherd"))).toBe(false);
+    expect(readFileSync(path.join(lensPath, "SKILL.md"), "utf8")).not.toContain("rewritten by the PR");
+
+    const config = parse(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8"));
+
+    write(dir, { ".shepherd/config.yml": stringify({ ...config, lenses: { ...config.lenses, gone: { skill: ".shepherd/lenses/gone" } } }) });
+    merge();
+    const missing = run("config", "explain", "--json");
+
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain("lens gone: skill .shepherd/lenses/gone not found on the default branch");
+  });
+
+  test("explain --json resolves a bare-name repository lens and its siblings from the default branch when the PR deletes or shadows it", () => {
+    const { dir, run, merge } = repo();
+
+    expect(run("init").code).toBe(0);
+    const config = parse(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8"));
+
+    write(dir, {
+      ".agents/skills/team-review/SKILL.md": "---\nname: team-review\ndescription: on main\n---\nSee ../shared/SKILL.md.\n",
+      ".agents/skills/shared/SKILL.md": "---\nname: shared\ndescription: a sibling the lens points at\n---\n",
+      ".shepherd/config.yml": stringify({ ...config, lenses: { ...config.lenses, team: { skill: "team-review" } } }),
+    });
+    merge();
+    rmSync(path.join(dir, ".agents/skills/team-review"), { recursive: true });
+    const explained = run("config", "explain", "--json");
+    const lensPath: string = JSON.parse(explained.out).lenses.team.path;
+
+    expect(explained.code).toBe(0);
+    expect(readFileSync(path.join(lensPath, "SKILL.md"), "utf8")).toContain("on main");
+    expect(existsSync(path.join(lensPath, "../shared/SKILL.md"))).toBe(true); // ../shared/SKILL.md from the same commit
+
+    // .claude/skills comes first in the search: a PR adding the name there must not displace the team's lens.
+    write(dir, { ".claude/skills/team-review/SKILL.md": "---\nname: team-review\ndescription: from the PR\n---\n" });
+    const shadowed = run("config", "explain", "--json");
+
+    expect(shadowed.code).toBe(0);
+    expect(readFileSync(path.join(JSON.parse(shadowed.out).lenses.team.path, "SKILL.md"), "utf8")).toContain("on main");
+  });
+
+  test("fanout lists correctness on the whole diff and each custom lens on its matching files, from the default branch", () => {
+    const { dir, run, merge } = repo();
+
+    expect(run("init").code).toBe(0);
+    expect(run("lens", "new", "robustness", "--applies", "src/**/*.ts").code).toBe(0);
+    expect(run("lens", "new", "styles", "--applies", "**/*.css").code).toBe(0);
+    merge();
+    write(dir, { "src/b.ts": "export const b = 2;\n" });
+    const out = run("fanout");
+    const { files, lenses } = JSON.parse(out.out);
+
+    expect(out.code).toBe(0);
+    expect(files).toEqual(["src/b.ts"]);
+    expect(JSON.parse(out.out).head_sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(lenses.map((l: { lens: string }) => l.lens)).toEqual(["correctness", "robustness"]);
+    expect(lenses[0]).toEqual({ lens: "correctness", scope: "full", skill: "../review-correctness/SKILL.md" });
+    expect(lenses[1].scope).toEqual(["src/b.ts"]);
+    expect(lenses[1].path.startsWith(path.join(dir, ".shepherd"))).toBe(false); // the default branch's copy
+  });
+
+  test("init points editors at the schema of the version that wrote it, and later edits keep the line", () => {
+    const { dir, run } = repo();
+    const file = path.join(dir, ".shepherd/config.yml");
+    const { version } = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8"));
+
+    expect(run("init").code).toBe(0);
+    expect(readFileSync(file, "utf8").split("\n")[0]).toBe(`# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@${version}/schema/config.json`);
+    expect(run("models", "pin", "loop", "bedrock:minimax.minimax-m2.5").code).toBe(0);
+    expect(readFileSync(file, "utf8")).toMatch(/^# yaml-language-server: \$schema=.*\n# shepherd team policy[\s\S]*loop: bedrock:minimax\.minimax-m2\.5/);
+  });
+
+  // Editors validate .shepherd/config.yml against schema/config.json: the committed file must be what the code accepts.
+  test("schema/config.json is the schema config schema prints, and covers every top-level key", () => {
+    const printed = repo().run("config", "schema").out;
+
+    expect(readFileSync(path.join(import.meta.dir, "../schema/config.json"), "utf8")).toBe(printed);
+    expect(Object.keys(JSON.parse(printed).properties)).toEqual(Object.keys(ConfigSchema.shape));
+  });
+
+  // The schema an editor reads must refuse what the CLI refuses, or a file that looks valid fails at run time.
+  test("the schema and the CLI agree on representative configs", () => {
+    const valid = new Ajv({ strict: false }).compile(configJsonSchema());
+
+    const cases: [string, unknown][] = [
+      ["a full policy", { fixes: { mode: "suggest" }, models: { loop: "bedrock:minimax.minimax-m2.5" }, ci: { label: "shepherd", max_commits: 20 }, branding: { name: "Acme", avatar: "https://acme.dev/a.png", emoji: { high: "🔥" } } }],
+      ["an http avatar", { branding: { avatar: "http://acme.dev/a.png" } }],
+      ["an https avatar with a query", { branding: { avatar: "https://acme.dev/a.png?s=64" } }],
+      ["a whitespace-only name", { branding: { name: "   " } }],
+      ["an unknown key", { fixes: { mode: "suggest", extra: true } }],
+      ["a fix mode that does not exist", { fixes: { mode: "yolo" } }],
+      ["a glyph with markup", { branding: { emoji: { high: "<b>" } } }],
+    ];
+
+    for (const [name, config] of cases) expect({ name, schema: valid(config) }).toEqual({ name, schema: ConfigSchema.safeParse(config).success });
+
+    expect(cases.flatMap(([name, c]) => (valid(c) ? [name] : []))).toEqual(["a full policy", "an https avatar with a query"]);
+  });
+
+  // URL parsing takes forms no regex matches exactly. The editor schema's avatar is a subset of the CLI's: whatever an
+  // editor passes, the CLI accepts, and the CLI keeps accepting what it always has.
+  test("an avatar the schema accepts, the CLI accepts, across hosts, ports and paths", () => {
+    const valid = new Ajv({ strict: false }).compile(configJsonSchema());
+    const cli = (avatar: string) => ConfigSchema.safeParse({ branding: { avatar } }).success;
+    const hosts = ["acme.dev", "localhost", "999.999.999.999", "1.2.3.4", "0x7f.1", "a..b", "-a.b", "a_b.c", "é.dev", "ac%20me.dev", "", "[::1]", "[:]", "u:p@acme.dev"];
+    const ports = ["", ":", ":0", ":8443", ":65535", ":65536", ":x"];
+    const paths = ["", "/a.png", "/a b", "?s=64", "#f"];
+    const urls = hosts.flatMap((h) => ports.flatMap((p) => paths.map((x) => `https://${h}${p}${x}`)));
+    const looser = urls.filter((u) => valid({ branding: { avatar: u } }) && !cli(u));
+
+    expect(urls.length).toBe(490);
+    expect(looser).toEqual([]);
+    expect(valid({ branding: { avatar: "https://acme.dev:8443/a.png?s=64" } })).toBe(true);
+
+    for (const kept of ["https://é.dev/a", "https://[::1]:8443/a", "https://u:p@acme.dev/a", "https://1.2.3.4/a"]) expect({ kept, cli: cli(kept) }).toEqual({ kept, cli: true });
   });
 
   test("presets set how far fixes go, and preview says what each step writes", () => {
@@ -204,7 +355,7 @@ describe("adoption", () => {
     expect(push.run("init", "--preset", "yolo").code).toBe(1);
   });
 
-  test("a legacy lenses.yml migrates keeping its settings and push mode, and validate wants it deleted", () => {
+  test("a legacy lenses.yml migrates keeping its settings, starts review-only with the push opt-in named, and validate wants it deleted", () => {
     const { dir, run } = repo({ ".shepherd/lenses.yml": "ladder: [haiku, sonnet]\n" });
 
     const init = run("init");
@@ -213,7 +364,8 @@ describe("adoption", () => {
     const config = readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8");
 
     expect(config).toContain("- haiku");
-    expect(config).toContain("mode: push");
+    expect(config).toContain("mode: suggest");
+    expect(init.out).toContain("shepherd init --preset push");
     expect(init.code).toBe(1);
     expect(init.out).toContain(".shepherd/lenses.yml is ignored while .shepherd/config.yml exists");
 
@@ -256,6 +408,58 @@ describe("adoption", () => {
     expect(out).toContain("kept      .github/workflows/shepherd-incident.yml (exists)");
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain(`SHEPHERD_VERSION: ${version} `);
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd-incident.yml"), "utf8")).toBe("name: mine\n");
+  });
+
+  test("workflows --upgrade rewrites a kept workflow from the template, keeping its environment and CI list, and asks for SHEPHERD_TOKEN only when fixes push", () => {
+    const { dir, run } = repo();
+    const { version } = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8"));
+    const file = path.join(dir, ".github/workflows/shepherd.yml");
+
+    expect(run("workflows", "--environment", "ai-review").out).toContain("add SHEPHERD_TOKEN as a repository secret");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, stamp\]/m, "$1[build, stamp]").replace(/SHEPHERD_VERSION: \S+/g, "SHEPHERD_VERSION: 0.0.1"));
+    expect(run("workflows").out).toContain("(exists): run `shepherd workflows --upgrade` to update it");
+
+    write(dir, { ".shepherd/config.yml": "fixes: { mode: suggest }\n" });
+    const out = run("workflows", "--upgrade").out;
+    const text = readFileSync(file, "utf8");
+
+    expect(out).toContain(`upgraded  .github/workflows/shepherd.yml to ${version} (kept environment ai-review, workflows [build, stamp])`);
+    expect(text).toContain(`SHEPHERD_VERSION: ${version} `);
+    expect(text).toContain("    environment: ai-review #");
+    expect(text).toContain("workflows: [build, stamp]");
+    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toBe("fixes: { mode: suggest }\n");
+    expect(out).not.toContain("add SHEPHERD_TOKEN");
+    expect(out).toContain("SHEPHERD_TOKEN is not needed until fixes.mode is push");
+  });
+
+  test("workflows --model names the session model in the team policy, and --environment scopes the model keys", () => {
+    const { dir, run } = repo();
+    const out = run("workflows", "--model", "bedrock:minimax.minimax-m2.5", "--environment", "ai-review", "--label", "shepherd", "--aws-region", "eu-west-1").out;
+
+    expect(out).toContain("pinned    models.loop: bedrock:minimax.minimax-m2.5 in .shepherd/config.yml");
+    expect(out).toContain("as secrets of the ai-review environment");
+    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("loop: bedrock:minimax.minimax-m2.5");
+    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("    environment: ai-review #");
+    expect(out).toContain("set       ci.label: shepherd, ci.aws_region: eu-west-1");
+    // Every setting with its source, and a secret only as set or unset.
+    const explained = run("config", "explain", "--working-tree").out;
+
+    expect(explained).toMatch(/ci\.label\s+shepherd\s+config/);
+    expect(explained).toMatch(/ci\.max_commits\s+20\s+default/);
+    expect(explained).toMatch(/SHEPHERD_TOKEN\s+(set|unset)\s+secret/);
+
+    const rerun = repo();
+
+    rerun.run("workflows");
+    expect(rerun.run("workflows", "--environment", "ai-review").out).toContain("scoped    .github/workflows/shepherd.yml to the ai-review environment");
+    expect(readFileSync(path.join(rerun.dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("    environment: ai-review #");
+    write(rerun.dir, { ".github/workflows/shepherd-incident.yml": "name: mine\n" });
+    expect(rerun.run("workflows", "--environment", "ai-review").out).toContain("shepherd-incident.yml (exists): add `environment: ai-review` to its model job by hand");
+
+    const fresh = repo();
+
+    expect(fresh.run("init", "--model", "bedrock:minimax.minimax-m2.5").out).toContain("with models.loop bedrock:minimax.minimax-m2.5");
+    expect(readFileSync(path.join(fresh.dir, ".shepherd/config.yml"), "utf8")).toMatch(/^# yaml-language-server: \$schema=.*\n# shepherd team policy[\s\S]*loop: bedrock:minimax\.minimax-m2\.5/);
   });
 
   test("pinWorkflow sets every SHEPHERD_VERSION pin in both templates, not just the first", () => {

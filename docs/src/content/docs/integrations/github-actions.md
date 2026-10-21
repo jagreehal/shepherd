@@ -5,10 +5,15 @@ title: "Run in GitHub Actions"
 `/loop` stops when your laptop sleeps. To keep the loop going without it, install the workflows:
 
 ```bash
-bunx @jagreehal/shepherd workflows    # .github/workflows/shepherd.yml and shepherd-incident.yml
+bunx @jagreehal/shepherd workflows --model bedrock:minimax.minimax-m2.5 --aws-region eu-west-1 --environment ai-review
 ```
 
-The command copies both templates into `.github/workflows`, keeps any file already there, and pins `SHEPHERD_VERSION` in each to the version that wrote it. The jobs install that CLI version on `PATH`, so later skill commands use the same release. Name your CI workflow in each file's `workflows:` list (`[ci, stamp]` in `shepherd.yml`, `[ci]` in the incident file), add the `SHEPHERD_TOKEN` and `OPENCODE_API_KEY` secrets, and merge.
+That writes the model and region to `.shepherd/config.yml`. The first run needs one secret: the model key (`SHEPHERD_API_KEY`, or the provider's own) in the `ai-review` environment. Merge the config and workflows, and shepherd reviews PRs. Add `SHEPHERD_TOKEN` when you move to `fixes.mode: push`, so pushed fixes start CI. Every other setting is in [the settings table](/shepherd/reference/environment/#settings).
+
+The command copies both templates into `.github/workflows`, keeps any file already there, and pins `SHEPHERD_VERSION` in each to the version that wrote it. The jobs install that CLI version on `PATH`, so later skill commands use the same release. Name your CI workflow in each file's `workflows:` list (`[ci, stamp]` in `shepherd.yml`, `[ci]` in the incident file), add `SHEPHERD_TOKEN` as a repository secret and the model key (`SHEPHERD_API_KEY`, or the provider's own), and merge.
+
+- **`--model`** writes the session model to `.shepherd/config.yml` as `models.loop`, so it is reviewed and versioned with the rest of the policy and read from the default branch. Without it, run `shepherd models pin loop <model>`. The `SHEPHERD_MODEL` variable overrides it when set: use it to try a model without a PR.
+- **`--environment <name>`** puts the model job alone in that GitHub environment. Store the model keys as its secrets, not repository secrets, and no other job or workflow can read them.
 
 ```mermaid
 flowchart LR
@@ -20,8 +25,9 @@ flowchart LR
     D -- failure --> Y[You act; a push or<br/>/shepherd restarts it]
 ```
 
-- An iteration starts when CI or stamp finishes on a PR from this repository, on a `/shepherd` comment from an owner, member or collaborator, when the PR gets the handoff label, or from a manual run with a `pr` input. Every 30 minutes a sweep dispatches an iteration for each open, non-draft PR from this repository whose `shepherd` status is still `pending`. With a handoff label set, it also dispatches labelled PRs shepherd has never touched.
-- **Handoff label:** set the `SHEPHERD_LABEL` variable and shepherd takes only PRs that carry it. Whatever opens PRs (a person, Claude Code, Codex, another agent or pipeline) hands one over by adding the label. A `/shepherd` comment always runs.
+- An iteration starts when CI or stamp finishes on a PR from this repository, on a `/shepherd` comment from anyone with write access, when the PR gets the handoff label, or from a manual run with a `pr` input. Every 30 minutes a sweep dispatches an iteration for each open, non-draft PR from this repository whose `shepherd` status is still `pending`. With a handoff label set, it also dispatches labelled PRs shepherd has never touched.
+- **`/shepherd` comments:** the gate asks GitHub's permission API whether the commenter can push, so a private org member or someone with access through a team counts. For one who can, it dispatches a run with `asked: true`, which queues behind any run on the PR. The handoff label works the same way. The comment's or label's own run never joins the PR's queue, so a comment from someone who cannot push, or another label, never displaces a queued run. The gate job has `actions: write` for this dispatch.
+- **Handoff label:** set `ci.label` (or `--label` here; the `SHEPHERD_LABEL` variable overrides it) and shepherd takes only PRs that carry it. Whatever opens PRs (a person, Claude Code, Codex, another agent or pipeline) hands one over by adding the label. A `/shepherd` comment always runs.
 - An iteration skips closed PRs, forks, drafts, PRs without the handoff label, PRs whose author lacks write access, a PR whose head branch is the default branch, and `incident/*` branches until a person comments `/shepherd` or adds the label. When CI or stamp finishing starts it, it also skips a head where shepherd already set `success` or `failure`. After 20 shepherd commits on the PR it sets `failure` and stops for a person.
 - The workflows run from the default branch, so a PR cannot change how it is shepherded.
 
@@ -49,7 +55,7 @@ Runs for one PR never overlap: the whole workflow, gate to publish, holds a per-
 - the commits are a fast-forward of the starting head;
 - no path the fixes changed matches `SHEPHERD_PUSH_DENY` or contains a control character. A path counts only when it differs from both the starting head and the base, so a base merge's own changes pass.
 
-A refusal sets `failure` with `fixes not pushed, a person should look:` and the reason. Otherwise it sets the status from `status.json`, keeping only a known state and one line of text; after any push the status is `pending`, because the new commits have not been reviewed. It reruns a job ci-repair asked for only when that job ran on this PR's head from a `pull_request` event. Then it runs `shepherd notify`.
+A refusal sets `failure` with `fixes not pushed, a person should look:` and the reason. If the iteration handed off `findings.md` but no swarm summary for this head reached the PR, `publish` posts it with `github.token`, which is why the job has `pull-requests: write`. It edits the swarm summary `github-actions[bot]` posted on the PR in place, keeping its round history, or posts a new comment when there is none. The file is model output: it is capped at 60,000 bytes, its HTML comments are escaped so it cannot pass for a stamp or shepherd marker, and mentions, images and control characters are neutralized. Otherwise it sets the status from `status.json`, keeping only a known state and one line of text; after any push the status is `pending`, because the new commits have not been reviewed. It reruns a job ci-repair asked for only when that job ran on this PR's head from a `pull_request` event. Then it runs `shepherd notify`.
 
 `SHEPHERD_PUSH_DENY` is an extended regex matched case-insensitively. The default refuses `.github/`, `.gitmodules`, `.gitattributes`, the `.husky`, `.githooks`, `.devcontainer` and `.vscode` directories, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `package.json`, `bunfig.toml`, other manifests (`go.mod`, `Cargo.toml`, `build.rs`, `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements*.txt`, `Gemfile`, `composer.json`, `pom.xml`, Gradle build and settings files), lockfiles by name and extension (`*.lock`, `*.lockb`, `*-lock.json`/`.yaml`/`.yml`/`.hcl`/`.toml`, `*.lock.json` and the like, `*.lockfile`, `npm-shrinkwrap.json`, `go.sum`, `Package.resolved`; source files such as `clock.ts` or `file-lock.ts` pass), makefiles, justfiles, Taskfiles, `.pre-commit-config.yaml`, `.cargo/`, `pnpm-workspace.yaml`, `Pipfile` and `deno.json(c)`. Read the exact regex in the generated template before you change this boundary.
 

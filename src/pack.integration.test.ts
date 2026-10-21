@@ -31,6 +31,8 @@ const policyWith = (ref: string): Effective => ({
   checks: {},
   fixes: { value: { mode: "suggest" }, source: "test" },
   escalate: null,
+  branding: null,
+  ci: null,
   recipes: {},
   ignored: [],
 });
@@ -79,7 +81,7 @@ describe.skipIf(!signedIn)("pinned pack lenses on GitHub", () => {
     const home = mkdtempSync(path.join(tmpdir(), "shepherd-it-"));
 
     const script = `import { fetchPackLenses, ghFetchDir } from ${JSON.stringify(path.join(import.meta.dir, "config.ts"))};
-fetchPackLenses({ tiers: {}, ladder: null, models: {}, lenses: { it: { value: { skill: ${JSON.stringify(`github:${PUBLIC}`)} }, source: "t", scope: "team" } }, checks: {}, fixes: { value: { mode: "suggest" }, source: "t" }, escalate: null, recipes: {}, ignored: [] }, ${JSON.stringify(home)}, ghFetchDir);`;
+fetchPackLenses({ tiers: {}, ladder: null, models: {}, lenses: { it: { value: { skill: ${JSON.stringify(`github:${PUBLIC}`)} }, source: "t", scope: "team" } }, checks: {}, fixes: { value: { mode: "suggest" }, source: "t" }, escalate: null, branding: null, ci: null, recipes: {}, ignored: [] }, ${JSON.stringify(home)}, ghFetchDir);`;
 
     try {
       const codes = await Promise.all(Array.from({ length: 4 }, () => new Promise<number | null>((resolve) => spawn("bun", ["-e", script], { stdio: "inherit" }).on("exit", resolve))));

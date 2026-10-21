@@ -97,12 +97,19 @@ A lens can only make shepherd stricter.
 
 ## Finding the skill
 
+Take each lens's directory from `shepherd config explain --json`
+(`lenses.<name>.path`): the CLI resolves every case below, and anything inside
+the repository from the default branch. Never search for a lens with a glob:
+an agent's glob can skip dot-directories such as `.shepherd/`. A team lens with
+a null `path` (the command exits 1 and names it) ends `could_not_run`, and the
+summary says which. Without the CLI, resolve by hand as follows.
+
 A name resolves to the first directory holding `<name>/SKILL.md`: next to the
 swarm skill (the same skills directory), then `~/.claude/skills`,
 `~/.agents/skills`, `~/.codex/skills`, then the repository's `.claude/skills`
 and `.agents/skills` read from the default branch. A path resolves against the
 repository, again from the default branch. A lens whose skill does not resolve
-is skipped and named in the summary.
+ends `could_not_run` and is named in the summary.
 
 A `github:owner/repo/<dir>@<sha>` skill came from a pinned organisation pack:
 the lens lives in the pack's repository at that commit. `shepherd config
@@ -115,9 +122,10 @@ includes the directory next to swarm when shepherd was installed with
 `--project` (`<repo>/.claude/skills`). So a candidate directory under the
 repository root, wherever it sits in the search order, resolves only from the
 default branch: check `git cat-file -e origin/<default>:<dir>/SKILL.md`, then
-extract the whole skill directory, references included, with
-`git archive origin/<default> <dir> | tar -x -C <tmp>` and hand the lens that
-copy. Never point a lens at a skill file in the PR checkout.
+extract the skill's parent directory, so its references and any
+`../<sibling>/` it names come along, with
+`git archive origin/<default> <parent> | tar -x -C <tmp>` (just `<dir>` for a
+top-level skill), and hand the lens `<tmp>/<dir>`. Never point a lens at a skill file in the PR checkout.
 
 ## When a lens runs
 

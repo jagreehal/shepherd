@@ -60,13 +60,16 @@ L0  shepherd local change                 -> fingerprint, patch_path, ranges
       shepherd local change                 -> the next round's change
 ```
 
-- Pass swarm `--local` and the ladder; pass triage `findings_path` from swarm's
+- Pass swarm `--local` (with `--base <ref>` when the developer gave one; pass
+  it to every `shepherd local` call too) and the ladder; pass triage `findings_path` from swarm's
   `local` result. Run simplify on the same gate as Step 2c, with
   `review_base_sha` set to the capture's `base_sha`.
 - **A round is clean** when swarm's `local.status` is `complete`, its checks
   ran without a failure on changed lines, triage fixed and promoted nothing,
-  and simplify changed nothing. A finding triage dismissed with a reason does
-  not block a clean round; a deferred one ends the loop for the developer,
+  and simplify changed nothing. A check the repository configures that was
+  skipped (`checks skipped: <tool> (<reason>)`) did not run, so its round is
+  not clean: report it. A finding triage dismissed with a reason does not
+  block a clean round; a deferred one ends the loop for the developer,
   after one more swarm whenever triage fixed anything that round. Never stop
   with fixes no review has seen: the report's `shepherd local status` must say
   `reviewed` for the files as they are now.
@@ -91,7 +94,15 @@ deferred finding with its options:
 When `SHEPHERD_HANDOFF` names a directory, this session holds no push
 credential: the CI workflow (`templates/shepherd.yml`) runs the model with a
 token that can comment and read but not write code, and a later job with no
-model pushes what you hand it. An iteration then differs in five places:
+model pushes what you hand it. An iteration then differs in six places:
+
+- **Swarm posts as on any PR.** Only the push credential is withheld. Swarm
+  posts its inline comments and summary with the job's token, which has
+  pull requests: write, under every fix mode. Under `suggest` posting is the
+  whole review: a run that ends with findings and nothing on the PR has failed.
+  Also write the summary body to `$SHEPHERD_HANDOFF/findings.md` with your file
+  tool. The publish job posts it only when no summary for this head reached the
+  PR, so a failed post still leaves the review on the PR.
 
 - **Commit, never push.** Commit on the PR branch as usual. Append the handoff
   addition from `references/dispatch.md` to every runner brief. After a runner,
@@ -106,8 +117,9 @@ model pushes what you hand it. An iteration then differs in five places:
   the pushed fix and resolves the thread then.
 - **Step 4 runs only when HEAD is still `H0`.** Otherwise stamp has nothing to
   judge until the push; report `pending`.
-- **Step 5 writes, the workflow posts.** Do not set the commit status or run
-  `shepherd notify`. Write `$SHEPHERD_HANDOFF/status.json` with your file tool:
+- **Step 5 writes the status for the workflow to set.** Never call the
+  statuses API or run `shepherd notify`: the job's token cannot set a status,
+  and the call fails with 403. Write `$SHEPHERD_HANDOFF/status.json` with your file tool:
   `{"state": "<success|pending|failure>", "description": "<the line>"}`, and
   each job id ci-repair wants rerun on its own line in
   `$SHEPHERD_HANDOFF/rerun-jobs.txt`. The publish job pushes your commits,
@@ -146,6 +158,11 @@ Read these once per iteration, when first needed:
 | `references/dispatch.md` | before the first sub-skill dispatch |
 | `references/degradation.md` | when something is missing or failing |
 | `references/formats.md` | at Step 5, or when unsure of narration |
+
+Read the policy with `shepherd config explain --json`, and any other file
+under `.shepherd/` or `.github/` with `git show origin/<default>:<path>` or
+`git cat-file -e`. Never glob or search for them: a glob can skip
+dot-directories and report nothing there.
 
 Also establish how commits land. Some harnesses require signed commits and
 block `git commit` / `git push` in favour of their own tool. Find out now and
@@ -218,8 +235,9 @@ gh pr view --json number,url,baseRefName,headRefOid,state,isDraft,updatedAt,labe
 Take owner/repo from `url`. Merged or closed: stop with a final summary.
 
 **Fast path.** On a re-invocation where HEAD and `updatedAt` both match the
-carried state and stamp needs nothing, check `gh pr checks` (CI changes do not
-bump `updatedAt`). Skip the iteration only if nothing fails. Narrate the skip,
+carried state and stamp needs nothing, check
+`gh pr checks <number> --json name,state,bucket,workflow` (CI changes do not
+bump `updatedAt`; `bucket` is `pass`, `fail`, `pending`, `skipping` or `cancel`). Skip the iteration only if nothing fails. Narrate the skip,
 print the state line, and hand back.
 
 **Draft.** Invoking shepherd says the PR is ready: `gh pr ready <number>`. That
@@ -276,8 +294,10 @@ changes nothing to review: when the PR's diff (`gh pr diff`) has the same
 and move `swarm_marker_sha` to HEAD. The patch id ignores the line numbers and
 blob ids a base merge shifts, and keeps whitespace. Keep each round's patch
 under the git directory so the comparison needs no fetch. Without a stored
-patch to compare, or when either id is empty, run swarm. Swarm runs **in this loop** (from `../swarm/SKILL.md`), not
-inside a runner, so its reviewer agents are not nested. Pass the PR number, the
+patch to compare, or when either id is empty, run swarm. Swarm runs **in this loop** (from `../swarm/SKILL.md`):
+follow its steps yourself and start no agent to run it. Its first wave starts
+the router and every lens in one parallel dispatch from this session; inside
+a sub-agent those reviewers nest or never start. Pass the PR number, the
 diff path, the resolved ladder and `models` pins, HEAD, and `since_sha = swarm_marker_sha` when it
 is set. Set `swarm_marker_sha = HEAD` after.
 Skipping it despite qualifying changes needs an `AskUserQuestion` confirm, in
@@ -383,8 +403,10 @@ merge, not the review.
 
 ## Step 4: stamp
 
-Skip this step with `stamp=absent` when the repo has no stamp workflow
-(`.github/workflows/stamp.yml` on the default branch).
+Skip this step with `stamp=absent` when the repo has no stamp workflow on the
+default branch. Check with `git cat-file -e
+origin/<default>:.github/workflows/stamp.yml`, never a glob or a file search:
+those can skip `.github/`, and a missed stamp reads as `absent`.
 
 Guard first:
 
@@ -405,7 +427,7 @@ call also refreshes `updatedAt` for the state line:
 
 ```bash
 gh pr view <number> --json reviewDecision,latestReviews,updatedAt \
-  --jq '{reviewDecision, updatedAt, stamp: ([.latestReviews[] | select(.body | test("^## \\S+ stamp: "))
+  --jq '{reviewDecision, updatedAt, stamp: ([.latestReviews[] | select(.body | contains("<!-- stamp-run:"))
     | {state, head: (.body | capture("stamp-reviewed:head=(?<h>[0-9a-f]+)").h // null), body: .body[:400]}][0])}'
 ```
 
@@ -437,7 +459,9 @@ get around a stamp gate.
 
 Set the `shepherd` commit status on `H2`, every iteration, so the PR shows
 where the loop got to even after this session ends. Green CI must never read
-as "done" while shepherd still has work or is waiting on the author:
+as "done" while shepherd still has work or is waiting on the author. In
+handoff mode, write `$SHEPHERD_HANDOFF/status.json` instead and skip this
+command (Handoff mode, above):
 
 ```bash
 gh api "repos/<owner>/<repo>/statuses/<H2>" -f context=shepherd \

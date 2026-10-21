@@ -10,9 +10,10 @@
 # report then becomes a public artifact.
 #
 # Secrets:   SHEPHERD_API_KEY (or the provider's own key) for the model.
-# Variables: SHEPHERD_MODEL (a model or tier; empty = the team's models.loop or top rung), AWS_REGION (Bedrock),
-#            AUDIT_PLAYS (space-separated play names; empty = the default below),
-#            AUDIT_PUBLIC (`true` to run on a public repository, publishing the report).
+# Variables: SHEPHERD_MODEL (optional override of the team's models.loop in .shepherd/config.yml, else its top rung), AWS_REGION (Bedrock),
+#            AUDIT_PLAYS (ci.audit.plays; space-separated play names; empty = the default),
+#            AUDIT_PUBLIC (ci.audit.public: `true` to run on a public repository, publishing the report).
+#            Each variable overrides its key in .shepherd/config.yml.
 name: shepherd-audit
 on:
   schedule:
@@ -20,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       plays:
-        description: Plays to run, space-separated (empty = AUDIT_PLAYS or the default)
+        description: Plays to run, space-separated (empty = ci.audit.plays, AUDIT_PLAYS, or the default)
         required: false
 
 permissions: {}
@@ -34,7 +35,30 @@ jobs:
     outputs:
       private: ${{ steps.repo.outputs.private }}
       default_branch: ${{ steps.repo.outputs.default_branch }}
+      audit_public: ${{ steps.settings.outputs.audit_public }}
+      audit_plays: ${{ steps.settings.outputs.audit_plays }}
+      aws_region: ${{ steps.settings.outputs.aws_region }}
+    env:
+      SHEPHERD_VERSION: 0.3.0 # pinned, as in audit
     steps:
+      # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || github.ref_name }}
+          sparse-checkout: .shepherd
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Settings
+        id: settings
+        env:
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AUDIT_PLAYS: ${{ vars.AUDIT_PLAYS }}
+          AUDIT_PUBLIC: ${{ vars.AUDIT_PUBLIC }}
+        run: |
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - id: repo
         shell: bash
         env:
@@ -43,8 +67,9 @@ jobs:
 
   audit:
     needs: repo
-    if: needs.repo.outputs.private == 'true' || vars.AUDIT_PUBLIC == 'true'
+    if: needs.repo.outputs.private == 'true' || needs.repo.outputs.audit_public == 'true'
     runs-on: ubuntu-latest
+    # environment: <name>   `shepherd workflows --environment <name>`: store the model keys as that environment's secrets, readable by this job only
     timeout-minutes: 60
     concurrency:
       group: shepherd-audit
@@ -54,7 +79,7 @@ jobs:
     env:
       SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
       PLAYBOOK_SHA: 65d4efd2cd0b081d52101e9708792b944e4ddebb # OWASP/secure-agent-playbook, pinned: the plays are instructions
-      PLAYS: ${{ github.event.inputs.plays || vars.AUDIT_PLAYS || 'secrets-scan sca-audit iac-security-review code-review-security' }}
+      PLAYS: ${{ github.event.inputs.plays || needs.repo.outputs.audit_plays }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,7 +123,7 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          AWS_REGION: ${{ needs.repo.outputs.aws_region }} # ci.aws_region or the AWS_REGION variable, for a bedrock: model
           SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
           SHEPHERD_DEFAULT_BRANCH: ${{ needs.repo.outputs.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md stay out of the agent's config
@@ -127,6 +152,8 @@ jobs:
           then each finding with severity, CWE, file:line and the fix. Never write a secret's value: name its type, file and
           line, and the first 4 characters at most. Nobody is watching this session: never wait for an answer."
           test -s "$RUNNER_TEMP/audit/report.md" || { echo "::error::the audit wrote no report"; exit 1; }
+          # The team's branding, from the default branch, for the report job's header.
+          shepherd branding | jq -r .headers.audit > "$RUNNER_TEMP/audit/header.md" || rm -f "$RUNNER_TEMP/audit/header.md"
       - name: Withhold a report that carries a credential
         shell: bash
         run: |
@@ -173,7 +200,11 @@ jobs:
             echo "Public repository (AUDIT_PUBLIC): the report is in the run's shepherd-audit artifact ($RUN_URL)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          body=$(printf '> 🤖 Automated comment by **Shepherd audit**, not written by a human\n\nRun: %s\n\n%s' "$RUN_URL" "$(head -c 60000 audit/report.md)")
+          # The header came out of a job a model ran in: one line with the automated prefix, or the default.
+          header='> 🤖 Automated comment by **Shepherd audit**, not written by a human'
+          custom=$(head -c 400 audit/header.md 2>/dev/null || true)
+          if [[ "$custom" == "> 🤖 Automated comment by "* && "$custom" != *$'\n'* ]]; then header=$custom; fi
+          body=$(printf '%s\n\nRun: %s\n\n%s' "$header" "$RUN_URL" "$(head -c 60000 audit/report.md)")
           gh label create shepherd-audit --repo "$REPO" --color B60205 --description "shepherd's scheduled security audit" 2>/dev/null || true
           issue=$(gh issue list --repo "$REPO" --label shepherd-audit --state open --json number --jq '.[0].number // empty')
           if [ -n "$issue" ]; then gh issue comment "$issue" --repo "$REPO" --body "$body"

@@ -16,8 +16,9 @@ degradation rules sit at the end; running a fragment runs without them.
 
 ## Starting a runner
 
-- **swarm** runs in the main loop: read `../swarm/SKILL.md` and follow it here. It starts its own
-  reviewer agents, and nesting those inside a runner costs a layer of context.
+- **swarm** runs in the main loop: read `../swarm/SKILL.md` and follow it here,
+  with no agent around it. It starts its own reviewer agents in parallel, and
+  inside a runner they nest or never start.
 - **triage**, **simplify**, and **ci-repair**: one `Agent` each at the second
   rung (see `models.md`). Tell the
   runner the skill's absolute path (`<this skill's directory>/../triage/SKILL.md`)
@@ -94,7 +95,8 @@ Append to every brief when `SHEPHERD_HANDOFF` is set (`../SKILL.md`, Handoff
 mode):
 
 > Handoff mode: this session cannot push, and a later job pushes your commits.
-> Commit, never push. Resolve no thread; the next iteration does once the fix
+> Post review comments as usual: only pushing is withheld. Never call the
+> statuses API; the workflow sets the status. Commit, never push. Resolve no thread; the next iteration does once the fix
 > is pushed. Never run `gh pr update-branch`: to update the branch, merge
 > `origin/<base>` locally and commit the merge with your trailer. Never run
 > `gh run rerun`: put the job in your `rerun` result with status `requested`.

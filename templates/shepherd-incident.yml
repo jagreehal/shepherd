@@ -17,8 +17,8 @@
 #
 # Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and stamp;
 #            with github.token the PR opens but no workflow runs on it. SHEPHERD_API_KEY (or the provider's own key) for the model.
-# Variables: SHEPHERD_MODEL (a model or tier; empty = the team's models.loop or top rung), AWS_REGION (Bedrock),
-#            INCIDENT_PATHS (extended regex; empty = ^src/).
+# Variables: SHEPHERD_MODEL (optional override of the team's models.loop in .shepherd/config.yml, else its top rung), AWS_REGION (Bedrock),
+#            INCIDENT_PATHS (ci.incident_paths in .shepherd/config.yml; the variable overrides it; empty = ^src/).
 name: shepherd-incident
 on:
   workflow_run:
@@ -42,6 +42,7 @@ jobs:
         && github.event.workflow_run.head_branch == github.event.repository.default_branch)
       || github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
+    # environment: <name>   `shepherd workflows --environment <name>`: store the model keys as that environment's secrets, readable by this job only
     timeout-minutes: 45
     # On the job, not the workflow: every green CI run starts this workflow and skips, and a workflow-level group
     # would hand that skip the one pending slot a real incident needs. One at a time, so a repeat signal dedupes.
@@ -99,7 +100,7 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          AWS_REGION: ${{ vars.AWS_REGION }} # overrides ci.aws_region, for a bedrock: model
           SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1"
@@ -109,6 +110,7 @@ jobs:
           # The team's models, from the default branch: the session model, the variable its key goes in, and the
           # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
           plan=$(shepherd ci-models)
+          AWS_REGION=$(shepherd ci-settings | jq -r .aws_region.value) && export AWS_REGION # ci.aws_region, or the variable
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
           key_env=$(jq -r '.key_env // empty' <<<"$plan")
@@ -139,11 +141,39 @@ jobs:
           path: ${{ runner.temp }}/handoff
           if-no-files-found: ignore
 
-  open:
+  # The paths a fix may change, resolved in a job with no model and no secret: the model cannot choose them.
+  settings:
     needs: investigate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      incident_paths: ${{ steps.settings.outputs.incident_paths }}
     env:
-      INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS || '^src/' }} # extended regex every changed path must match
+      SHEPHERD_VERSION: 0.3.0 # pinned, as in investigate
+    steps:
+      # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || github.ref_name }}
+          sparse-checkout: .shepherd
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Settings
+        id: settings
+        env:
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
+          INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS }}
+        run: |
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
+
+  open:
+    needs: [investigate, settings]
+    runs-on: ubuntu-latest
+    env:
+      INCIDENT_PATHS: ${{ needs.settings.outputs.incident_paths }} # extended regex every changed path must match
     permissions:
       contents: write
       pull-requests: write
@@ -176,6 +206,7 @@ jobs:
           # its own so a failure stops here instead of passing an empty list; an empty change is refused too.
           git diff -z --no-renames --name-only "origin/$DEFAULT...$branch" > ../changed
           [ -s ../changed ] || { echo "::error::$branch changes nothing"; exit 1; }
+          [ -n "$INCIDENT_PATHS" ] || { echo "::error::no INCIDENT_PATHS: an empty pattern would allow every path"; exit 1; }
           outside=$(tr '\0' '\n' < ../changed | grep -Ev -- "$INCIDENT_PATHS" || [ $? -eq 1 ])
           [ -z "$outside" ] || { echo "::error::the fix changes paths outside $INCIDENT_PATHS; a person should look:"; echo "$outside"; exit 1; }
           git push origin "$branch:refs/heads/$branch"

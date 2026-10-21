@@ -5,6 +5,7 @@
 // fill in only where the team sets none. Team files are read from the default branch, so a PR cannot change
 // the policy it is reviewed under, and a pack from another repository is pinned to a commit.
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -44,6 +45,56 @@ const FIXERS = new Set<Step>(["triage", "simplify", "ci-repair", "incident"]);
 
 const REVIEWS = new Set<Step>(["swarm", "stamp"]);
 
+/**
+ * The glyphs shepherd posts, by role, as they are today. Not here: the `🤖 Automated comment by` header prefix, which
+ * triage, garden and stamp match to tell automated comments from people's, and the hidden `<!-- shepherd… -->` markers.
+ */
+export const BRANDING = {
+  name: "Shepherd",
+  emoji: { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢", nit: "⚪", blocked: "🚫", changes_needed: "⚠️", approve_with_nits: "💬", looks_good: "✅", resolved: "✅" },
+} as const;
+
+type GlyphKey = keyof typeof BRANDING.emoji;
+
+// One short token: garden reads a severity as `**[tag]** <glyph> HIGH`, so a glyph may hold no space or markup.
+const Glyph = z.string().min(1).max(16).regex(/^[^\s<>&*_`[\]\\|]+$/, "one glyph or short token: no spaces or markdown");
+
+const Avatar = z.url({ protocol: /^https$/, error: "avatar must be an https URL" }).max(500);
+
+// The avatar's pattern in the editor schema only: the CLI keeps the URL parser. No regex matches the parser exactly,
+// so this is a subset of it: a hostname whose last label starts with a letter (never an IPv4 address the parser
+// could refuse), a port up to 65535, no spaces. An editor may flag an unusual URL the CLI takes; it never passes one
+// the CLI refuses.
+const PORT = "(?:6553[0-5]|655[0-2]\\d|65[0-4]\\d{2}|6[0-4]\\d{3}|[1-5]\\d{4}|\\d{1,4})";
+
+const AVATAR_PATTERN = `^https://(?:[A-Za-z0-9-]+\\.)*[A-Za-z][A-Za-z0-9-]*(?::${PORT})?(?:[/?#]\\S*)?$`;
+
+const BrandingSchema = z
+  .object({
+    // The regex carries the trim check into the editor schema.
+    name: z.string().regex(/\S/, "a name, not only spaces").trim().min(1).max(40).optional(),
+    avatar: Avatar.optional(),
+    // SAFETY: the keys come from BRANDING.emoji itself, each mapped to the same optional Glyph.
+    emoji: z.object(Object.fromEntries(Object.keys(BRANDING.emoji).map((k) => [k, Glyph.optional()])) as Record<GlyphKey, z.ZodOptional<typeof Glyph>>).strict().optional(),
+  })
+  .strict();
+
+// One line, so a value can never start a second GitHub Actions output when a workflow writes it.
+const Line = z.string().min(1).max(500).regex(/^[^\n\r]*$/, "one line");
+
+/** CI settings that are not secrets. Each has a repository-variable override; see CI_SETTINGS. */
+const CiSchema = z
+  .object({
+    label: Line.optional(), // only PRs carrying it are shepherded automatically
+    aws_region: Line.optional(), // for a bedrock: model
+    notify_on: z.array(z.enum(["success", "failure", "pending", "error"])).min(1).optional(),
+    max_commits: z.number().int().min(1).max(200).optional(), // shepherd commits on one PR before a person must look
+    push_deny: z.array(Line).min(1).optional(), // extended regexes ADDED to the built-in list; never replaces it
+    incident_paths: Line.optional(), // extended regex every incident-fix path must match
+    audit: z.object({ plays: z.array(z.string().regex(/^[a-z0-9-]+$/)).min(1).optional(), public: z.boolean().optional() }).strict().optional(),
+  })
+  .strict();
+
 export const ConfigSchema = z
   .object({
     extends: z.array(z.string().min(1)).optional(),
@@ -54,6 +105,8 @@ export const ConfigSchema = z
     checks: z.record(z.string().regex(NAME), z.object({ command: z.string().min(1) }).strict()).optional(),
     fixes: z.object({ mode: z.enum(["suggest", "local", "push"]) }).strict().optional(),
     escalate: z.object({ paths: z.array(z.string().min(1)).min(1), reason: z.string().min(1).optional() }).strict().optional(),
+    branding: BrandingSchema.optional(), // how posted comments look; never what marks them as automated
+    ci: CiSchema.optional(), // CI settings; a repository variable overrides each
     recipes: z.record(z.string().regex(NAME), z.object({ steps: z.array(z.enum(STEPS)).min(1) }).strict()).optional(),
   })
   .strict();
@@ -61,6 +114,21 @@ export const ConfigSchema = z
 export type Config = z.infer<typeof ConfigSchema>;
 
 export const TEAM_FILES = [".shepherd/config.yml", ".shepherd/lenses.yml"];
+
+/** `.shepherd/config.yml` as JSON Schema, for editors: generated from ConfigSchema, so the two never disagree. */
+export const configJsonSchema = () => ({
+  title: "shepherd team policy (.shepherd/config.yml)",
+  ...z.toJSONSchema(ConfigSchema, {
+    io: "input",
+    target: "draft-7",
+    override: (ctx) => {
+      if (ctx.zodSchema === Avatar) ctx.jsonSchema.pattern = AVATAR_PATTERN;
+    },
+  }),
+});
+
+/** The comment that points an editor at the schema of the version that wrote the file. */
+export const schemaLine = (version: string) => `# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@${version}/schema/config.json`;
 
 const BUILT_IN: Config = {
   lenses: {},
@@ -91,6 +159,8 @@ export type Effective = {
   checks: Record<string, Sourced<{ command: string }>>;
   fixes: Sourced<{ mode: "suggest" | "local" | "push" }>;
   escalate: Sourced<{ paths: string[]; reason?: string }> | null;
+  branding: Sourced<z.infer<typeof BrandingSchema>> | null;
+  ci: Sourced<z.infer<typeof CiSchema>> | null;
   recipes: Record<string, Sourced<{ steps: Step[] }>>;
   /** Personal settings that would change team policy, so they were not applied. */
   ignored: string[];
@@ -157,7 +227,7 @@ const pathEscapes = (rel: string) => rel.startsWith("/") || rel.split("/").inclu
 
 /** Merge layers in order: a later layer replaces a scalar and merges a map by name; a lens merges field by field. */
 function merge(layers: Layer[]): Effective {
-  const out: Effective = { tiers: {}, ladder: null, models: {}, lenses: {}, checks: {}, fixes: { value: { mode: "push" }, source: "built-in" }, escalate: null, recipes: {}, ignored: [] };
+  const out: Effective = { tiers: {}, ladder: null, models: {}, lenses: {}, checks: {}, fixes: { value: { mode: "push" }, source: "built-in" }, escalate: null, branding: null, ci: null, recipes: {}, ignored: [] };
 
   for (const { source, config } of layers) {
     const tag = <T>(value: T) => ({ value, source });
@@ -167,6 +237,17 @@ function merge(layers: Layer[]): Effective {
     if (config.fixes) out.fixes = tag(config.fixes);
 
     if (config.escalate) out.escalate = tag(config.escalate);
+
+    // A later layer sets a CI key; push_deny only ever grows, so no layer can narrow what a pack denied.
+    if (config.ci) {
+      const prev = out.ci?.value;
+      const deny = [...(prev?.push_deny ?? []), ...(config.ci.push_deny ?? [])];
+
+      out.ci = tag({ ...prev, ...config.ci, audit: { ...prev?.audit, ...config.ci.audit }, push_deny: deny.length ? deny : undefined });
+    }
+
+    // A repository can change one glyph and keep a pack's others.
+    if (config.branding) out.branding = tag({ ...out.branding?.value, ...config.branding, emoji: { ...out.branding?.value.emoji, ...config.branding.emoji } });
 
     for (const [k, v] of Object.entries(config.tiers ?? {})) out.tiers[k] = tag(v);
 
@@ -220,7 +301,7 @@ export function loadPolicy(read: Read, fetch: Fetch, personal: Config | null): E
       effective.lenses[k] ??= { value: v as Lens, source, scope: "personal" };
     }
 
-    for (const key of ["extends", "checks", "fixes", "escalate", "recipes"] as const) {
+    for (const key of ["extends", "checks", "fixes", "escalate", "recipes", "branding", "ci"] as const) {
       if (personal[key] !== undefined) effective.ignored.push(`personal ${key}: team policy, set it in ${TEAM_FILES[0]}`);
     }
   }
@@ -446,6 +527,30 @@ export function defaultBranchReader(repoRoot: string): Read {
   };
 }
 
+/**
+ * A skill directory as the default branch has it, extracted to a fresh temporary directory, or null when the
+ * branch has no SKILL.md there. A lens inside the repository must never be read from the PR checkout. Its siblings
+ * come from the same commit, so a `../other-skill/SKILL.md` reference still resolves; a top-level lens has none.
+ */
+export function defaultBranchDir(repoRoot: string, rel: string): string | null {
+  const git = gitIn(repoRoot);
+  const ref = defaultBranchRef(repoRoot);
+
+  try {
+    git("cat-file", "-e", `${ref}:${rel}/SKILL.md`);
+  } catch {
+    return null;
+  }
+
+  // A fresh directory every call, outside the repository: a cached copy is one a PR's own checks could rewrite.
+  const dest = mkdtempSync(path.join(tmpdir(), "shepherd-lens-"));
+  const scope = path.dirname(rel) === "." ? rel : path.dirname(rel); // never the whole repository
+
+  execFileSync("tar", ["-x", "-C", dest], { input: execFileSync("git", ["-C", repoRoot, "archive", ref, "--", scope], { maxBuffer: 64 * 1024 * 1024 }) });
+
+  return path.join(dest, rel);
+}
+
 /** Every file under a directory of a repository at a commit, as paths relative to that directory. */
 export type FetchDir = (owner: string, repo: string, dir: string, sha: string) => { path: string; content: string }[];
 
@@ -553,3 +658,65 @@ export const ghFetch: Fetch = (owner, repo, file, sha) => {
 
   return gh("-H", "Accept: application/vnd.github.raw", `repos/${owner}/${repo}/contents/${file}?ref=${sha}`);
 };
+
+const html = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+/**
+ * The branding skills post with, escaped for a markdown comment: `name` sits inside `**…**`, `avatar` is an `<img>`
+ * (or "") placed after the header prefix, and `headers` are the full first line per runner.
+ */
+export function branding(p: Effective) {
+  const b = p.branding?.value;
+  const name = html(b?.name ?? BRANDING.name).replaceAll(/[\\`*_[\]|]/g, "\\$&");
+  const avatar = b?.avatar ? `<img src="${html(b.avatar)}" alt="" width="16" height="16"> ` : "";
+  const header = (runner: string) => `> 🤖 Automated comment by ${avatar}**${name} ${runner}**, not written by a human`;
+
+  return { name, avatar, emoji: { ...BRANDING.emoji, ...b?.emoji }, headers: { swarm: header("swarm"), incident: header("incident"), audit: header("audit") } };
+}
+
+/**
+ * Every CI setting that is not a secret: its repository variable, its key under `ci:`, and the built-in default.
+ * `push_deny` has no default here: the built-in deny list lives in the workflow, and config only adds to it.
+ */
+export const CI_SETTINGS = {
+  label: { variable: "SHEPHERD_LABEL", default: "" },
+  aws_region: { variable: "AWS_REGION", default: "" },
+  notify_on: { variable: "SHEPHERD_NOTIFY_ON", default: "success,failure,error" },
+  max_commits: { variable: "SHEPHERD_MAX_COMMITS", default: "20" },
+  push_deny: { variable: null, default: "" },
+  incident_paths: { variable: "INCIDENT_PATHS", default: "^src/" },
+  audit_plays: { variable: "AUDIT_PLAYS", default: "secrets-scan sca-audit iac-security-review code-review-security" },
+  audit_public: { variable: "AUDIT_PUBLIC", default: "false" },
+} as const;
+
+export type CiSetting = { value: string; source: "variable" | "config" | "default"; variable: string | null };
+
+/** The one resolver: a non-blank variable, else the default branch's `ci:`, else the default. Values are one line. */
+export function ciSettings(p: Effective, env: Record<string, string | undefined>): Record<keyof typeof CI_SETTINGS, CiSetting> {
+  const ci = p.ci?.value;
+
+  const resolve = (key: keyof typeof CI_SETTINGS, configured: string | number | boolean | undefined): CiSetting => {
+    const { variable, default: fallback } = CI_SETTINGS[key];
+    const fromEnv = variable ? env[variable]?.trim() : undefined;
+    const setting: CiSetting = fromEnv ? { value: fromEnv, source: "variable", variable } : configured !== undefined ? { value: String(configured), source: "config", variable } : { value: fallback, source: "default", variable };
+
+    if (/[\n\r]/.test(setting.value)) throw new Error(`${variable ?? key}: one line only`);
+
+    // A variable skips ConfigSchema, and a cap that does not parse would let the loop run unbounded.
+    if (key === "max_commits" && !/^[1-9]\d{0,2}$/.test(setting.value)) throw new Error(`${variable}: a whole number from 1 to 999`);
+
+    return setting;
+  };
+
+  return {
+    label: resolve("label", ci?.label),
+    aws_region: resolve("aws_region", ci?.aws_region),
+    notify_on: resolve("notify_on", ci?.notify_on?.join(",")),
+    max_commits: resolve("max_commits", ci?.max_commits),
+    // One alternation, each pattern grouped so its own | cannot reach outside it.
+    push_deny: resolve("push_deny", ci?.push_deny?.map((r) => `(${r})`).join("|")),
+    incident_paths: resolve("incident_paths", ci?.incident_paths),
+    audit_plays: resolve("audit_plays", ci?.audit?.plays?.join(" ")),
+    audit_public: resolve("audit_public", ci?.audit?.public),
+  };
+}

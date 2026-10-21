@@ -353,7 +353,7 @@ one on the current head:
 
 ```bash
 gh pr view <number> --json latestReviews \
-  --jq '[.latestReviews[] | select(.body | test("^## \\S+ stamp: "))][0] | {state, body: .body[:3000]}'
+  --jq '[.latestReviews[] | select(.body | contains("<!-- stamp-run:"))][0] | {state, body: .body[:3000]}'
 ```
 
 - **REFUSED with issues:** treat each line under **Issues** as a bot thread

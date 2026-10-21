@@ -10,14 +10,18 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | --- | --- |
 | `shepherd install` | `--project`, `--target <dir>`, `--link`, `--force`; install the skill pack |
 | `shepherd uninstall` | `--project`, `--target <dir>`; remove files the installer owns |
-| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`; create repository policy, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
+| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`, `--model <id>` (the session model, as `models.loop`); create repository policy, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
 | `shepherd doctor` | `--json`; diagnose local setup and repository policy |
 | `shepherd config validate` | Validate working-tree policy and lens resolution |
-| `shepherd config explain` | `--json`, `--working-tree`; show effective values and their sources |
+| `shepherd config schema` | Print the JSON Schema of `.shepherd/config.yml`, the one `schema/config.json` ships and `shepherd init` links to |
+| `shepherd config explain` | `--json`, `--working-tree`; show effective values and their sources. `--json` gives each lens's directory as `path`, a repository lens extracted from the default branch, and exits 1 naming any team lens that resolves nowhere |
+| `shepherd ci-settings` | `--outputs`; the CI settings from repository variables, the default branch's `ci:` and the defaults, with sources. The workflows call it in a job that runs no model |
+| `shepherd branding` | `--working-tree`; the branding comments post with (name, avatar, glyphs, headers), resolved and escaped, as JSON |
 | `shepherd preview` | `--recipe <name>`, `--base <ref>`, `--working-tree`; show the plan for the change |
 | `shepherd model-id <id>` | Print a model id as OpenCode spells it: `bedrock:<id>` becomes `amazon-bedrock/<id>`, and an OpenCode id or Claude Code alias passes through. `ci-models` applies the same spelling in the workflows |
 | `shepherd stack <pr>` | Print, as JSON, the open PR this one is stacked on and the range to review (`parent_head...head`), or the long-lived branch it should target when most of its commits already sit there. Git ancestry only; the loop and swarm run it before they write the diff |
-| `shepherd workflows [--audit]` | Copy `shepherd.yml` and `shepherd-incident.yml` into `.github/workflows` (with `--audit`, also `shepherd-audit.yml`), keep files that exist, and pin `SHEPHERD_VERSION` to this CLI's version |
+| `shepherd fanout [--base <ref>] [--working-tree]` | Print the lenses swarm starts beside the router, as JSON: `correctness` on the whole diff and each custom lens whose `applies_to` matches a changed file, with its directory from the default branch. Exits 1 naming a team lens that resolves nowhere |
+| `shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]` | Copy `shepherd.yml` and `shepherd-incident.yml` into `.github/workflows` (with `--audit`, also `shepherd-audit.yml`), keep files that exist (`--upgrade` rewrites them from the current templates, keeping the model job's environment and your `workflows:` list, and stops with `update it by hand` when it cannot read them; it never touches `.shepherd/config.yml`), and pin `SHEPHERD_VERSION` to this CLI's version. `--model` pins `models.loop` in `.shepherd/config.yml`; `--environment` puts only the model job in that GitHub environment, for environment-scoped model keys, and fills the environment line in workflows you kept |
 | `shepherd lens new <name>` | `--from <template>` (react, nextjs, node-api, go, rust, java, dotnet, python, observability), repeatable `--applies <glob>`, `--description <text>`, `--model`; scaffold a lens |
 | `shepherd lens add <skill>` | `--name`, repeatable `--applies`, `--description`, `--model`, `--global`; register a skill |
 | `shepherd lens list` | List configured lenses and report problems |
@@ -57,9 +61,9 @@ See [trace scoring](/shepherd/operations/gardener-telemetry/) for telemetry cred
 | --- | --- |
 | `/shepherd 42` | Run the recipe selected by team policy on PR 42 |
 | `/shepherd 42 --recipe <name>` | Run a configured recipe |
-| `/shepherd --local` | Review and fix before a PR, with no GitHub writes |
+| `/shepherd --local [--base <ref>]` | Review and fix before a PR, with no GitHub writes; `--base` measures from that ref |
 | `/swarm 42` | Run the review swarm |
-| `/swarm --local` | Review the local change without fixes |
+| `/swarm --local [--base <ref>]` | Review the local change without fixes |
 | `/swarm --preview` | Preview lenses without posting findings |
 | `/triage 42` | Work through eligible review threads |
 | `/ci-repair 42` | Repair CI failures within the skill rules |
