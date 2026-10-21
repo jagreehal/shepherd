@@ -1,0 +1,8 @@
+# pstack's engineering principles as review rules (github.com/cursor/plugins/tree/main/pstack, MIT).
+# Extend pinned: github:jagreehal/shepherd/packs/pstack.yml@<sha>
+# For teams whose agents work through pstack's poteto-mode: reviews check the same principles.
+lenses:
+  pstack:
+    skill: lenses/pstack
+    applies_to: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.go', '**/*.rs', '**/*.java', '**/*.cs', '**/*.py']
+    gate: note

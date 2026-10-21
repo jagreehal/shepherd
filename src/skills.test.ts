@@ -272,6 +272,23 @@ describe("custom lenses", () => {
     expect(skillDescription(path.join(home, ".claude", "skills", "react-rules"))).toBe("React rules");
   });
 
+  test("finds an installed plugin's skill as <plugin>:<skill>, from Claude Code's record or Cursor's cache", () => {
+    const { home, repo, skill } = sandbox();
+    const claudeRoot = path.join(home, ".claude", "plugins", "cache", "cursor-plugins", "pstack", "0.15.29");
+    skill(path.join(claudeRoot, "skills"), "principle-fix-root-causes", "Fix root causes");
+    mkdirSync(path.join(home, ".claude", "plugins"), { recursive: true });
+    writeFileSync(path.join(home, ".claude", "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "pstack@cursor-plugins": [{ installPath: claudeRoot }] } }));
+    const cursorRoot = path.join(home, ".cursor", "plugins", "cache", "cursor-public", "team-kit", "ddf824a");
+    skill(path.join(cursorRoot, "skills"), "deslop", "Strip slop");
+    skill(path.join(home, ".cursor", "skills"), "house-style", "House style");
+
+    expect(resolveSkill("pstack:principle-fix-root-causes", home, repo)).toBe(path.join(claudeRoot, "skills", "principle-fix-root-causes"));
+    expect(resolveSkill("team-kit:deslop", home, repo)).toBe(path.join(cursorRoot, "skills", "deslop"));
+    expect(resolveSkill("house-style", home, repo)).toBe(path.join(home, ".cursor", "skills", "house-style"));
+    expect(resolveSkill("pstack:nowhere", home, repo)).toBeNull();
+    expect(resolveSkill("absent:deslop", home, repo)).toBeNull();
+  });
+
   test("adds a lens without disturbing the others", () => {
     const { repo } = sandbox();
     addLens(repoLensFile(repo), "react", { skill: "react-rules", applies_to: ["**/*.tsx"] });
@@ -323,7 +340,7 @@ describe("custom lenses", () => {
     expect(text).toMatch(/^# obs$/m);
     expect(text).toContain("- **boundary-signal**:");
     expect(lensProblems({ skill: ".shepherd/lenses/obs" }, home, repo)).toEqual([]);
-    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: dotnet, go, java, nextjs, node-api, nx-monorepo, observability, owasp-asvs, owasp-llm, python, react, rust');
+    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: dotnet, go, java, nextjs, node-api, nx-monorepo, observability, owasp-asvs, owasp-llm, pstack, python, react, rust');
   });
 
   test("validates a team lens before it runs: rules with ids, each id once", () => {

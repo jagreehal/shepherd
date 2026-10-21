@@ -271,10 +271,12 @@ it; stop at 1 and say so.
 **a. swarm, when warranted.** Run it when `swarm_marker_sha` is `null`, or
 HEAD moved and `swarm_marker_sha..HEAD` changes something besides `*.md`,
 `*.txt`, whitespace, or comments. A head reached only by merging the base
-changes nothing to review: when the PR's diff (`gh pr diff`) is byte-identical
-to the one swarm last reviewed, skip swarm and move `swarm_marker_sha` to HEAD.
-Keep each round's patch under the git directory so the comparison is a file
-compare. Without a stored patch to compare, run swarm. Swarm runs **in this loop** (via `Skill`), not
+changes nothing to review: when the PR's diff (`gh pr diff`) has the same
+`git patch-id --verbatim < <patch>` as the one swarm last reviewed, skip swarm
+and move `swarm_marker_sha` to HEAD. The patch id ignores the line numbers and
+blob ids a base merge shifts, and keeps whitespace. Keep each round's patch
+under the git directory so the comparison needs no fetch. Without a stored
+patch to compare, or when either id is empty, run swarm. Swarm runs **in this loop** (from `../swarm/SKILL.md`), not
 inside a runner, so its reviewer agents are not nested. Pass the PR number, the
 diff path, the resolved ladder and `models` pins, HEAD, and `since_sha = swarm_marker_sha` when it
 is set. Set `swarm_marker_sha = HEAD` after.

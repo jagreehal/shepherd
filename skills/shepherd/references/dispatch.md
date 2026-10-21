@@ -6,19 +6,22 @@ How shepherd finds a sub-skill, starts its runner, and briefs it.
 
 Sub-skills are installed next to this one: `../swarm/SKILL.md`,
 `../triage/SKILL.md`, `../ci-repair/SKILL.md`, `../pair/SKILL.md`, and the
-`../review-*` lenses. Prefer `Skill("<name>")` when the harness exposes it.
+`../review-*` lenses. Load each by that path, never by name: other skill packs
+ship skills under the same names (pstack has a `swarm` that fans out workers,
+not reviewers), Cursor does not namespace plugin skills, and a plugin install
+prefixes the names (`shepherd:swarm`). The path always finds shepherd's own.
 
 A skill you could only read in part is missing. Its stop conditions and
 degradation rules sit at the end; running a fragment runs without them.
 
 ## Starting a runner
 
-- **swarm** runs in the main loop through `Skill("swarm")`. It starts its own
+- **swarm** runs in the main loop: read `../swarm/SKILL.md` and follow it here. It starts its own
   reviewer agents, and nesting those inside a runner costs a layer of context.
 - **triage**, **simplify**, and **ci-repair**: one `Agent` each at the second
   rung (see `models.md`). Tell the
-  runner the skill name and let it load its own body; loading it here first pays
-  for it twice.
+  runner the skill's absolute path (`<this skill's directory>/../triage/SKILL.md`)
+  and let it load its own body; loading it here first pays for it twice.
 - **simplify**: one `Agent` that applies `../review-simplicity/SKILL.md` in fix
   mode itself: make the LOW-and-above changes the lens would report, touching
   only lines the PR changed. It never invokes another skill or starts agents of

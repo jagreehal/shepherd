@@ -1,0 +1,16 @@
+{
+  "name": "shepherd",
+  "owner": {
+    "name": "Jag Reehal"
+  },
+  "metadata": {
+    "description": "Shepherd's PR loop as a Claude Code plugin: review swarm, triage, CI repair, and the hand-off to stamp."
+  },
+  "plugins": [
+    {
+      "name": "shepherd",
+      "source": "./",
+      "description": "Drives a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp."
+    }
+  ]
+}

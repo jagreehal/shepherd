@@ -22,7 +22,13 @@ shepherd config validate
 shepherd preview --working-tree
 ```
 
-The default install targets Claude Code. For another harness, use `shepherd install --target <skills-directory>`. Commit and merge the generated review-only policy before you run it against a PR: PR reviews read policy from the default branch. Without policy, the built-in fix mode is `push`.
+Or install it as a Claude Code plugin, beside pstack or any other plugin:
+
+```text
+/plugin install shepherd --marketplace jagreehal/shepherd
+```
+
+The default `shepherd install` targets Claude Code. For another harness, use `shepherd install --target <skills-directory>`; Cursor reads the plugin manifest in `.cursor-plugin/`. Commit and merge the generated review-only policy before you run it against a PR: PR reviews read policy from the default branch. Without policy, the built-in fix mode is `push`.
 
 In your coding agent:
 
@@ -51,6 +57,7 @@ Replace `42` with your PR number. Expect findings on the PR and a `reviewed` res
 | Share organisation policy | [Team examples](docs/src/content/docs/configuration/examples.md) |
 | Add domain-specific reviewers | [Lenses](docs/src/content/docs/configuration/lenses.md) |
 | Review React, Next.js, Node, Go, Rust, Java, .NET or Python code, or import any skill as a lens | [Stack packs](docs/src/content/docs/configuration/stacks.md) |
+| Use with pstack, or any plugin's skills as lenses | [pstack](docs/src/content/docs/integrations/pstack.md) |
 | Select models by role | [Model routing](docs/src/content/docs/configuration/models.md) |
 | Run without your laptop | [GitHub Actions](docs/src/content/docs/integrations/github-actions.md) |
 | Get told when a PR needs you | [Notifications](docs/src/content/docs/integrations/notifications.md) |

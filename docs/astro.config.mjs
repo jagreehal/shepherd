@@ -93,6 +93,10 @@ export default defineConfig({
         "slug": "integrations/stamp"
       },
       {
+        "label": "Use Shepherd with pstack",
+        "slug": "integrations/pstack"
+      },
+      {
         "label": "Run in GitHub Actions",
         "slug": "integrations/github-actions"
       },

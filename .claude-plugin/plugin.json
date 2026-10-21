@@ -1,0 +1,9 @@
+{
+  "name": "shepherd",
+  "description": "Drives a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp.",
+  "author": { "name": "Jag Reehal" },
+  "homepage": "https://github.com/jagreehal/shepherd",
+  "repository": "https://github.com/jagreehal/shepherd",
+  "license": "MIT",
+  "keywords": ["code-review", "pull-request", "ci", "agents", "lenses"]
+}

@@ -19,8 +19,10 @@ agent setup or output instructions. The format is defined in
 
 ## Inputs
 
-- Source: an installed name, local path, `github:owner/repo/path@<ref>`, pasted
-  document, or collection directory. Accept several sources in one request.
+- Source: an installed name, an installed plugin's skill as `<plugin>:<skill>`
+  (`pstack:principle-fix-root-causes`), local path,
+  `github:owner/repo/path@<ref>`, pasted document, or collection directory (a
+  plugin's `skills/` directory is one). Accept several sources in one request.
 - Target: the caller's repository unless the user names another. Inspect it;
   do not infer its stack from the source skill.
 - `--name <name>`: lowercase letters, digits and dashes, starting with a
@@ -38,7 +40,7 @@ configuration, including scoped overrides. For infrastructure, prose or other
 non-package repositories, inspect their actual files and tooling. A missing
 manifest does not make a source inapplicable.
 
-Resolve installed names as `shepherd lens add` does. For a collection,
+Resolve installed names as `shepherd lens add` does: the skills directories of Claude Code, `.agents`, Codex and Cursor, and for `<plugin>:<skill>` the plugin's `skills/` directory, found through `~/.claude/plugins/installed_plugins.json` or `~/.cursor/plugins/`. For a collection,
 enumerate its `SKILL.md` files without following directory symlinks; select
 skills matching the requested target and report the rest as skipped. Keep
 sources separate unless their rules substantially overlap. Work one source

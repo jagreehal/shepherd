@@ -87,6 +87,19 @@ describe("adoption", () => {
     expect(pr).toContain("completes cannot run under this policy");
   });
 
+  test("init points a pstack user at the pstack lens, and stops once the policy has it", () => {
+    const { home, run } = repo();
+    const pstack = path.join(home, "plugins", "pstack");
+
+    write(pstack, { "skills/principle-fix-root-causes/SKILL.md": "---\nname: principle-fix-root-causes\ndescription: Fix root causes\n---\n" });
+    write(home, { ".claude/plugins/installed_plugins.json": JSON.stringify({ version: 2, plugins: { "pstack@cursor-plugins": [{ installPath: pstack }] } }) });
+
+    expect(run("init").out).toContain("pstack is installed: review against its principles with shepherd lens new pstack --from pstack");
+    expect(run("lens", "new", "pstack", "--from", "pstack").code).toBe(0);
+    expect(run("init", "--stacks").out).not.toContain("pstack is installed");
+    expect(run("lens", "add", "pstack:principle-fix-root-causes", "--name", "root-cause").out).toContain(path.join(pstack, "skills", "principle-fix-root-causes"));
+  });
+
   test("init detects the stacks a repository uses and, with --stacks, adds a lens for each that validates", () => {
     const files = { "web/package.json": JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }), "svc/go.mod": "module x\n", "api/App.csproj": "<Project />\n" };
 
@@ -168,6 +181,7 @@ describe("adoption", () => {
 
     expect(plan.model).toBe("amazon-bedrock/eu.amazon.nova-micro-v1:0");
     expect(plan.key_env).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(plan.key_envs).toEqual(["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"]);
     expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
     expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
   });

@@ -46,7 +46,7 @@ import { install, type Outcome, pinWorkflow, uninstall } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { addLens, BUILT_IN_LENSES, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
+import { addLens, BUILT_IN_LENSES, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
 
@@ -330,7 +330,11 @@ if (command === "install") {
   const { model, source } = ciModel(p, process.env.SHEPHERD_MODEL || undefined);
   const session = opencodeModel(model);
 
-  console.log(JSON.stringify({ model: session, source, key_env: providerKeyEnv(session), opencode: opencodeAgents(choice(p)) }));
+  const opencode = opencodeAgents(choice(p));
+  // Every key the plan's models read, so the workflow can drop the rest before the model runs.
+  const keyEnvs = [...new Set([session, ...Object.values(opencode.agent).map((a) => a.model)].flatMap((m) => providerKeyEnv(m) ?? []))].sort();
+
+  console.log(JSON.stringify({ model: session, source, key_env: providerKeyEnv(session), key_envs: keyEnvs, opencode }));
 } else if (command === "model-id" && sub) {
   // A model id as OpenCode spells it, so stamp's provider:model spelling works in a local OpenCode run too.
   console.log(opencodeModel(sub));
@@ -405,7 +409,10 @@ if (command === "install") {
 
   // After the file exists, so a pack named by --from counts as already providing its lenses.
   if (opts.stacks) addStackLenses(file);
-  else if (stacks.length) console.log(`detected ${stacks.join(", ")}: run shepherd init --stacks to add their lenses, or extend github:jagreehal/shepherd/packs/<stack>.yml@<sha>`);
+  else {
+    if (stacks.length) console.log(`detected ${stacks.join(", ")}: run shepherd init --stacks to add their lenses, or extend github:jagreehal/shepherd/packs/<stack>.yml@<sha>`);
+    pstackHint("pstack" in policy(true).lenses);
+  }
 
   const named = policy(true);
 
@@ -514,6 +521,12 @@ function addStackLenses(file: string): void {
   }
 
   if (!stacks.length) console.log("no stack detected");
+  pstackHint("pstack" in have);
+}
+
+/** pstack installed here: its principles are a lens away, so reviews check what its agents are told to do. */
+function pstackHint(declared: boolean): void {
+  if (!declared && pluginRoots(homedir()).has("pstack")) console.log("pstack is installed: review against its principles with shepherd lens new pstack --from pstack");
 }
 
 /** Team policy from the default branch, the source swarm reviews under, or from your working tree. */
