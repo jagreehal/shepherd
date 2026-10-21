@@ -1,5 +1,23 @@
 # @jagreehal/shepherd
 
+## 0.7.0
+
+### Minor Changes
+
+- 61e7880: CI setup in one config file, model keys scoped to the model job, and lenses that start together.
+  
+  - `ci:` in `.shepherd/config.yml` holds every non-secret CI setting (`label`, `aws_region`, `notify_on`, `max_commits`, `push_deny`, `incident_paths`, `audit.plays`, `audit.public`). A repository variable overrides its key. `shepherd ci-settings` resolves them from the default branch in a job that runs no model, and `shepherd config explain` lists each with its source.
+  - `.shepherd/config.yml` has a JSON Schema. `shepherd init` links it on the first line, so editors autocomplete and check the file; `shepherd config schema` prints it.
+  - `shepherd workflows` takes `--model`, `--label`, `--aws-region` and `--environment`. `--environment` puts only the model job in that GitHub environment, in new workflows and kept ones. `--upgrade` rewrites kept workflows from the current templates and keeps their environment and `workflows:` list.
+  - `shepherd init --model` pins `models.loop`. A migrated `lenses.yml` starts review-only.
+  - Swarm starts the router, the correctness lens and every custom lens whose `applies_to` matches in one parallel wave. `shepherd fanout` lists that wave, and in CI the workflow writes it before the model starts.
+  - `config explain --json` and `fanout` give each lens its directory from the default branch, siblings included, extracted fresh for every run.
+  - A `/shepherd` comment or the handoff label starts a run through the gate, which checks the commenter's write access with the permission API and queues the run behind any run on the PR.
+  - CI runs OpenCode's built-in agents and small model on the session model, with only the plan's providers enabled.
+  - In CI handoff mode, swarm posts its findings. When it has not, `publish` writes the handed-off findings into the bot's swarm summary.
+  - `branding:` sets the name, avatar and glyphs on posted comments. `shepherd branding` prints them resolved. Shepherd and triage find stamp's review by its hidden marker.
+  - `/swarm --local` and `/shepherd --local` take `--base <ref>`, and the summary names each check that did not run.
+
 ## 0.6.0
 
 ### Minor Changes
