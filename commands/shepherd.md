@@ -1,6 +1,6 @@
 ---
 description: Shepherd a PR to merge-ready (loop on Sonnet, reviews on their own ladder)
-argument-hint: [pr-number-or-url | --local]
+argument-hint: [pr-number-or-url | --local [--base <ref>]]
 model: sonnet
 ---
 
@@ -13,6 +13,7 @@ ladder in `shepherd/references/models.md`.
 For hands-off cadence: `/loop 5m /shepherd <pr>`.
 
 Before a PR exists: `/shepherd --local` reviews and fixes your change on this
-machine and touches nothing on GitHub.
+machine and touches nothing on GitHub. Add `--base <ref>` when the branch will
+merge into something other than the default branch.
 
 <!-- shepherd-installed -->

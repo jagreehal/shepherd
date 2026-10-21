@@ -35,21 +35,27 @@ stamp runs the same detection; see its [stacked PRs guide](https://jagreehal.git
 ```mermaid
 flowchart LR
     D[Diff] --> CK[Repo checks and installed scanners:<br/>lint, typecheck, nearby tests,<br/>gitleaks, semgrep, osv-scanner and more]
-    CK --> RT[Cheap router review]
-    RT --> L1[review-correctness]
-    RT --> L2[review-security]
-    RT --> L3[review-simplicity]
-    RT --> L4[review-maintainability]
-    RT --> L5[review-slop]
-    RT --> L6[review-spec<br/>when an issue or spec is linked]
-    RT --> LT[Your team's lenses]
-    L1 & L2 & L3 & L4 & L5 & L6 & LT --> VF{HIGH or CRITICAL?}
+    CK --> W1
+    subgraph W1[First wave, in parallel]
+      RT[Cheap router review]
+      L1[review-correctness]
+      LT[Your team's lenses<br/>on matching files]
+      L6[review-spec<br/>when an issue or spec is linked]
+    end
+    RT --> W2
+    subgraph W2[Second wave: the router's plan]
+      L2[review-security]
+      L3[review-simplicity]
+      L4[review-maintainability]
+      L5[review-slop]
+    end
+    W1 & W2 --> VF{HIGH or CRITICAL?}
     VF -- yes --> V2[Second model quotes<br/>the code or drops it]
     VF -- no --> P
     V2 --> P[Inline comments<br/>and one summary comment]
 ```
 
-The router hands risky hunks to the lenses in parallel. The lenses don't repeat what the tools already found.
+The first wave starts together: the router, correctness on the whole diff, and each team lens on the files its `applies_to` matches (`shepherd fanout` lists them). A second wave runs only when the router asks for another lens on risky hunks. The lenses don't repeat what the tools already found.
 
 ## Triage
 

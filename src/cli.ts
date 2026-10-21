@@ -11,15 +11,19 @@
 // shepherd local finish <record.json> [--base <ref>]  (check a local review against that change; complete writes a receipt)
 // shepherd local status [--base <ref>]              (is the change on disk the one a complete review covered?)
 // shepherd local demo [<dir>]                       (a repository with planted bugs to try /shepherd --local on)
-// shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks]  (scaffold .shepherd/config.yml)
+// shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks] [--model <id>]  (scaffold .shepherd/config.yml)
 // shepherd config validate                          (the working tree's policy: exits 1 on a problem)
+// shepherd config schema                            (the JSON Schema of .shepherd/config.yml, for editors)
 // shepherd config explain [--json] [--working-tree] (effective policy and where each setting came from)
+// shepherd branding [--working-tree]                (JSON: the name, avatar, glyphs and headers posted comments use)
+// shepherd ci-settings [--outputs]                  (the CI settings from variables, the default branch's ci:, defaults)
+// shepherd fanout [--base <ref>] [--working-tree]   (JSON: the lenses swarm starts beside the router, each with its scope)
 // shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]  (what would run on your change)
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
 // shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
 // shepherd stack <pr>                              (JSON: a stacked parent and the range to review, or a wrong base)
-// shepherd workflows [--audit]                     (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
+// shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]  (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
 // shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>
 // shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
 //
@@ -36,19 +40,22 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
 import { z } from "zod";
-import { CI_DEFAULT_MODEL, ciModel, type Config, ConfigSchema, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES } from "./config.ts";
+import { branding, CI_DEFAULT_MODEL, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
-import { install, type Outcome, pinWorkflow, uninstall } from "./install.ts";
+import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { addLens, BUILT_IN_LENSES, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, type Lens } from "./lens.ts";
+import { addLens, BUILT_IN_LENSES, ciOpencodeConfig, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setCi, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
+
+/** This CLI's version: workflows and the policy's schema line pin to it. */
+const bundleVersion = () => z.object({ version: z.string() }).parse(JSON.parse(readFileSync(path.join(BUNDLE_ROOT, "package.json"), "utf8"))).version;
 
 const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [--force]
        shepherd uninstall [--project | --target <dir>]
@@ -63,9 +70,13 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd local finish <record.json> [--base <ref>]
        shepherd local status [--base <ref>]
        shepherd local demo [<dir>]
-       shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks]
+       shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks] [--model <id>]
        shepherd config validate
+       shepherd config schema
        shepherd config explain [--json] [--working-tree]
+       shepherd branding [--working-tree]
+       shepherd ci-settings [--outputs]
+       shepherd fanout [--base <ref>] [--working-tree]
        shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]
        shepherd doctor [--json]
        shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...
@@ -73,7 +84,7 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
        shepherd stack <pr>
        shepherd model-id <provider:model | provider/model>
-       shepherd workflows [--audit]
+       shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]
        shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
 
 const { values: opts, positionals } = parseArgs({
@@ -87,7 +98,9 @@ const { values: opts, positionals } = parseArgs({
     applies: { type: "string", multiple: true },
     description: { type: "string" },
     global: { type: "boolean", default: false },
-    model: { type: "string" },
+    model: { type: "string" }, // lens add: the lens's model; init, workflows: the session model, written to models.loop
+    environment: { type: "string" }, // workflows: the GitHub environment whose secrets hold the model keys
+    upgrade: { type: "boolean", default: false }, // workflows: rewrite existing workflows from the current templates
     since: { type: "string" },
     file: { type: "string" }, // opencode-agents: a lenses.yml to read instead of the default branch's
     "min-prs": { type: "string", default: "3" },
@@ -103,6 +116,9 @@ const { values: opts, positionals } = parseArgs({
     recipe: { type: "string" },
     preset: { type: "string" }, // init: how far fixes go
     audit: { type: "boolean", default: false }, // workflows: also the scheduled OWASP playbook audit
+    outputs: { type: "boolean", default: false }, // ci-settings: key=value lines for $GITHUB_OUTPUT
+    label: { type: "string" }, // workflows: ci.label, the handoff label
+    "aws-region": { type: "string" }, // workflows: ci.aws_region, for a bedrock: model
     stacks: { type: "boolean", default: false }, // init: add a lens for each stack the repository uses
     pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR
     round: { type: "string" }, // trace: the quality-loop round
@@ -148,6 +164,9 @@ const orExit = <T>(run: () => T): T => {
     process.exit(1);
   }
 };
+
+// Secrets config explain shows only as set or unset.
+const SECRETS = ["SHEPHERD_TOKEN", "SHEPHERD_API_KEY", "SHEPHERD_NOTIFY_WEBHOOK", ...new Set(PROVIDER_KEY_ENVS)];
 
 const MERGE_NOTE = "shepherd reads .shepherd/ from the default branch: commit and merge it before it takes effect.";
 
@@ -330,7 +349,7 @@ if (command === "install") {
   const { model, source } = ciModel(p, process.env.SHEPHERD_MODEL || undefined);
   const session = opencodeModel(model);
 
-  const opencode = opencodeAgents(choice(p));
+  const opencode = ciOpencodeConfig(session, choice(p));
   // Every key the plan's models read, so the workflow can drop the rest before the model runs.
   const keyEnvs = [...new Set([session, ...Object.values(opencode.agent).map((a) => a.model)].flatMap((m) => providerKeyEnv(m) ?? []))].sort();
 
@@ -349,19 +368,71 @@ if (command === "install") {
   for (const name of ["shepherd.yml", "shepherd-incident.yml", ...(opts.audit ? ["shepherd-audit.yml"] : [])]) {
     const to = path.join(dest, name);
 
-    if (existsSync(to)) {
-      console.log(`kept      .github/workflows/${name} (exists)`);
+    // Pin the workflow to the version that wrote it, so its skills match this CLI.
+    const version = bundleVersion();
+
+    if (existsSync(to) && opts.upgrade) {
+      const upgraded = orExit(() => upgradeWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), readFileSync(to, "utf8"), version, opts.environment));
+
+      writeFileSync(to, upgraded.text);
+      console.log(`upgraded  .github/workflows/${name} to ${version}${upgraded.kept.length ? ` (kept ${upgraded.kept.join(", ")})` : ""}`);
       continue;
     }
 
-    // Pin the workflow to the version that wrote it, so its skills match this CLI.
-    const version = z.object({ version: z.string() }).parse(JSON.parse(readFileSync(path.join(BUNDLE_ROOT, "package.json"), "utf8"))).version;
+    if (existsSync(to)) {
+      const kept = readFileSync(to, "utf8");
+      const scoped = opts.environment ? orExit(() => environmentWorkflow(kept, opts.environment!)) : kept;
 
-    writeFileSync(to, pinWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), version));
+      // --environment on a rerun still scopes the model job: fill the template's placeholder, or say what to change.
+      if (scoped !== kept) {
+        writeFileSync(to, scoped);
+        console.log(`scoped    .github/workflows/${name} to the ${opts.environment} environment`);
+      } else if (opts.environment && !kept.includes(`environment: ${opts.environment}`)) {
+        console.log(`kept      .github/workflows/${name} (exists): add \`environment: ${opts.environment}\` to its model job by hand`);
+      } else console.log(`kept      .github/workflows/${name} (exists): run \`shepherd workflows --upgrade\` to update it`);
+
+      continue;
+    }
+
+    const text = pinWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), version);
+
+    writeFileSync(to, opts.environment ? orExit(() => environmentWorkflow(text, opts.environment!)) : text);
     console.log(`wrote     .github/workflows/${name}`);
   }
 
-  console.log("\nNext: name your CI workflow in each file's `workflows:` list, add the SHEPHERD_TOKEN and OPENCODE_API_KEY secrets, then merge.\nOptional: SHEPHERD_LABEL (handoff label), SHEPHERD_NOTIFY_WEBHOOK (Slack or any JSON endpoint).");
+  // Settings go in the team policy, reviewed and versioned, rather than in repository variables.
+  if (opts.model) {
+    orExit(() => pinModel(repoLensFile(repoRoot), "loop", opts.model!));
+    console.log(`pinned    models.loop: ${opts.model} in ${path.relative(repoRoot, repoLensFile(repoRoot))}`);
+  }
+
+  const ci: Record<string, string> = {};
+
+  if (opts.label) ci.label = opts.label;
+
+  if (opts["aws-region"]) ci.aws_region = opts["aws-region"];
+
+  if (Object.keys(ci).length) {
+    orExit(() => setCi(repoLensFile(repoRoot), ci));
+    console.log(`set       ${Object.entries(ci).map(([k, v]) => `ci.${k}: ${v}`).join(", ")} in ${path.relative(repoRoot, repoLensFile(repoRoot))}`);
+  }
+
+  const keys = opts.environment ? `as secrets of the ${opts.environment} environment (only the model job reads them)` : "as repository secrets (or rerun with --environment <name> so only the model job can read them)";
+  const model = opts.model ? "" : "Name the session model in .shepherd/config.yml: shepherd models pin loop <model> (or rerun with --model). The SHEPHERD_MODEL variable overrides it when set.\n";
+
+  // SHEPHERD_TOKEN only pushes fixes: ask for it only when the policy pushes.
+  const pushes = (() => {
+    try {
+      return loadPolicy(workingTree, ghFetch, null).fixes.value.mode === "push";
+    } catch {
+      return true; // a policy that does not load yet: name the token rather than leave it out
+    }
+  })();
+
+  const token = pushes ? "add SHEPHERD_TOKEN as a repository secret and " : "";
+  const later = pushes ? "" : "SHEPHERD_TOKEN is not needed until fixes.mode is push.\n";
+
+  console.log(`\nNext: name your CI workflow in each file's \`workflows:\` list, ${token}add the model key (SHEPHERD_API_KEY, or the provider's own) ${keys}, then merge.\n${later}${model}Other settings (label, aws_region, notify_on, push_deny...) go under ci: in .shepherd/config.yml; shepherd config explain lists them. Optional secret: SHEPHERD_NOTIFY_WEBHOOK (Slack or any JSON endpoint).`);
 } else if (command === "notify") {
   const pr = Number(opts.pr);
   const state = STATES.find((s) => s === opts.state);
@@ -375,7 +446,16 @@ if (command === "install") {
   const url = `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${opts.repo}/pull/${pr}`;
   const event = { event: "shepherd.state" as const, repo: opts.repo ?? "", pr, url, head_sha: opts.head ?? "", state: state ?? "pending", description };
 
-  console.log(`notify: ${await notify(process.env.SHEPHERD_NOTIFY_WEBHOOK, event, notifyOn(process.env.SHEPHERD_NOTIFY_ON), [fileLedger(repoRoot, pr), statusLedger(opts.repo ?? "", opts.head ?? "", repoRoot)])}`);
+  // The variable, then ci.notify_on from the default branch, then the default: the same resolver CI uses.
+  const on = (() => {
+    try {
+      return ciSettings(loadPolicy(defaultBranchReader(repoRoot), ghFetch, null), process.env).notify_on.value;
+    } catch {
+      return process.env.SHEPHERD_NOTIFY_ON; // no default branch to read (a bare checkout): the variable alone
+    }
+  })();
+
+  console.log(`notify: ${await notify(process.env.SHEPHERD_NOTIFY_WEBHOOK, event, notifyOn(on), [fileLedger(repoRoot, pr), statusLedger(opts.repo ?? "", opts.head ?? "", repoRoot)])}`);
 } else if (command === "init") {
   const file = path.join(repoRoot, TEAM_FILES[0]!);
 
@@ -390,8 +470,9 @@ if (command === "install") {
   if (existsSync(file)) orExit(() => { throw new Error(`${TEAM_FILES[0]} already exists; edit it, add stack lenses with shepherd init --stacks, then run shepherd config validate`); });
   const legacy = workingTree(TEAM_FILES[1]!);
   const seed = legacy ? orExit(() => ConfigSchema.parse(parseYaml(legacy) ?? {})) : { lenses: {} };
-  // A new repository starts review-only. A migration keeps pushing, as it did, and says so in the file; a pack keeps the pack's mode.
-  const preset = opts.preset ?? (opts.from || seed.fixes ? undefined : legacy ? "push" : "review-only");
+  // Every repository starts review-only, a migration too: push needs SHEPHERD_TOKEN and lets the bot push, so it is
+  // opted into, never inherited. A pack or a legacy fixes: keeps its mode.
+  const preset = opts.preset ?? (opts.from || seed.fixes ? undefined : "review-only");
 
   const mode = Object.entries(PRESETS).find(([name]) => name === preset)?.[1];
 
@@ -401,11 +482,15 @@ if (command === "install") {
   if (opts.from) config.extends = [opts.from, ...(seed.extends ?? [])];
 
   if (mode) config.fixes = { mode };
+
+  if (opts.model) config.models = { ...config.models, loop: opts.model }; // the session model, in the reviewed policy
   const stacks = detectStacks(trackedFiles(), workingTree);
 
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.\n${stringify(config)}`);
-  console.log(`wrote ${TEAM_FILES[0]}${preset ? ` (preset ${preset})` : ""}${legacy ? ` from ${TEAM_FILES[1]} (delete it: ${TEAM_FILES[0]} now wins)` : ""}`);
+  writeFileSync(file, `${schemaLine(bundleVersion())}\n# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.\n${stringify(config)}`);
+  console.log(`wrote ${TEAM_FILES[0]}${preset ? ` (preset ${preset})` : ""}${opts.model ? ` with models.loop ${opts.model}` : ""}${legacy ? ` from ${TEAM_FILES[1]} (delete it: ${TEAM_FILES[0]} now wins)` : ""}`);
+
+  if (legacy && !opts.preset && !seed.fixes) console.log(`${TEAM_FILES[1]} pushed fixes; this policy starts review-only. To keep pushing: rm ${TEAM_FILES[0]} && shepherd init --preset push`);
 
   // After the file exists, so a pack named by --from counts as already providing its lenses.
   if (opts.stacks) addStackLenses(file);
@@ -422,14 +507,52 @@ if (command === "install") {
 
   validate();
   console.log(`\nBefore you merge it:\n  shepherd config explain --working-tree   every setting and where it came from\n  shepherd preview --working-tree          what would run on your change, and what it can write\n${MERGE_NOTE}`);
+} else if (command === "config" && sub === "schema") {
+  // The JSON Schema editors validate .shepherd/config.yml against; schema/config.json is this output.
+  console.log(JSON.stringify(configJsonSchema(), null, 2));
 } else if (command === "config" && sub === "validate") {
   validate();
 } else if (command === "config" && sub === "explain") {
   const p = policy(opts["working-tree"]);
 
-  // Each lens's skill directory on disk, for the skills: a pinned pack lens is read from its cached copy.
-  if (opts.json) console.log(JSON.stringify({ ...p, lenses: Object.fromEntries(Object.entries(p.lenses).map(([k, l]) => [k, { ...l, path: resolveSkill(l.value.skill, homedir(), repoRoot) }])) }, null, 2));
-  else explain(p);
+  // Each lens's skill directory on disk, for the skills, so none has to search for it (an agent's glob can skip
+  // dot-directories such as .shepherd/): a pinned pack lens from its cached copy, a lens inside the repository from the
+  // default branch, never the PR checkout. A team lens that resolves nowhere fails the command.
+  if (opts.json) {
+    const lenses = Object.fromEntries(Object.entries(p.lenses).map(([k, l]) => [k, { ...l, path: lensDir(l.value.skill) }]));
+    const missing = Object.entries(lenses).filter(([, l]) => !l.path && l.scope !== "personal").map(([k, l]) => `lens ${k}: skill ${l.value.skill} not found${opts["working-tree"] ? "" : " on the default branch"}`);
+
+    console.log(JSON.stringify({ ...p, lenses }, null, 2));
+
+    for (const m of missing) console.error(m);
+
+    if (missing.length) process.exitCode = 1;
+  } else explain(p);
+} else if (command === "ci-settings") {
+  // A job that runs no model resolves these from the default branch, so neither the PR nor the model picks them.
+  const settings = orExit(() => ciSettings(loadPolicy(orExit(() => defaultBranchReader(repoRoot)), ghFetch, null), process.env));
+
+  if (opts.outputs) for (const [k, v] of Object.entries(settings)) console.log(`${k}=${v.value}`);
+  else console.log(JSON.stringify(settings, null, 2));
+} else if (command === "branding") {
+  // From the default branch, like the rest of the policy: a PR cannot restyle how its own review is posted.
+  console.log(JSON.stringify(branding(policy(opts["working-tree"])), null, 2));
+} else if (command === "fanout") {
+  // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
+  // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
+  const p = policy(opts["working-tree"]);
+  const change = orExit(() => captureChange(repoRoot, opts.base));
+  const custom = preview(p, change.files).lenses.flatMap((l) => (l.files.length ? [{ lens: l.name, scope: l.files, path: lensDir(p.lenses[l.name]!.value.skill), personal: l.scope === "personal" }] : []));
+
+  const lenses = [{ lens: "correctness", scope: "full" as const, skill: "../review-correctness/SKILL.md" }, ...custom];
+
+  const missing = custom.flatMap((l) => (!l.path && !l.personal ? [`lens ${l.lens}: not found${opts["working-tree"] ? "" : " on the default branch"}`] : []));
+
+  console.log(JSON.stringify({ base_sha: change.base_sha, head_sha: change.head_sha, files: change.files, lenses }, null, 2));
+
+  for (const m of missing) console.error(m);
+
+  if (missing.length) process.exitCode = 1;
 } else if (command === "preview") {
   const p = policy(opts["working-tree"]);
   const change = orExit(() => captureChange(repoRoot, opts.base));
@@ -540,6 +663,31 @@ function policy(fromTree: boolean) {
   return p;
 }
 
+/** A lens's skill directory: inside the repository, the default branch's copy unless --working-tree asks for yours. */
+function lensDir(skill: string): string | null {
+  const inRepo = (rel: string) => !rel.startsWith("..") && !path.isAbsolute(rel);
+
+  // A bare name walks the skills directories in order, the repository's as the default branch has them: a PR can
+  // neither delete the team's lens nor shadow it with one of its own.
+  if (!opts["working-tree"] && !/[/:]/.test(skill)) {
+    for (const d of skillDirs(homedir(), repoRoot)) {
+      const rel = path.relative(repoRoot, d);
+      const found = inRepo(rel) ? orExit(() => defaultBranchDir(repoRoot, path.join(rel, skill))) : existsSync(path.join(d, skill, "SKILL.md")) ? path.join(d, skill) : null;
+
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  const dir = resolveSkill(skill, homedir(), repoRoot);
+  const rel = dir ? path.relative(repoRoot, dir) : /^[^~/][^:]*\//.test(skill) ? path.normalize(skill) : null; // a repository path the checkout may lack
+
+  if (opts["working-tree"] || rel === null || !inRepo(rel)) return dir;
+
+  return orExit(() => defaultBranchDir(repoRoot, rel));
+}
+
 function choice(p: Effective) {
   return { ladder: p.ladder?.value ?? null, models: Object.fromEntries(Object.entries(p.models).map(([k, v]) => [k, v.value])) };
 }
@@ -581,6 +729,11 @@ function explain(p: Effective & { teamFile: string | null }): void {
   if (p.escalate) row("escalate.paths", p.escalate.value.paths.join(", "), p.escalate.source);
 
   for (const [k, v] of Object.entries(p.recipes)) row(`recipes.${k}`, v.value.steps.join(" > "), v.source);
+
+  // CI settings with where each came from; secrets only as set or unset, from this shell's environment.
+  for (const [k, v] of Object.entries(ciSettings(p, process.env))) row(`ci.${k}`, v.value || "(none)", v.source === "variable" ? `variable ${v.variable}` : v.source);
+
+  for (const name of SECRETS) row(name, process.env[name] ? "set" : "unset", "secret");
 
   for (const m of p.ignored) console.log(`\nignored: ${m}`);
 }

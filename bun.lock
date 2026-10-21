@@ -13,6 +13,7 @@
         "@changesets/cli": "^3.0.3",
         "@oxlint/plugins": "1.88.0",
         "@types/bun": "^1.4.3",
+        "ajv": "8.20.0",
         "executable-stories-bun": "^0.1.0",
         "executable-stories-formatters": "^1.27.0",
         "oxlint": "1.88.0",

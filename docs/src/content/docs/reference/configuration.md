@@ -23,6 +23,17 @@ Set repository policy in `.shepherd/config.yml`. The schema rejects unknown fiel
 | `fixes.mode` | `suggest`, `local`, or `push`; built-in `push` | Limit code changes, commits, pushes and resolutions |
 | `escalate.paths` | Non-empty list of globs; absent | Reserve changes to matching files for a person |
 | `escalate.reason` | Non-empty string; `team policy: a person changes <path>` | Explain why the agent deferred a change |
+| `ci.label` | String; absent | Handoff label: shepherd takes only PRs carrying it. `SHEPHERD_LABEL` overrides |
+| `ci.aws_region` | String; absent | Bedrock region for a `bedrock:` model. `AWS_REGION` overrides |
+| `ci.notify_on` | List of `success`, `failure`, `pending`, `error`; all but `pending` | States that notify. `SHEPHERD_NOTIFY_ON` overrides |
+| `ci.max_commits` | Integer 1 to 200; `20` | Shepherd commits on one PR before it stops for a person. `SHEPHERD_MAX_COMMITS` overrides |
+| `ci.push_deny` | Non-empty list of extended regexes; absent | Paths a CI fix may not touch, **added** to the built-in list and to every pack's; never narrows it |
+| `ci.incident_paths` | Extended regex; `^src/` | Every path an incident fix changes must match. `INCIDENT_PATHS` overrides |
+| `ci.audit.plays` | List of play names; the four default plays | Plays the scheduled audit runs. `AUDIT_PLAYS` overrides |
+| `ci.audit.public` | Boolean; `false` | Run the audit on a public repository, publishing its report. `AUDIT_PUBLIC` overrides |
+| `branding.name` | String up to 40 characters; `Shepherd` | The name in posted headers (`**<name> swarm**`), escaped |
+| `branding.avatar` | `https` URL; absent | A 16px image after the header prefix. The comment's profile picture is still the posting account's ([branding](/shepherd/configuration/team-policy/#branding)) |
+| `branding.emoji.<key>` | One token up to 16 characters, no spaces or markdown; today's glyphs | `critical`, `high`, `medium`, `low`, `nit`, `blocked`, `changes_needed`, `approve_with_nits`, `looks_good`, `resolved` |
 | `recipes` | Map of names to `{ steps: [...] }`; built-in recipes | Compose supported stages in a named order |
 
 Map keys for models, lenses, checks and recipes use lower-case names beginning with a letter, followed by letters, digits or hyphens. Model IDs pass to your harness as written; a Claude Code alias and an OpenCode `provider/model` ID are not interchangeable. `opencode-agents` also accepts stamp's canonical `provider:model` IDs and writes them the OpenCode way, so `bedrock:<id>` becomes `amazon-bedrock/<id>`.

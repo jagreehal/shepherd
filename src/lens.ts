@@ -49,6 +49,26 @@ export function opencodeAgents(choice: { ladder: string[] | null; models: Record
   };
 }
 
+// OpenCode's own agents, which pick a model of their own when nothing names one (on Bedrock, a `global.` profile that
+// can leave the region).
+const OPENCODE_BUILT_INS = ["build", "plan", "general", "explore", "title", "summary", "compaction"];
+
+/**
+ * OpenCode's config for a CI run: shepherd's agents, every built-in agent and the small model on the session model, and
+ * only the providers the plan names enabled. PR content never reaches a provider or model the team did not choose.
+ */
+export function ciOpencodeConfig(session: string, choice: { ladder: string[] | null; models: Record<string, string> }) {
+  const { agent } = opencodeAgents(choice);
+  const models = [session, ...Object.values(agent).map((a) => a.model)];
+
+  return {
+    model: session,
+    small_model: session,
+    enabled_providers: [...new Set(models.map((m) => m.split("/")[0]!))].sort(),
+    agent: { ...Object.fromEntries(OPENCODE_BUILT_INS.map((name) => [name, { model: session }])), ...agent },
+  };
+}
+
 // stamp's `provider:model` names where OpenCode's provider id differs; every other provider keeps its name.
 const OPENCODE_PROVIDER = new Map([["bedrock", "amazon-bedrock"], ["vertex", "google-vertex"]]);
 
@@ -69,6 +89,13 @@ export function pinModel(file: string, name: string, model: string): void {
   const current = readFile(file);
 
   write(file, { ...current, models: { ...current.models, [name]: ModelId.parse(model) } });
+}
+
+/** Set CI settings under `ci:`, keeping everything else in the file. ConfigSchema checks them as it reads them back. */
+export function setCi(file: string, values: Record<string, string>): void {
+  const current = readFile(file);
+
+  write(file, ConfigSchema.parse({ ...current, ci: { ...current.ci, ...values } }));
 }
 
 /** Name a model: `tier` becomes usable in the ladder and in pins, and swapping its model swaps it everywhere. */
@@ -95,6 +122,8 @@ const PROVIDER_KEY_ENV = new Map([
   ["amazon-bedrock", "AWS_BEARER_TOKEN_BEDROCK"],
 ]);
 
+export const PROVIDER_KEY_ENVS = [...PROVIDER_KEY_ENV.values()];
+
 /** The key variable for an OpenCode model id's provider, or null when shepherd does not know it. */
 export const providerKeyEnv = (opencodeId: string): string | null => PROVIDER_KEY_ENV.get(opencodeId.split("/")[0]!) ?? null;
 
@@ -104,8 +133,11 @@ export function setLadder(file: string, ladder: string[]): void {
 }
 
 function write(file: string, contents: LensFile): void {
+  // The file's leading comments, the editor's $schema line among them, survive every edit.
+  const head = existsSync(file) ? (/^(?:#.*\n)*/.exec(readFileSync(file, "utf8"))?.[0] ?? "") : "";
+
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, stringify(contents));
+  writeFileSync(file, head + stringify(contents));
 }
 
 /** Add or replace one lens, keeping every other entry in the file. */

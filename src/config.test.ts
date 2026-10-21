@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ciModel, type Fetch, type FetchDir, fetchPackLenses, modelPlan, lensCache, loadPolicy, policyProblems, preview, type Read, recipeProblems } from "./config.ts";
+import { branding, ciModel, ciSettings, type Fetch, type FetchDir, fetchPackLenses, modelPlan, lensCache, loadPolicy, policyProblems, preview, type Read, recipeProblems } from "./config.ts";
 import { lensProblems, resolveSkill } from "./lens.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -309,5 +309,54 @@ describe("model tiers and role groups", () => {
     expect(ciModel(p, undefined).source).toStartWith("models.loop");
     expect(ciModel(loadPolicy(files({ ".shepherd/config.yml": "ladder: [a, b]\n" }), noFetch, null), undefined)).toEqual({ model: "b", source: "top of the ladder, .shepherd/config.yml" });
     expect(ciModel(loadPolicy(files({}), noFetch, null), undefined).source).toStartWith("default: name one with SHEPHERD_MODEL");
+  });
+});
+
+// Most comments are written by a model from the skill text, so the CLI resolves and escapes the branding for it.
+test("branding: no block posts exactly as before; custom values are merged, escaped, and validated", () => {
+  const load = (yml: string) => loadPolicy(files({ ".shepherd/config.yml": yml }), noFetch, null);
+  const plain = branding(load("lenses: {}\n"));
+
+  expect(plain.headers.swarm).toBe("> 🤖 Automated comment by **Shepherd swarm**, not written by a human");
+  expect(plain.emoji).toEqual({ critical: "🔴", high: "🟠", medium: "🟡", low: "🟢", nit: "⚪", blocked: "🚫", changes_needed: "⚠️", approve_with_nits: "💬", looks_good: "✅", resolved: "✅" });
+
+  const custom = branding(load('branding:\n  name: "Acme <b>*Bot*</b>"\n  avatar: "https://x.test/a.png?v=1&s=\\"y"\n  emoji: { low: "🔵" }\n'));
+
+  expect(custom.headers.swarm).toBe('> 🤖 Automated comment by <img src="https://x.test/a.png?v=1&amp;s=&quot;y" alt="" width="16" height="16"> **Acme &lt;b&gt;\\*Bot\\*&lt;/b&gt; swarm**, not written by a human');
+  expect(custom.emoji.low).toBe("🔵");
+  expect(custom.emoji.high).toBe("🟠");
+  expect(() => load("branding:\n  avatar: http://x.test/a.png\n")).toThrow("https");
+  expect(() => load("branding:\n  emoji: { high: \"a b\" }\n")).toThrow();
+  expect(() => load(`branding:\n  emoji: { high: "${"x".repeat(17)}" }\n`)).toThrow();
+});
+
+describe("CI settings", () => {
+  const load = (map: Record<string, string>) => loadPolicy(files(map), noFetch, null);
+
+  test("a non-blank variable beats the default branch's config, which beats the default; a blank variable is unset", () => {
+    const p = load({ ".shepherd/config.yml": "ci:\n  label: from-config\n  notify_on: [failure]\n  audit: { public: true }\n" });
+    const at = (env: Record<string, string>) => ciSettings(p, env);
+
+    expect(at({}).label).toEqual({ value: "from-config", source: "config", variable: "SHEPHERD_LABEL" });
+    expect(at({ SHEPHERD_LABEL: "from-var" }).label).toMatchObject({ value: "from-var", source: "variable" });
+    expect(at({ SHEPHERD_LABEL: "  " }).label).toMatchObject({ value: "from-config", source: "config" }); // what GitHub passes for an unset variable
+    expect(at({}).notify_on.value).toBe("failure");
+    expect(at({}).audit_public.value).toBe("true");
+    expect(at({}).max_commits).toMatchObject({ value: "20", source: "default" });
+    expect(ciSettings(load({}), { AWS_REGION: "" }).aws_region).toMatchObject({ value: "", source: "default" });
+    expect(() => at({ SHEPHERD_LABEL: "a\nrun=true" })).toThrow("one line");
+
+    // The commit cap fails closed: a variable that is not a count stops the settings step, never the cap.
+    for (const bad of ["abc", "0", "-1", "1e3", "2 0"]) expect(() => at({ SHEPHERD_MAX_COMMITS: bad })).toThrow("SHEPHERD_MAX_COMMITS");
+    expect(at({ SHEPHERD_MAX_COMMITS: "5" }).max_commits.value).toBe("5");
+  });
+
+  // The push deny list is a security control: config can widen it, never narrow it, across packs too.
+  test("push_deny only grows: a repository adds to its pack's patterns and cannot drop them", () => {
+    const p = load({ ".shepherd/config.yml": "extends: [pack.yml]\nci:\n  push_deny: ['^infra/']\n", "pack.yml": "ci:\n  push_deny: ['^secrets/|^vault/']\n" });
+
+    expect(ciSettings(p, {}).push_deny).toMatchObject({ value: "(^secrets/|^vault/)|(^infra/)", source: "config" });
+    expect(ciSettings(load({}), {}).push_deny.value).toBe("");
+    expect(() => load({ ".shepherd/config.yml": "ci:\n  push_deny: []\n" })).toThrow();
   });
 });

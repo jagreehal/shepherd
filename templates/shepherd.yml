@@ -13,19 +13,27 @@
 #   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only
 #                     `gate` and `publish` see it. Pushes made with github.token start no workflows, so the loop would stall.
 #   SHEPHERD_API_KEY  the model key, for whichever provider the session model names (Bedrock: a Bedrock API key).
+#                     Store model keys as an environment's secrets (`shepherd workflows --environment <name>`) so
+#                     only `iterate` reads them.
 #                     Or each provider's own secret (OPENCODE_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
 #                     DEEPSEEK_API_KEY, AWS_BEARER_TOKEN_BEDROCK...) when the ladder mixes providers.
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
 #                     you, is ready to merge, or the iteration stopped on an error.
+# Settings: put them in .shepherd/config.yml (models.loop, and ci: label, aws_region, notify_on, max_commits,
+# push_deny), where they are reviewed and read from the default branch; `shepherd config explain` lists each with
+# its source. Each repository variable below is an optional override: when set, it wins over the config.
 # Variables:
-#   SHEPHERD_MODEL    optional: the session model, a model id or a tier from .shepherd/config.yml. Empty = the
+#   SHEPHERD_MODEL    optional override. Name the session model in .shepherd/config.yml instead
+#                     (`shepherd models pin loop <model>`), where it is reviewed and versioned. Empty = the
 #                     team's models.loop, else the top of its ladder, else opencode-go/kimi-k3. Runners take
 #                     their own models from the team's tiers, ladder and pins (shepherd models shows them).
-#   AWS_REGION        the Bedrock region, for a bedrock: model.
-#   SHEPHERD_LABEL    optional: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
+#   AWS_REGION        ci.aws_region: the Bedrock region, for a bedrock: model.
+#   SHEPHERD_LABEL    ci.label: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
 #                     Code, Codex, another agent) hands one over by adding it.
-#   SHEPHERD_NOTIFY_ON  optional: states that notify, e.g. "failure"; empty = success,failure,error.
-#   SHEPHERD_PUSH_DENY  optional: extended regex of paths a handed-off fix may not touch; empty = workflows,
+#   SHEPHERD_NOTIFY_ON  ci.notify_on: states that notify, e.g. "failure"; empty = success,failure,error.
+#   SHEPHERD_MAX_COMMITS  ci.max_commits: shepherd commits on one PR before it stops for a person; empty = 20.
+#   SHEPHERD_PUSH_DENY  replaces the built-in deny list (an admin's escape hatch). ci.push_deny in config can only
+#                     ADD patterns to whichever list applies. Extended regex of paths a handed-off fix may not touch; empty = workflows,
 #                     git and editor hooks, package manager config, manifests and lockfiles.
 #
 # Edit `workflows: [ci, stamp]` to name your CI workflow. workflow_run, pull_request_target and schedule
@@ -44,6 +52,10 @@ on:
       pr:
         description: PR number
         required: true
+      asked:
+        description: a person asked, by /shepherd comment or the handoff label; runs past a finished head and the label scope
+        type: boolean
+        default: false
   schedule:
     - cron: "*/30 * * * *" # the sweep: PRs left pending with nothing to wake them (bot reviews, a lost event)
 
@@ -52,12 +64,14 @@ permissions:
 
 # One run per PR at a time, gate to publish, so a run's statuses never interleave with another's. The condition
 # is the gate's `if` verbatim (a test keeps them in step): a run that event alone rules out gets a group of its
-# own. A run the gate step skips after reading GitHub (finished head, label scope, incident branch) still queues
-# in the PR's group, where GitHub keeps one waiting run, so a later event can take a queued `/shepherd`'s place.
+# own. So does every `/shepherd` comment and label event: GitHub keeps one waiting run per group, and a comment
+# from someone who cannot push, or a label that is not the handoff label, must never take a queued run's place.
+# The gate checks the commenter or the label and dispatches a run that queues in the PR's group. A run the gate
+# step skips after reading GitHub (finished head, incident branch) still queues there.
 concurrency:
   group: >-
     ${{ github.event_name == 'schedule' && 'shepherd-sweep'
-      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/shepherd') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) || (github.event_name == 'pull_request_target' && vars.SHEPHERD_LABEL != '' && github.event.label.name == vars.SHEPHERD_LABEL) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
+      || (((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.pull_requests[0] != null && github.event.workflow_run.head_repository.full_name == github.repository) || github.event_name == 'workflow_dispatch') && format('shepherd-{0}', github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr))
       || format('shepherd-skip-{0}', github.run_id) }}
   cancel-in-progress: false # a run may be mid-handoff; later triggers queue, and GitHub keeps only the newest
 
@@ -67,14 +81,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read # the settings checkout, on a private repository
       actions: write # workflow_dispatch of this file, one run per PR
       statuses: read
       pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
-      LABEL: ${{ vars.SHEPHERD_LABEL }}
+      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
+      # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || github.ref_name }}
+          sparse-checkout: .shepherd
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Settings
+        id: settings
+        env:
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          SHEPHERD_LABEL: ${{ vars.SHEPHERD_LABEL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
+          SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
+        run: |
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Start an iteration on each PR still pending
+        env:
+          LABEL: ${{ steps.settings.outputs.label }}
         run: |
           # With a label, a labelled PR shepherd has never touched counts as pending too.
           wf=$(basename "${GITHUB_WORKFLOW_REF%@*}")
@@ -97,10 +132,9 @@ jobs:
         && github.event.workflow_run.pull_requests[0] != null
         && github.event.workflow_run.head_repository.full_name == github.repository)
       || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null
-        && startsWith(github.event.comment.body, '/shepherd')
-        && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
-      || (github.event_name == 'pull_request_target' && vars.SHEPHERD_LABEL != ''
-        && github.event.label.name == vars.SHEPHERD_LABEL)
+        && startsWith(github.event.comment.body, '/shepherd'))
+      || (github.event_name == 'pull_request_target'
+        && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL))
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -108,6 +142,7 @@ jobs:
       contents: read
       pull-requests: read
       statuses: write # pending before the model starts
+      actions: write # a /shepherd comment or the handoff label dispatches the run that queues in the PR's group
     outputs:
       run: ${{ steps.gate.outputs.run }}
       branch: ${{ steps.gate.outputs.branch }}
@@ -115,21 +150,61 @@ jobs:
       head: ${{ steps.gate.outputs.head }}
       git_name: ${{ steps.gate.outputs.git_name }}
       git_email: ${{ steps.gate.outputs.git_email }}
+      aws_region: ${{ steps.settings.outputs.aws_region }}
+      notify_on: ${{ steps.settings.outputs.notify_on }}
+      push_deny: ${{ steps.settings.outputs.push_deny }}
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      LABEL: ${{ vars.SHEPHERD_LABEL }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      MAX_SHEPHERD_COMMITS: 20
+      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
+      # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || github.ref_name }}
+          sparse-checkout: .shepherd
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Settings
+        id: settings
+        env:
+          GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+          SHEPHERD_LABEL: ${{ vars.SHEPHERD_LABEL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
+          SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
+        run: |
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
       - name: Decide whether this iteration is worth running
         id: gate
         env:
           GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN || github.token }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          ASKED: ${{ inputs.asked }}
+          DISPATCH_TOKEN: ${{ github.token }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          LABEL: ${{ steps.settings.outputs.label }}
+          MAX_SHEPHERD_COMMITS: ${{ steps.settings.outputs.max_commits }}
         run: |
           [[ "$PR" =~ ^[0-9]+$ ]] || { echo "PR must be a number"; exit 1; }
           pr=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json state,author,headRefOid,headRefName,baseRefName,isCrossRepository,isDraft,labels,commits)
           state=$(jq -r .state <<<"$pr"); head=$(jq -r .headRefOid <<<"$pr"); author=$(jq -r .author.login <<<"$pr"); branch=$(jq -r .headRefName <<<"$pr")
           skip() { echo "skip: $1"; echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          dispatch() { GH_TOKEN=$DISPATCH_TOKEN gh workflow run "$(basename "${GITHUB_WORKFLOW_REF%@*}")" -R "$GITHUB_REPOSITORY" -f pr="$PR" -f asked=true; skip "dispatched a run for $1, queued behind any run on #$PR"; }
+          # Every label event reaches the gate, since the label may come from config; only the handoff label counts.
+          if [ "$GITHUB_EVENT_NAME" = pull_request_target ] && { [ -z "$LABEL" ] || [ "$EVENT_LABEL" != "$LABEL" ]; }; then skip "label ${EVENT_LABEL:-?} is not the handoff label${LABEL:+ ($LABEL)}"; fi
+          [ "$GITHUB_EVENT_NAME" != pull_request_target ] || dispatch "the $LABEL label"
+          # A /shepherd comment counts from someone who could push. author_association calls a private org member, or
+          # someone with access only through a team, CONTRIBUTOR; the permission API sees their effective access.
+          if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
+            perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$COMMENTER/permission" --jq .permission 2>/dev/null || echo none)
+            case "$perm" in admin|maintain|write) ;; *) skip "commenter $COMMENTER has $perm access" ;; esac
+            dispatch "$COMMENTER's /shepherd"
+          fi
+          asked=false
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$ASKED" = true ] && asked=true
           [ "$state" = OPEN ] || skip "PR is $state"
           [ "$(jq -r .isCrossRepository <<<"$pr")" = false ] || skip "fork PR"
           [ "$(jq -r .isDraft <<<"$pr")" = false ] || skip "draft"
@@ -138,15 +213,15 @@ jobs:
           labelled=false
           [ -n "$LABEL" ] && jq -e --arg l "$LABEL" 'any(.labels[]; .name == $l)' <<<"$pr" >/dev/null && labelled=true
           # A label scopes the automatic triggers; a /shepherd comment always runs.
-          if [ -n "$LABEL" ] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
+          if [ -n "$LABEL" ] && [ "$asked" = false ] && [ "$labelled" = false ]; then skip "no $LABEL label"; fi
           # An incident fix was written by an agent from alert text. A person starts shepherd on it.
-          if [[ "$branch" == incident/* ]] && [ "$GITHUB_EVENT_NAME" != issue_comment ] && [ "$labelled" = false ]; then
+          if [[ "$branch" == incident/* ]] && [ "$asked" = false ] && [ "$labelled" = false ]; then
             skip "incident fix: comment /shepherd${LABEL:+ or add the $LABEL label} to start"
           fi
           # Only PRs by people who could push this code themselves: shepherd runs their checks with these secrets.
           perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq .permission 2>/dev/null || echo none)
           case "$perm" in admin|maintain|write) ;; *) skip "author $author has $perm access" ;; esac
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; }; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ] || { [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_ACTOR" = "github-actions[bot]" ] && [ "$asked" = false ]; }; then
             done=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/status" --jq '[.statuses[] | select(.context=="shepherd")][0].state // ""')
             case "$done" in success|failure|error) skip "shepherd already finished on $head ($done); comment /shepherd to run again" ;; esac
             # The sweep dispatched this run for a pending head; a run that finished it while this one queued wins.
@@ -179,6 +254,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
+    # environment: <name>   `shepherd workflows --environment <name>`: store the model keys as that environment's secrets, readable by this job only
     timeout-minutes: 45
     # github.token for the model: comment, resolve threads, read code and CI. No contents write, and no
     # SHEPHERD_TOKEN anywhere in this job.
@@ -224,6 +300,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHEPHERD_HANDOFF: ${{ runner.temp }}/handoff
+          SHEPHERD_FANOUT: ${{ runner.temp }}/fanout.json
+          BASE: ${{ needs.gate.outputs.base }}
           SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -235,7 +313,7 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
-          AWS_REGION: ${{ vars.AWS_REGION }} # for a bedrock: model
+          AWS_REGION: ${{ needs.gate.outputs.aws_region }} # ci.aws_region or the AWS_REGION variable, for a bedrock: model
           SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }} # a model or tier; empty = the team's models.loop, top rung, or the default
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md are PR content
@@ -254,8 +332,14 @@ jobs:
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
           for k in OPENCODE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY GROQ_API_KEY MISTRAL_API_KEY GOOGLE_GENERATIVE_AI_API_KEY XAI_API_KEY AWS_BEARER_TOKEN_BEDROCK; do { [ -n "${!k:-}" ] && [[ "$keys" == *" $k "* ]]; } || unset "$k"; done
           OPENCODE_CONFIG_CONTENT=$(jq -c .opencode <<<"$plan") && export OPENCODE_CONFIG_CONTENT
+          # Swarm's first wave, listed before any PR code runs: each lens extracted from the default branch, and none
+          # left to the model to remember. A team lens that resolves nowhere is named here and ends could_not_run.
+          shepherd fanout --base "origin/$BASE" > "$SHEPHERD_FANOUT" || echo "::warning::a team lens resolves nowhere; see above"
+          jq -e --arg h "$(git rev-parse HEAD)" '.head_sha == $h and any(.lenses[]; .lens == "correctness")' "$SHEPHERD_FANOUT" >/dev/null \
+            || { echo "::error::shepherd fanout wrote no usable lens list for this head"; exit 1; }
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
-          SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. You are running in GitHub Actions on the PR branch,
+          SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
+          the router and every lens listed there in one message. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
           iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
@@ -281,7 +365,7 @@ jobs:
     # No model runs here, and nothing the model wrote runs here: the bundle is fetched and checked, never executed.
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # post the iteration's findings when the model could not (handoff findings.md); no model runs here
       statuses: write
       actions: write # rerun the jobs ci-repair asked for
     env:
@@ -295,6 +379,7 @@ jobs:
       # Paths that run without review: CI, git and editor hooks, package manager config, manifests and lockfiles.
       # Matched case-insensitively.
       DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$|(^|/)\.cargo/|(^|/)(pnpm-workspace\.yaml|pipfile|deno\.jsonc?)$' }}
+      DENY_ADD: ${{ needs.gate.outputs.push_deny }} # ci.push_deny: only ever added to DENY
       SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
     steps:
       # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
@@ -344,7 +429,7 @@ jobs:
           # base merge's own changes pass. NUL-delimited and rename-free: no quoted or renamed path slips by.
           git diff -z --no-renames --name-only "$H0" "$new" > ../from-head
           git diff -z --no-renames --name-only "origin/$BASE" "$new" > ../from-base
-          bad=$(python3 - ../from-head ../from-base "$DENY" <<'PY'
+          bad=$(python3 - ../from-head ../from-base "$DENY${DENY_ADD:+|$DENY_ADD}" <<'PY'
           import re, sys
           read = lambda f: {p for p in open(f, "rb").read().split(b"\0") if p}
           deny = re.compile(sys.argv[3].encode(), re.IGNORECASE)
@@ -387,6 +472,42 @@ jobs:
           state=$(sed -n 1p status.out); sed -n 2p status.out > description.txt
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
           echo "state=$state" >> "$GITHUB_OUTPUT"
+      # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
+      # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
+      # stamp or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
+      - name: Post findings the iteration did not
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/findings.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # One summary per PR, updated in place.
+          # Only the bot's own summary counts: anyone, the PR's author included, can comment the marker.
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- shepherd-swarm-summary -->"))) | @json' | head -1 > summary.json
+          id=$(jq -r .id summary.json)
+          jq -r .body summary.json > summary.md
+          ! grep -q "@ ${H0:0:7}" summary.md || { echo "the iteration posted its summary ($id)"; exit 0; }
+          python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
+          import re, sys
+          CAP = 60000
+          def defuse(text):
+              text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+              text = text.replace("<!--", "&lt;!--")
+              text = re.sub(r"<(/?)(img|picture|source|video|iframe)\b", r"&lt;\1\2", text, flags=re.IGNORECASE)
+              text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"[image removed: \1]", text)
+              return re.sub(r"(?<![\w`/])@(?=[A-Za-z0-9])", "@​", text)
+          raw = open(sys.argv[1], "rb").read(CAP + 1)
+          # The header goes on once, below: drop any copy the model wrote into the file.
+          text = defuse(re.sub(r"^> 🤖 Automated comment by .*\n?", "", raw[:CAP].decode("utf-8", "replace"), flags=re.M))
+          if len(raw) > CAP:
+              text += "\n\n_(truncated)_"
+          # The summary it replaces keeps its rounds: its latest folds into one history line, as swarm does.
+          old = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+          latest = re.search(r"^## \S+ ([A-Z_ ]+?) <sub>\(round (\d+) @ ([0-9a-f]{7,40})\)</sub>", old, re.M)
+          history = ([f"round {latest[2]} @ {latest[3]}: {latest[1]}"] if latest else []) + re.findall(r"^(?:round \d+|handoff) @ [0-9a-f]{7,40}: [^\n]{0,200}$", old, re.M)
+          rounds = f"\n\n<details>\n<summary>Earlier rounds ({len(history)})</summary>\n\n" + defuse("\n".join(history)) + "\n\n</details>" if history else ""
+          print(f"<!-- shepherd-swarm-summary -->\n<!-- shepherd-handoff-findings -->\n> 🤖 Automated comment by **Shepherd swarm**, not written by a human\n\n<sub>(handoff @ {sys.argv[3]})</sub>\n\n" + text + rounds)
+          PY
+          if [ -n "$id" ]; then gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@findings.out >/dev/null; else gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file findings.out; fi
       - name: Rerun the jobs ci-repair asked for
         if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && steps.push.outputs.pushed == '' && hashFiles('handoff/rerun-jobs.txt') != ''
         env:
@@ -417,7 +538,7 @@ jobs:
           HEAD_SHA: ${{ steps.push.outputs.head || needs.gate.outputs.head }}
           STATE: ${{ steps.status.outputs.state || steps.stopped.outputs.state }}
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
-          SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
+          SHEPHERD_NOTIFY_ON: ${{ needs.gate.outputs.notify_on }} # ci.notify_on or the variable
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
       # Any step above failing (checkout, push, status) must not leave the gate's pending for the sweep to rerun.
       - name: Report a failed publish

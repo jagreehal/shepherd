@@ -71,12 +71,20 @@ Shepherd runs models through its harness. In CI that harness is OpenCode, which 
 
 ## In GitHub Actions
 
+Name the session model in `.shepherd/config.yml`, where a change to it is reviewed like any other policy change:
+
+```bash
+shepherd models pin loop bedrock:minimax.minimax-m2.5   # or: shepherd workflows --model ..., shepherd init --model ...
+```
+
 The workflows run `shepherd ci-models`, which reads the tiers, ladder and pins from the default branch, gives OpenCode one agent per rung and per pin, and picks the session model:
 
-1. `SHEPHERD_MODEL`, a model id or a tier name, when the variable is set.
+1. `SHEPHERD_MODEL`, a model id or a tier name, when the variable is set: an override for trying a model without a PR.
 2. `models.loop`.
 3. The top of the ladder.
 4. `opencode-go/kimi-k3`, and the log says so.
+
+OpenCode's own agents (`build`, `plan`, `general`, `explore`, `title`, `summary`, `compaction`) and its small model run on the session model unless you pin them, and only the providers your session model, ladder and pins name are enabled. Without that, OpenCode picks for itself: a free Zen model for a subagent, or on Bedrock a `global.` profile that can route outside your region.
 
 Set `SHEPHERD_API_KEY` to the key for the session model's provider; on Bedrock that is a Bedrock API key with `AWS_REGION` set. A ladder that mixes providers needs each provider's own secret as well: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK`. A provider's own secret wins over `SHEPHERD_API_KEY`.
 
