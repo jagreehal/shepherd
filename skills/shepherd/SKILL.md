@@ -100,8 +100,10 @@ model pushes what you hand it. An iteration then differs in six places:
   posts its inline comments and summary with the job's token, which has
   pull requests: write, under every fix mode. Under `suggest` posting is the
   whole review: a run that ends with findings and nothing on the PR has failed.
-  Also write the summary body to `$SHEPHERD_HANDOFF/findings.md` with your file
-  tool. The publish job posts it only when no summary for this head reached the
+  Also write the summary body to `$SHEPHERD_HANDOFF/findings.md` with
+  `shepherd summary round.json --previous summary.md --body`, `summary.md`
+  being the summary already on the PR (swarm's Step 7 finds it), so the round
+  number carries on. The publish job posts it only when no summary for this head reached the
   PR, so a failed post still leaves the review on the PR.
 
 - **Commit, never push.** Commit on the PR branch as usual. Append the handoff

@@ -15,6 +15,7 @@
 // shepherd config validate                          (the working tree's policy: exits 1 on a problem)
 // shepherd config schema                            (the JSON Schema of .shepherd/config.yml, for editors)
 // shepherd config explain [--json] [--working-tree] (effective policy and where each setting came from)
+// shepherd summary <round.json> [--previous <comment.md>] [--body]   (Markdown: swarm's summary comment)
 // shepherd branding [--working-tree]                (JSON: the name, avatar, glyphs and headers posted comments use)
 // shepherd ci-settings [--outputs]                  (the CI settings from variables, the default branch's ci:, defaults)
 // shepherd fanout [--base <ref>] [--working-tree]   (JSON: the lenses swarm starts beside the router, each with its scope)
@@ -41,6 +42,7 @@ import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
 import { z } from "zod";
 import { branding, CI_DEFAULT_MODEL, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
+import { renderSummary } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
@@ -74,6 +76,7 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd config validate
        shepherd config schema
        shepherd config explain [--json] [--working-tree]
+       shepherd summary <round.json> [--previous <comment.md>] [--body]
        shepherd branding [--working-tree]
        shepherd ci-settings [--outputs]
        shepherd fanout [--base <ref>] [--working-tree]
@@ -112,6 +115,8 @@ const { values: opts, positionals } = parseArgs({
     base: { type: "string" }, // local: the ref the change is measured from
     from: { type: "string" }, // lens new: a starter lens in lenses/; init: the pack to extend
     json: { type: "boolean", default: false },
+    previous: { type: "string" }, // summary: the summary comment already on the PR, whose rounds carry forward
+    body: { type: "boolean", default: false }, // summary: no marker or header, for the handoff findings.md
     "working-tree": { type: "boolean", default: false }, // explain, preview: your edits instead of the default branch
     recipe: { type: "string" },
     preset: { type: "string" }, // init: how far fixes go
@@ -537,6 +542,13 @@ if (command === "install") {
 } else if (command === "branding") {
   // From the default branch, like the rest of the policy: a PR cannot restyle how its own review is posted.
   console.log(JSON.stringify(branding(policy(opts["working-tree"])), null, 2));
+} else if (command === "summary" && sub) {
+  // Swarm's summary comment, rendered from the round's JSON.
+  const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
+  const b = branding(policy(opts["working-tree"]));
+  const previous = opts.previous ? readFileSync(opts.previous, "utf8") : undefined;
+
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous)));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
