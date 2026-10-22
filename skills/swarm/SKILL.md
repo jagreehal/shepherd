@@ -233,8 +233,8 @@ with the repo's frozen-lockfile command. Remove the worktree when Step 2 ends.
    to load it from configuration, and gates and secret scanners refuse the
    shape regardless.
 8. Read the verdicts other gates already gave this head: stamp's latest review
-   (the review carrying the hidden `<!-- stamp-run:` marker, with its mechanics
-   table; its heading follows stamp's branding, so never match on it) and every
+   (the review carrying the hidden `<!-- stamp-run:` marker, with its Gates
+   section; older ones are folded under a "Superseded" line; its heading follows stamp's branding, so never match on it) and every
    failing CI check on the head (`gh pr checks <number>`), not only required
    ones: many repos protect nothing. A gate that refused the head, or a check
    that failed on it, is a HIGH `checks/stamp` or `checks/ci` finding that quotes
@@ -470,21 +470,28 @@ line with single spaces: garden reads the severity from it. A convergent
 finding's tag keeps every lens's full tag, `[convergent: correctness/concurrency + architecture/di-container]`,
 so triage can still find a custom lens's rule in it.
 
-Then upsert the **one** summary comment, marked `<!-- shepherd-swarm-summary -->`
-and shaped as in `references/formats.md`. Find it, update it in place, or create
-it:
+Then upsert the **one** summary comment, marked `<!-- shepherd-swarm-summary -->`.
+Write the round as JSON and render it with `shepherd summary` (the shape is in
+`references/formats.md`); never write its Markdown yourself. Find it, render it
+with the existing comment as `--previous` so its rounds carry forward, and
+update it in place, or create it:
+
+Match the account you post as as well as the CI bot: a local run posts as you,
+and matching only the bot would start a second summary at round 1. Only those
+two logins count, never anyone else who pasted the marker.
 
 ```bash
-gh api "repos/<owner>/<repo>/issues/<number>/comments" --paginate \
-  --jq '[.[] | select(.body | contains("<!-- shepherd-swarm-summary -->"))][0].id'
-gh api "repos/<owner>/<repo>/issues/comments/<id>" -X PATCH -F body=@summary.md   # update
-gh pr comment <number> --body-file summary.md                                      # create
+me=$(gh api user --jq .login 2>/dev/null || true)   # empty under a GITHUB_TOKEN, which posts as the bot
+gh api "repos/<owner>/<repo>/issues/<number>/comments" --paginate | jq -s --arg me "$me" \
+  '[.[][] | select((.user.login == "github-actions[bot]" or (.user.login == $me and $me != "")) and (.body | contains("<!-- shepherd-swarm-summary -->")))][0] // {}' > found.json
+jq -r '.body // ""' found.json > summary.md   # its id: jq -r '.id // empty' found.json
+shepherd summary round.json --previous summary.md > comment.md
+gh api "repos/<owner>/<repo>/issues/comments/<id>" -X PATCH -F body=@comment.md   # update
+gh pr comment <number> --body-file comment.md                                      # create
 ```
 
-Earlier rounds fold into a `<details>` block, one line each, so the comment
-always leads with the latest verdict. Take the round number from the existing
-comment (its latest round plus one), never from this session; a comment you
-found is always updated with its history folded in, never overwritten.
+A comment you found is always updated with its history folded in, never
+overwritten.
 
 ## Step 8: Report
 

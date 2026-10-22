@@ -353,13 +353,14 @@ one on the current head:
 
 ```bash
 gh pr view <number> --json latestReviews \
-  --jq '[.latestReviews[] | select(.body | contains("<!-- stamp-run:"))][0] | {state, body: .body[:3000]}'
+  --jq '[.latestReviews[] | select(.body | contains("<!-- stamp-run:"))][0] | {state, body: .body[:8000]}'
 ```
 
-- **REFUSED with issues:** treat each line under **Issues** as a bot thread
-  and classify it the same way. Fixes push; stamp re-reviews on the push. There
+- **REFUSED with issues:** treat each bullet in the **Issues** section (a
+  `<details>` block titled `Issues: <n>`) as a bot thread and classify it the
+  same way. Fixes push; stamp re-reviews on the push. There
   is nothing to resolve.
-- **REFUSED by a gate** (the mechanics table shows a failed gate such as
+- **REFUSED by a gate** (the **Gates** section shows a failed gate such as
   `deny-list`, `secrets`, or `size`): a gate decides whether stamp approves,
   not whether the code may be fixed. Keep fixing every thread as usual; a hard
   coded key in code this PR adds is fixed by reading it from configuration.
