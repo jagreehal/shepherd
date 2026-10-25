@@ -56,8 +56,14 @@ Never write the summary's Markdown yourself. Write the round as JSON and let
 {
   "head_sha": "<reviewed head>",
   "verdict": "blocked|changes|nits|good",
-  "why": "<one or two sentences on why>",
-  "findings": [{"file": "src/a.ts", "line": 3, "severity": "HIGH", "lens": "correctness/data", "body": "<finding and fix>", "convergent": false}],
+  "why": "<one or two sentences: is it safe to merge, and what must change first>",
+  "confidence": 4,
+  "findings": [{"file": "src/a.ts", "line": 3, "severity": "HIGH", "lens": "correctness/data", "title": "<a claim the reader can check>", "body": "<input, actual, expected, why it matters, the fix>", "verified": "<HIGH and CRITICAL: what the verifier quoted>", "suggestion": "<replacement lines, only when the fix replaces exactly line 3>", "url": "<its inline thread>", "inline": true, "convergent": false, "checked": [{"command": "rg -n 'firstName' src", "result": "<the line that settled it>"}], "docs": [{"url": "<https URL you are certain of>", "title": "<page title>"}], "reintroduces": "<a resolved thread whose fix this undoes>"}],
+  "pre_merge": [{"check": "Title|Description|Linked issue|Scope|Tests", "status": "pass|warn|fail", "detail": "<one line>"}],
+  "walkthrough": ["<what the PR does, one bullet per behaviour, for a reader who never saw it>"],
+  "changes": [{"files": ["src/a.ts", "src/a.test.ts"], "summary": "<what changed in these files>"}],
+  "effort": 2,
+  "diagram": "<mermaid flowchart source, or empty>",
   "still_open": [{"url": "<thread url>", "title": "<one line>"}],
   "checks": [{"tool": "tsc", "status": "ran", "findings": 0}, {"tool": "oxlint", "status": "unavailable", "reason": "not installed"}],
   "lenses": [{"lens": "router", "model": "<model>", "scope": "full", "status": "ok", "take": "<danger grade, what it delegated>", "skill_blob": ""}],
@@ -71,11 +77,27 @@ shepherd summary round.json --previous summary.md --body > "$SHEPHERD_HANDOFF/fi
 ```
 
 `findings` holds the current round only, with a convergent finding's `lens`
-carrying every lens's full tag. The renderer leads with the verdict heading
+carrying every lens's full tag. `confidence` is how safe the PR is to merge,
+0 to 5: 5 nothing found that could break, 3 a MEDIUM or an unverified risk
+left, 1 or 0 a HIGH or CRITICAL standing. `effort` is how long a careful human
+read takes, 1 (a minute) to 5 (an hour or more). Draw a `diagram` only when the
+change has a flow a reader would otherwise reconstruct (a request path, a state
+machine, data moving between modules); leave it empty for a helper function.
+The new fields are optional: a round without them renders as before.
+The summary shows `pre_merge` as a table (open when one fails), a finding's
+`docs` as links, `reintroduces` as a link to the earlier thread, and closes
+with the `/shepherd` and `/stamp` commands. An inline comment also carries
+`checked` as a collapsed list of commands and the result of each.
+
+The renderer leads with the verdict heading
 (`## <emoji> <VERDICT> <sub>(round <N> @ <short_sha>)</sub>`, the round taken
 from `--previous`), then one collapsed section per part with its result in the
-title: findings (open unless the verdict is LOOKS GOOD), still open, checks,
-lenses, and earlier rounds folded one line each. With `--body` it keeps the
+title: findings, numbered and linked to their threads (open unless the
+verdict is LOOKS GOOD), one agent prompt holding every finding above NIT, the
+walkthrough (bullets, a file table, review effort, the diagram), still open,
+checks, lenses, and earlier rounds folded one line each. With `--fanout` (in CI,
+`$SHEPHERD_FANOUT`), a first-wave lens the round does not report shows as
+`could_not_run` and the round says it is incomplete. With `--body` it keeps the
 round number but leaves the history out: the publish job folds the comment it
 replaces in itself, so the history would otherwise appear twice. It escapes markers, mentions
 and images in every string you give it.

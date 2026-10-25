@@ -15,7 +15,8 @@
 // shepherd config validate                          (the working tree's policy: exits 1 on a problem)
 // shepherd config schema                            (the JSON Schema of .shepherd/config.yml, for editors)
 // shepherd config explain [--json] [--working-tree] (effective policy and where each setting came from)
-// shepherd summary <round.json> [--previous <comment.md>] [--body]   (Markdown: swarm's summary comment)
+// shepherd inline <round.json>                     (JSON: swarm's inline review, for POST /pulls/<n>/reviews)
+// shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]   (Markdown: swarm's summary comment)
 // shepherd branding [--working-tree]                (JSON: the name, avatar, glyphs and headers posted comments use)
 // shepherd ci-settings [--outputs]                  (the CI settings from variables, the default branch's ci:, defaults)
 // shepherd fanout [--base <ref>] [--working-tree]   (JSON: the lenses swarm starts beside the router, each with its scope)
@@ -42,7 +43,7 @@ import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
 import { z } from "zod";
 import { branding, CI_DEFAULT_MODEL, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
-import { renderSummary } from "./summary.ts";
+import { renderReview, renderSummary } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
@@ -76,7 +77,8 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd config validate
        shepherd config schema
        shepherd config explain [--json] [--working-tree]
-       shepherd summary <round.json> [--previous <comment.md>] [--body]
+       shepherd inline <round.json>
+       shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]
        shepherd branding [--working-tree]
        shepherd ci-settings [--outputs]
        shepherd fanout [--base <ref>] [--working-tree]
@@ -117,6 +119,7 @@ const { values: opts, positionals } = parseArgs({
     json: { type: "boolean", default: false },
     previous: { type: "string" }, // summary: the summary comment already on the PR, whose rounds carry forward
     body: { type: "boolean", default: false }, // summary: no marker or header, for the handoff findings.md
+    fanout: { type: "string" }, // summary: `shepherd fanout`'s output, default $SHEPHERD_FANOUT; lenses it lists but the round lacks show as could_not_run
     "working-tree": { type: "boolean", default: false }, // explain, preview: your edits instead of the default branch
     recipe: { type: "string" },
     preset: { type: "string" }, // init: how far fixes go
@@ -547,8 +550,22 @@ if (command === "install") {
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
   const b = branding(policy(opts["working-tree"]));
   const previous = opts.previous ? readFileSync(opts.previous, "utf8") : undefined;
+  const fanoutFile = opts.fanout ?? process.env.SHEPHERD_FANOUT;
 
-  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous)));
+  if (opts.fanout && !existsSync(opts.fanout)) {
+    console.error(`--fanout: no file at ${opts.fanout}`);
+    process.exit(1);
+  }
+
+  const fanout = fanoutFile && existsSync(fanoutFile) ? orExit(() => JSON.parse(readFileSync(fanoutFile, "utf8"))) : undefined;
+
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout)));
+} else if (command === "inline" && sub) {
+  // Swarm's inline review, rendered from the same round JSON: the payload for POST /pulls/<n>/reviews.
+  const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
+  const b = branding(policy(opts["working-tree"]));
+
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm)), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.

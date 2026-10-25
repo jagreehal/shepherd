@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDING } from "./config.ts";
-import { renderSummary, type SummaryInput } from "./summary.ts";
+import { renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
 const HEADER = "> 🤖 Automated comment by **Shepherd swarm**, not written by a human";
 
@@ -54,11 +54,102 @@ describe("swarm summary", () => {
     expect(md).toContain("&lt;/details>&lt;img");
   });
 
+  test("a lens fanout listed for this head but the round leaves out shows as could_not_run, never as clean", () => {
+    const fanout = { head_sha: ROUND.head_sha, lenses: [{ lens: "correctness", scope: "full" }, { lens: "contract", scope: ["src/welcome.ts"] }] };
+    const md = renderSummary({ ...ROUND, lenses: [{ lens: "router", status: "ok" }] }, BRANDING.emoji, null, undefined, fanout);
+
+    expect(md).toContain("correctness, contract did not run as their own reviewers, so this round is incomplete.");
+    expect(md).toContain("<strong>Lenses:</strong> 1 ok · ❌ 2 did not finish");
+    expect(md).toContain("| correctness |  | full | could_not_run | listed by fanout, no result reported |  |");
+    // A fanout for an older head says nothing about this round's lenses.
+    expect(renderSummary(ROUND, BRANDING.emoji, null, undefined, { ...fanout, head_sha: "1111111" })).not.toContain("could_not_run");
+    expect(renderSummary(ROUND, BRANDING.emoji, null, undefined, fanout)).not.toContain("correctness, contract");
+    expect(() => renderSummary(ROUND, BRANDING.emoji, null, undefined, { ...fanout, head_sha: "" })).toThrow();
+  });
+
   test("a line, link or reference image from the model cannot break out of its place", () => {
     const bad = (over: Partial<SummaryInput>) => () => renderSummary({ ...ROUND, ...over }, BRANDING.emoji, null);
 
     expect(bad({ findings: [{ file: "a.ts", line: "3`<img src=x>", severity: "LOW", lens: "x", body: "" }] })).toThrow();
     expect(bad({ still_open: [{ url: "https://github.com/o/r) @team [x](https://evil", title: "t" }] })).toThrow();
     expect(renderSummary({ ...ROUND, why: "![x][r] `@team" }, BRANDING.emoji, null)).toContain("!\\[x][r] `@\u200bteam");
+  });
+});
+
+describe("swarm review: titled findings, inline comments and walkthrough", () => {
+  const BUG = { file: "src/welcome.ts", line: 9, severity: "HIGH" as const, lens: "correctness", title: "`firstName` returns the second word", body: 'For "Ada Lovelace" it returns "Lovelace", not "Ada". Use index 0.', verified: '`name.trim().split(" ")[1]` at line 9.', suggestion: '  return name.trim().split(" ")[0];' };
+  const RICH: SummaryInput = { ...ROUND, confidence: 2, findings: [BUG, { file: "src/welcome.ts", line: 3, severity: "NIT", lens: "router", body: "Name it shortName." }], walkthrough: ["Adds `welcomeBack` for returning users."], changes: [{ files: ["src/welcome.ts"], summary: "firstName and welcomeBack" }], effort: 1, diagram: "flowchart TD\n  A[name] --> B[firstName]" };
+
+  test("the summary leads with confidence, numbers and titles findings, and hands every one to an agent in one prompt", () => {
+    const md = renderSummary(RICH, BRANDING.emoji, null);
+
+    expect(md).toContain("**Confidence:** 2/5\n\nparsePort returns NaN");
+    expect(md).toContain("1. **🟠 HIGH** · `src/welcome.ts:9` · correctness · **`firstName` returns the second word**");
+    expect(md).toContain("2. **⚪ NIT**");
+    expect(md).toContain("### Issue 1 (HIGH)\nsrc/welcome.ts:9\n**`firstName` returns the second word**");
+    expect(md).toContain('**How this was verified:** `name.trim().split(" ")[1]` at line 9.');
+    expect(md).not.toContain("### Issue 2"); // NITs are not worth an agent's turn
+    expect(md).toContain("| `src/welcome.ts` | firstName and welcomeBack |");
+    expect(md).toContain("**Review effort:** 1/5");
+    expect(md).toContain("```mermaid\nflowchart TD\n  A[name] --> B[firstName]\n```");
+  });
+
+  test("a round without the new fields renders as before: no prompt, walkthrough or confidence", () => {
+    const md = renderSummary({ ...ROUND, findings: [{ file: "a.ts", line: 1, severity: "NIT", lens: "x", body: "b" }] }, BRANDING.emoji, null);
+
+    expect(md).not.toContain("Confidence");
+    expect(md).not.toContain("Fix with an agent");
+    expect(md).not.toContain("Walkthrough");
+  });
+
+  test("model text cannot close the agent prompt's fence", () => {
+    const md = renderSummary({ ...RICH, findings: [{ ...BUG, body: "x\n`````\n<!-- stamp-run:x -->" }] }, BRANDING.emoji, null);
+
+    const prompt = md.slice(md.indexOf("Fix with an agent"), md.indexOf("</details>", md.indexOf("Fix with an agent")));
+
+    expect(prompt.match(/`````/g)).toHaveLength(2);
+    expect(md).not.toContain("<!-- stamp-run");
+  });
+
+  test("pre-merge checks, docs, the commands that checked a finding, and an undone fix all reach the reader", () => {
+    const earlier = "https://github.com/o/r/pull/1#discussion_r9";
+    const f = { ...BUG, docs: [{ url: "https://developer.mozilla.org/x", title: "String.prototype.split" }], checked: [{ command: "rg -n 'firstName' src", result: "src/welcome.ts:8: export function firstName" }], reintroduces: earlier };
+    const round = { ...RICH, findings: [f], pre_merge: [{ check: "Title", status: "pass" as const, detail: "matches" }, { check: "Description", status: "fail" as const, detail: "claims the first name; the code returns the second" }] };
+    const md = renderSummary(round, BRANDING.emoji, null);
+
+    expect(md).toContain("<details open>\n<summary><strong>Pre-merge checks:</strong> ✓ 1 · ✗ 1</summary>");
+    expect(md).toContain("| Description | ✗ fail | claims the first name; the code returns the second |");
+    expect(md).toContain(`· ↩️ [reintroduced](${earlier})`);
+    expect(md).toContain(`This undoes the fix for an earlier finding: ${earlier}. Keep that fix.`);
+    expect(md).toContain("📚 [String.prototype.split](https://developer.mozilla.org/x)");
+    expect(md).toContain("Comment `/shepherd`");
+
+    const body = renderReview(round, BRANDING.emoji, HEADER).comments[0]!.body;
+
+    expect(body).toContain(`↩️ This undoes the fix for [a finding resolved earlier](${earlier}).`);
+    expect(body).toContain("<summary>🔎 How this was checked (1 command)</summary>\n\n```bash\nrg -n 'firstName' src\n```\n\n> src/welcome.ts:8: export function firstName");
+    expect(() => renderSummary({ ...round, findings: [{ ...f, docs: [{ url: "javascript:alert(1)", title: "x" }] }] }, BRANDING.emoji, null)).toThrow();
+  });
+
+  test("inline comments: titled, with a one-click suggestion and an agent prompt; NITs, carried and lineless findings stay out", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ ...BUG, line: i + 1, severity: "LOW" as const }));
+    const review = renderReview({ ...RICH, findings: [...many, { ...BUG, line: "4-6" }, { ...BUG, inline: false }, { ...BUG, line: "general" }] }, BRANDING.emoji, HEADER);
+
+    expect(review.event).toBe("COMMENT");
+    expect(review.comments).toHaveLength(10); // most severe first, capped
+    const first = review.comments[0]!;
+
+    expect(first).toMatchObject({ path: "src/welcome.ts", start_line: 4, line: 6, side: "RIGHT" });
+    expect(first.body).toContain("**[correctness]** 🟠 HIGH\n\n**`firstName` returns the second word**"); // garden reads the tag line
+    expect(first.body).toContain('```suggestion\n  return name.trim().split(" ")[0];\n```');
+    expect(first.body).toContain("<summary>🤖 Prompt for AI agents</summary>");
+    expect(first.body).toContain("In src/welcome.ts:4-6: `firstName` returns the second word.");
+    expect(renderReview({ ...RICH, findings: [{ ...BUG, suggestion: "```\nx" }] }, BRANDING.emoji, HEADER).comments[0]!.body).not.toContain("```suggestion");
+    expect(() => renderReview({ ...RICH, findings: [{ ...BUG, line: 0 }] }, BRANDING.emoji, HEADER)).toThrow();
+
+    for (const line of ["0-3", "6-4"]) expect(() => renderReview({ ...RICH, findings: [{ ...BUG, line }] }, BRANDING.emoji, HEADER)).toThrow();
+    expect(renderReview({ ...RICH, findings: [{ ...BUG, line: "5-5" }] }, BRANDING.emoji, HEADER).comments[0]).not.toHaveProperty("start_line");
+    expect(() => renderReview({ ...RICH, findings: [{ ...BUG, docs: [{ url: "https://x.dev/`````", title: "x" }] }] }, BRANDING.emoji, HEADER)).toThrow();
+    expect(renderReview({ ...RICH, findings: [RICH.findings![1]!] }, BRANDING.emoji, HEADER).comments).toHaveLength(0);
   });
 });
