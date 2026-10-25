@@ -379,11 +379,17 @@ the author: a fresh instance at the same rung is independent enough.
   on this head, and is the severity right?"
 - It must quote the code that proves or refutes the finding. `confirmed` keeps
   it, `downgrade` lowers the severity, `refuted` drops it.
+- It lists each read-only command it ran (`rg`, `sed -n`, `git show`, `git log
+  -L`) with the one line of output that settled the question. They go in the
+  finding's `checked`, so a reader can audit the claim without redoing it.
 - Judge new code by its intended use. A function the PR adds and exports exists
   to be called; "nothing calls it yet" never lowers a finding's severity.
 - A finding the verifier cannot settle without outside facts (an API's
   documented behaviour, a library version) stays at its severity with the open
-  question stated, rather than dropping.
+  question stated, rather than dropping. A finding that rests on documented
+  behaviour names the page in `docs`: a URL in this repository, or an official
+  documentation page you are certain exists. Never invent a URL; with no such
+  page, leave `docs` empty and state the behaviour you rely on.
 - Batch all findings for one verifier into one agent.
 - With one or two findings to check, the orchestrating session may verify them
   itself instead, since it did not write them. Every rule above binds it as
@@ -394,6 +400,14 @@ the author: a fresh instance at the same rung is independent enough.
 
 MEDIUM and below post unverified, but a finding with no file and line and no
 concrete fix drops to NIT.
+
+Before posting, check each grade against `../review-correctness/SKILL.md`'s
+Severity section, whoever wrote the finding. A finding that names an ordinary
+input on which code this PR adds gives a wrong result (it contradicts the
+code's name, doc comment, the PR description or its test) is "wrong behaviour
+users will hit" under that rubric. Send it to the verifier as HIGH, whoever
+graded it lower; the verifier settles the grade with quoted code, as for any
+other HIGH, such as "`firstName` returns the second word".
 
 Check every finding's line against the diff before it posts. Cheap models
 misnumber lines: find the code the finding quotes and use its real line on the
@@ -407,8 +421,21 @@ new side of the diff.
 - **Conflicts with open threads.** A finding whose fix would keep or bring
   back a problem an open thread names (from any reviewer) says so in its body
   and names that thread: the author sees both before choosing.
+- **Undone fixes.** From round 2 on, read the Shepherd threads resolved in
+  earlier rounds and the diff since the last reviewed head. A finding whose
+  code brings back a problem one of them named sets `reintroduces` to that
+  thread's URL and keeps at least that thread's severity: a fix the author
+  already accepted came undone, often from an agent's later edit.
+- **Pre-merge checks.** Compare the PR's title, description, linked issue and
+  tests with the diff, one `pre_merge` entry each: `pass`, `warn`, or `fail`
+  with one line of detail. Title: does it name the change? Description: does
+  it describe what the diff does, and nothing the diff does not? Linked issue:
+  does the diff do what it asks (`pass` with "none linked" when there is
+  none)? Scope: anything the diff changes that the title, description and
+  issue do not mention? Tests: does new behaviour carry a test that would fail
+  without it? A `fail` that is a finding in its own right is also a finding.
 - **Verdict** from the surviving findings plus every thread still open on the
-  PR, Shepherd's and other reviewers', at the severity each states (another bot's
+  PR, each issue counted once, Shepherd's and other reviewers', at the severity each states (another bot's
   P1 counts as HIGH). A gate that refused this head for an issue the code still
   has counts too:
   - any CRITICAL -> `emoji.blocked` (🚫) BLOCKED
@@ -420,16 +447,25 @@ The verdict is advice to the author. It never becomes a GitHub approval.
 
 ## Step 7: Post
 
-Post all inline findings as **one** review, pinned to the reviewed commit:
+Write the round as JSON first (`references/formats.md`): the inline review and
+the summary are both rendered from it, so neither is ever hand-written Markdown.
+Post every inline finding as **one** review, pinned to the reviewed commit:
 
 ```bash
-gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input review.json
+shepherd inline round.json > review.json
+gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input review.json \
+  --jq '[.id]' > review-id.json
 ```
 
-with `review.json` built as
-`{"commit_id": "<head_sha>", "event": "COMMENT", "body": "<header> See inline comments.", "comments": [{"path": "...", "line": N, "side": "RIGHT", "body": "..."}]}`.
-Building the JSON file sidesteps shell quoting. A finding on a line outside the
-diff cannot anchor inline; move it to the summary.
+`shepherd inline` keeps the shape a reader learns once: the tag line, a bold
+title, the body, a suggestion block, `Verified:`, and a collapsed "Prompt for
+AI agents". It leaves out NITs, findings with `"inline": false`, and findings
+with no line, and posts at most 10, most severe first. A finding on a line
+outside the diff cannot anchor inline: keep its `line` and set
+`"inline": false`. When `review.json` has no `comments`, skip the post.
+Otherwise read the new threads' URLs
+(`gh api repos/<owner>/<repo>/pulls/<number>/reviews/<id>/comments --jq '.[] | {path, line, html_url}'`)
+into each finding's `url`, so the summary links every finding to its thread.
 
 Every run, including the first of a new session, fetches the unresolved
 Shepherd threads first (triage's Step 3 query) and does not post a finding that
@@ -446,22 +482,21 @@ first comment, in place: `<emoji.resolved> Resolved at <short_sha>` (✅ by
 default). The summary's "still
 open" entries link to their threads, so a reader sees what is left and where.
 
-Keep the thread count proportional to the change. NITs go in the summary
-only, never inline. Post at most 10 inline comments, most severe first; the
-rest go in the summary. Two findings on the same line merge into one comment.
+Keep the thread count proportional to the change. Two findings on the same
+line merge into one.
 
-Each inline comment:
-
-```markdown
-> [!NOTE]
-<headers.swarm>
-
-**[<lens tag>]** <emoji> <SEVERITY>
-
-<finding body, with the concrete fix>
-
-<HIGH and CRITICAL only: "Verified: " and the code the verifier quoted>
-```
+Each finding carries a `title`: a claim a reader can check, such as
+"`firstName` returns the second word". Its `body` names the input, what the
+code does on it and what it should, then why it matters and the fix. A claim
+about what the code does at runtime whose body names no input, or no wrong
+result on one, is a suspicion: MEDIUM at most. A `checks/*` finding already
+carries its evidence (the failing check, the gate's refusal, the matched
+credential shape) and keeps the grade Step 2 gives it. Give a `suggestion`
+(the replacement lines, no fence) only when the fix replaces exactly the lines
+in `line`, written `"start-end"` for a range: GitHub commits it as written, so
+it must compile on its own. When the fix spans other lines or files, put a
+`diff` block in the body instead. `verified` holds what the verifier quoted,
+for HIGH and CRITICAL.
 
 Severity emoji from the branding, defaults in brackets: `emoji.critical` (🔴)
 CRITICAL, `emoji.high` (🟠) HIGH, `emoji.medium` (🟡) MEDIUM, `emoji.low` (🟢)

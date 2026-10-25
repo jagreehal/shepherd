@@ -356,8 +356,8 @@ gh pr view <number> --json latestReviews \
   --jq '[.latestReviews[] | select(.body | contains("<!-- stamp-run:"))][0] | {state, body: .body[:8000]}'
 ```
 
-- **REFUSED with issues:** treat each bullet in the **Issues** section (a
-  `<details>` block titled `Issues: <n>`) as a bot thread and classify it the
+- **REFUSED with issues:** treat each item in the **Issues** section (a
+  `<details>` block titled `Issues: <n>`, numbered or bulleted) as a bot thread and classify it the
   same way. Fixes push; stamp re-reviews on the push. There
   is nothing to resolve.
 - **REFUSED by a gate** (the **Gates** section shows a failed gate such as

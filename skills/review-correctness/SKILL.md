@@ -46,7 +46,8 @@ will be wrong in production, or tests that will not catch it when it is.
 - **Tests.** A test that passes whatever the code does (asserts nothing, mocks
   the unit under test, catches the error it should surface), a skipped or
   `.only` test, an assertion loosened to make a change pass, a new branch with
-  no test at all.
+  no test at all, a new test whose loose assertion (a prefix regex,
+  `toBeTruthy`, a length check) passes the bug in the same diff.
 
 ## Incident patterns
 
@@ -67,7 +68,9 @@ Check each one that fits the diff:
 ## Severity
 
 - **CRITICAL** — data loss, corruption, or an outage on a normal path.
-- **HIGH** — wrong behaviour users will hit, or a test gap over risky logic.
+- **HIGH** — wrong behaviour users will hit, such as new code returning
+  something other than its name or doc comment says on an ordinary input, or a
+  test gap over risky logic.
 - **MEDIUM** — wrong on an edge case, or a performance cliff at plausible scale.
 - **LOW** — wrong only in an unlikely case; a cheap fix.
 - **NIT** — correctness-adjacent tidying.
