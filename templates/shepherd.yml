@@ -337,9 +337,12 @@ jobs:
           shepherd fanout --base "origin/$BASE" > "$SHEPHERD_FANOUT" || echo "::warning::a team lens resolves nowhere; see above"
           jq -e --arg h "$(git rev-parse HEAD)" '.head_sha == $h and any(.lenses[]; .lens == "correctness")' "$SHEPHERD_FANOUT" >/dev/null \
             || { echo "::error::shepherd fanout wrote no usable lens list for this head"; exit 1; }
+          # A copy for the publish job, which renders the summary: a first-wave lens the round never reports shows as could_not_run.
+          mkdir -p "$SHEPHERD_HANDOFF" && cp "$SHEPHERD_FANOUT" "$SHEPHERD_HANDOFF/fanout.json"
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
-          the router and every lens listed there in one message. You are running in GitHub Actions on the PR branch,
+          the router and every lens listed there in one message. Write the round to $SHEPHERD_HANDOFF/round.json: the publish
+          job renders and posts the inline review and the summary from it, so post neither yourself. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
           iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
@@ -475,8 +478,18 @@ jobs:
       # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
       # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
       # stamp or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
+      # The renderers, when the iteration handed off its round: the summary and inline review are then built in code.
+      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/round.json') != ''
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
+        continue-on-error: true # without the CLI the step below falls back to findings.md
+      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/round.json') != ''
+        shell: bash
+        continue-on-error: true
+        run: |
+          bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
       - name: Post findings the iteration did not
-        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/findings.md') != ''
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && (hashFiles('handoff/findings.md') != '' || hashFiles('handoff/round.json') != '')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -485,7 +498,23 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- shepherd-swarm-summary -->"))) | @json' | head -1 > summary.json
           id=$(jq -r .id summary.json)
           jq -r .body summary.json > summary.md
-          ! grep -q "@ ${H0:0:7}" summary.md || { echo "the iteration posted its summary ($id)"; exit 0; }
+          # Posted by this run, not an earlier one on the same head: a summary from a previous round on an unchanged head
+          # once passed for this round's and the round was never posted.
+          started=${RUN_STARTED:-$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)}
+          fresh=$(jq -r --arg s "$started" 'select((.updated_at // "") >= $s) | .id' summary.json)
+          if [ -f handoff/round.json ] && command -v shepherd >/dev/null; then
+            # The inline review, from the round JSON, unless one rendered for this head is already on the PR.
+            if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"<!-- shepherd-inline @ ${H0:0:7} -->\"))) | .id" | grep -q .; then
+              (cd repo && shepherd inline ../handoff/round.json) > review.json \
+                && [ "$(jq '.comments | length' review.json)" -gt 0 ] \
+                && gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --method POST --input review.json >/dev/null \
+                || echo "::warning::could not post the rendered inline review"
+            fi
+            fanout=(); [ -f handoff/fanout.json ] && fanout=(--fanout ../handoff/fanout.json)
+            (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md --body "${fanout[@]}") > rendered.md && mv rendered.md handoff/findings.md
+          else
+            [ -n "$fresh" ] && grep -q "@ ${H0:0:7}" summary.md && { echo "the iteration posted its summary ($id)"; exit 0; }
+          fi
           python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
           import re, sys
           CAP = 60000

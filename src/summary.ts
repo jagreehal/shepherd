@@ -291,6 +291,6 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string) {
     return comment;
   });
 
-  return { commit_id: s.head_sha, event: "COMMENT" as const, body: `${header}\n\nSee inline comments.`, comments };
+  return { commit_id: s.head_sha, event: "COMMENT" as const, body: `${header}\n\nSee inline comments.\n<!-- shepherd-inline @ ${s.head_sha.slice(0, 7)} -->`, comments }; // the marker: publish posts no second review for this head
 }
 
