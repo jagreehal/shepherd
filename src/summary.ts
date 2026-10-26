@@ -244,16 +244,78 @@ type InlineComment = { path: string; line: number; side: "RIGHT"; body: string; 
  * severe first, at most ten, in one shape a reader learns once. NITs, findings an open thread already carries, and
  * findings with no line in the diff stay in the summary.
  */
-export function renderReview(raw: SummaryInput, emoji: Emoji, header: string) {
+/** Character-bigram overlap of two snippets, 0 to 1, ignoring indentation and runs of whitespace. */
+function similarity(a: string, b: string): number {
+  const grams = (t: string) => {
+    const x = t.replace(/\s+/g, " ").trim();
+
+    return Array.from({ length: Math.max(0, x.length - 1) }, (_, i) => x.slice(i, i + 2));
+  };
+
+  const [ga, gb] = [grams(a), grams(b)];
+  const pool = new Map<string, number>();
+
+  for (const g of gb) pool.set(g, (pool.get(g) ?? 0) + 1);
+  let shared = 0;
+
+  for (const g of ga) {
+    const n = pool.get(g) ?? 0;
+
+    if (n) {
+      shared += 1;
+      pool.set(g, n - 1);
+    }
+  }
+
+  return ga.length + gb.length ? (2 * shared) / (ga.length + gb.length) : 0;
+}
+
+const NEAR = 5; // how far a misnumbered line is looked for
+
+const LIKE = 0.5; // how alike a suggestion and the lines it replaces must be
+
+/**
+ * Where a suggestion belongs. Models misnumber lines, and GitHub commits a suggestion over whatever lines the comment
+ * covers: a trial's test fix was anchored on the `it(` line above the assertion it rewrote. The suggestion goes on the
+ * window of the same size, within five lines, whose text is most like it; none alike enough, and it is dropped.
+ */
+export function anchorSuggestion(lines: string[], start: number, end: number, suggestion: string): { start: number; end: number } | null {
+  const size = end - start + 1;
+  let best: { start: number; score: number } | null = null;
+
+  for (let from = Math.max(1, start - NEAR); from <= Math.min(lines.length - size + 1, start + NEAR); from++) {
+    const score = similarity(lines.slice(from - 1, from - 1 + size).join("\n"), suggestion);
+
+    if (!best || score > best.score || (score === best.score && Math.abs(from - start) < Math.abs(best.start - start))) best = { start: from, score };
+  }
+
+  return best && best.score >= LIKE ? { start: best.start, end: best.start + size - 1 } : null;
+}
+
+/** A path inside the repository, as the model gave it: never absolute, never climbing out. */
+const insideRepo = (p: string) => !p.startsWith("/") && !p.split(/[\\/]/).includes("..");
+
+export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null) {
   const s = SummaryInput.parse(raw);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
   const posted = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general")).slice(0, PER_REVIEW);
 
   const comments = posted.map((f) => {
-    const [start = 0, end] = String(f.line).split("-").map(Number); // `posted` kept only numeric lines and "a-b" ranges
+    let [start = 0, end] = String(f.line).split("-").map(Number); // `posted` kept only numeric lines and "a-b" ranges
+    // A suggestion is committed as written, so one that could close its own fence is left out rather than mangled, and one
+    // whose lines the file does not show (unreadable, or nothing alike near the line given) is left out rather than misplaced.
+    let fix = f.suggestion !== undefined && !f.suggestion.includes("```") ? f.suggestion : undefined;
+    const text = fix !== undefined && insideRepo(f.file) ? read(f.file) : null;
 
-    // A suggestion is committed as written, so one that could close its own fence is left out rather than mangled.
-    const suggestion = f.suggestion !== undefined && !f.suggestion.includes("```") ? ["", "```suggestion", f.suggestion, "```"] : [];
+    if (fix !== undefined) {
+      const at = text === null ? null : anchorSuggestion(text.split("\n"), start, end ?? start, fix);
+
+      if (at) [start, end] = [at.start, end === undefined ? undefined : at.end];
+      else fix = undefined;
+    }
+
+    const suggestion = fix !== undefined ? ["", "```suggestion", fix, "```"] : [];
+    const where = end === undefined ? `${start}` : `${start}-${end}`;
 
     const body = [
       "> [!NOTE]",
@@ -273,7 +335,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string) {
       "<summary>🤖 Prompt for AI agents</summary>",
       "",
       "`````markdown",
-      `In ${fenced(cite(f))}: ${f.title ? `${fenced(f.title)}. ` : ""}${fenced(f.body)}`,
+      `In ${fenced(cite({ file: f.file, line: where }))}: ${f.title ? `${fenced(f.title)}. ` : ""}${fenced(f.body)}`,
       "",
       "Check this against the current code. If it holds, fix it with a test that fails before the fix; if not, reply with why.",
       "`````",

@@ -565,7 +565,10 @@ if (command === "install") {
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
   const b = branding(policy(opts["working-tree"]));
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm)), null, 2));
+  // The checkout is the reviewed head: suggestions are placed against its files, read from the working directory.
+  const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
+
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read)), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.

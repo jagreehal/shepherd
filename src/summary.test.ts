@@ -131,6 +131,30 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(() => renderSummary({ ...round, findings: [{ ...f, docs: [{ url: "javascript:alert(1)", title: "x" }] }] }, BRANDING.emoji, null)).toThrow();
   });
 
+  // PR 1 on the code-review-playground, as it was reviewed: the model put both fixes on line 9 of each file.
+  const FILES = {
+    "src/welcome.ts": 'import { initials } from "./index";\n\nexport function welcome(name: string): string {\n  return `Hello, ${name}! (${initials(name)})`;\n}\n\n/** Returns the person\'s first name, for informal greetings. */\nexport function firstName(name: string): string {\n  return name.trim().split(" ")[1];\n}\n',
+    "src/welcome.test.ts": 'import { describe, it, expect } from "vitest";\nimport { welcome, welcomeBack } from "./welcome";\n\ndescribe("welcome", () => {\n  it("greets with initials", () => {\n    expect(welcome("Ada Lovelace")).toBe("Hello, Ada Lovelace! (AL)");\n  });\n\n  it("welcomes a returning user", () => {\n    expect(welcomeBack("Ada Lovelace")).toMatch(/^Welcome back, /);\n  });\n});\n',
+  };
+
+  const read = (p: string) => new Map(Object.entries(FILES)).get(p) ?? null;
+
+  test("a suggestion lands on the lines it rewrites, not the line the model named, and is dropped when nothing near is alike", () => {
+    const test = { ...BUG, file: "src/welcome.test.ts", severity: "MEDIUM" as const, title: "The new test passes the bug", suggestion: '    expect(welcomeBack("Ada Lovelace")).toBe("Welcome back, Ada!");' };
+    const [code, moved] = renderReview({ ...RICH, findings: [BUG, test] }, BRANDING.emoji, HEADER, read).comments;
+
+    expect(code).toMatchObject({ path: "src/welcome.ts", line: 9 });
+    expect(code!.body).toContain('```suggestion\n  return name.trim().split(" ")[0];\n```');
+    expect(moved).toMatchObject({ path: "src/welcome.test.ts", line: 10 }); // the assertion, not the `it(` line above it
+    expect(moved!.body).toContain("In src/welcome.test.ts:10:");
+
+    const unrelated = renderReview({ ...RICH, findings: [{ ...BUG, suggestion: "const nothing = 1;" }] }, BRANDING.emoji, HEADER, read).comments[0]!;
+
+    expect(unrelated.line).toBe(9);
+    expect(unrelated.body).not.toContain("```suggestion");
+    expect(renderReview({ ...RICH, findings: [{ ...BUG, file: "../../etc/passwd" }] }, BRANDING.emoji, HEADER, () => "x").comments[0]!.body).not.toContain("```suggestion");
+  });
+
   test("inline comments: titled, with a one-click suggestion and an agent prompt; NITs, carried and lineless findings stay out", () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ ...BUG, line: i + 1, severity: "LOW" as const }));
     const review = renderReview({ ...RICH, findings: [...many, { ...BUG, line: "4-6" }, { ...BUG, inline: false }, { ...BUG, line: "general" }] }, BRANDING.emoji, HEADER);
@@ -141,7 +165,7 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
 
     expect(first).toMatchObject({ path: "src/welcome.ts", start_line: 4, line: 6, side: "RIGHT" });
     expect(first.body).toContain("**[correctness]** 🟠 HIGH\n\n**`firstName` returns the second word**"); // garden reads the tag line
-    expect(first.body).toContain('```suggestion\n  return name.trim().split(" ")[0];\n```');
+    expect(first.body).not.toContain("```suggestion"); // no file to place it against
     expect(first.body).toContain("<summary>🤖 Prompt for AI agents</summary>");
     expect(first.body).toContain("In src/welcome.ts:4-6: `firstName` returns the second word.");
     expect(renderReview({ ...RICH, findings: [{ ...BUG, suggestion: "```\nx" }] }, BRANDING.emoji, HEADER).comments[0]!.body).not.toContain("```suggestion");
