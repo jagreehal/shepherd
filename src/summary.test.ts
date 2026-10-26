@@ -242,6 +242,35 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(marker({ ...RICH, findings: [{ ...BUG, line: 10 }] })?.[2]).not.toBe(first?.[2]); // moved: posts again
   });
 
+  test("a round in a neighbouring shape still renders: the words a model borrows from the report and the local record map onto the round's own", () => {
+    // The Step 8 report's verdict and keys, the local record's skipped lens, a boolean verified and no why.
+    const drifted = {
+      head_sha: RICH.head_sha,
+      round: 1,
+      verdict: "changes_needed",
+      counts: { high: 1 },
+      posted: { inline: 0 },
+      narration: ["[swarm] ..."],
+      findings: [{ ...BUG, verified: true }],
+      lenses: [
+        { lens: "router", status: "skipped", reason: "single lens in fanout, direct dispatch" },
+        { lens: "correctness", status: "completed" },
+      ],
+    };
+
+    const md = renderSummary(drifted, BRANDING.emoji, null);
+
+    expect(md).toContain("## ⚠️ CHANGES NEEDED");
+    expect(md).toContain("· ⚠️ unverified"); // `true` is not evidence
+    expect(md).toContain("| router |  | full | could_not_run | single lens in fanout, direct dispatch |  |");
+    expect(md).toContain("| correctness |  | full | ok | HIGH (1) |  |");
+    expect(renderReview(drifted, BRANDING.emoji, HEADER).comments).toHaveLength(1);
+
+    expect(renderSummary({ ...RICH, findings: [], verdict: "APPROVE WITH NITS" }, BRANDING.emoji, null)).toContain("## 💬 APPROVE WITH NITS");
+    expect(renderSummary({ ...RICH, findings: [], verdict: "looks-good" }, BRANDING.emoji, null)).toContain("## ✅ LOOKS GOOD");
+    expect(() => renderSummary({ ...RICH, verdict: "ship it" }, BRANDING.emoji, null)).toThrow();
+  });
+
   test("a lens that did not finish leaves the round incomplete, and a line past the end of its file never anchors inline", () => {
     expect(renderSummary({ ...RICH, lenses: [{ lens: "security", status: "failed" }] }, BRANDING.emoji, null)).toContain("security (failed) did not finish, so its scope was not reviewed.");
     expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER, read).comments).toHaveLength(0);

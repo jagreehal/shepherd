@@ -10,6 +10,14 @@ const Severity = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "NIT"]);
 
 const THREAD_URL = /^https:\/\/github\.com\/[\w./#-]+$/;
 
+// A model writing the round borrows words from swarm's other JSON shapes (the Step 8 report, the local record):
+// `changes_needed`, `skipped`, `verified: true`. Each maps onto the round's own value, so a near miss still renders.
+const alias = (table: Record<string, string>) => (v: string) => table[v.trim().toLowerCase().replaceAll(/[\s-]+/g, "_")] ?? v;
+
+const VERDICT_ALIAS = alias({ changes_needed: "changes", approve_with_nits: "nits", looks_good: "good", approve: "good", approved: "good" });
+
+const STATUS_ALIAS = alias({ success: "ok", done: "ok", completed: "ok", complete: "ok", passed: "ok", error: "failed", errored: "failed", skipped: "could_not_run", not_run: "could_not_run", did_not_run: "could_not_run", missing: "could_not_run" });
+
 const Finding = z.object({
   file: z.string().default(""),
   line: z
@@ -29,7 +37,8 @@ const Finding = z.object({
   title: z.string().default(""),
   // A thread link that is not a GitHub URL is dropped and the finding kept.
   url: z.string().regex(THREAD_URL).optional().catch(undefined), // the finding's inline thread, linked from the summary
-  verified: z.string().default(""), // what the verifier checked, quoted code included
+  // What the verifier checked, quoted code included. A bare `true` carries no evidence, so it reads as unverified.
+  verified: z.union([z.string(), z.boolean().transform(() => "")]).default(""),
   // The claim made checkable: an input, what the code should do on it, and what it does.
   evidence: z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) }).optional(),
   suggestion: z.string().optional(), // replacement for exactly the lines the comment covers: GitHub's one-click commit
@@ -42,8 +51,8 @@ const Finding = z.object({
 
 export const SummaryInput = z.object({
   head_sha: z.string().regex(/^[0-9a-f]{7,40}$/),
-  verdict: z.enum(["blocked", "changes", "nits", "good"]),
-  why: z.string(),
+  verdict: z.string().transform(VERDICT_ALIAS).pipe(z.enum(["blocked", "changes", "nits", "good"])),
+  why: z.string().default(""),
   confidence: z.number().int().min(0).max(5).optional(), // how safe to merge, 5 safest
   findings: z.array(Finding).default([]),
   walkthrough: z.array(z.string()).default([]), // what the PR does, a few bullets for a reader who never saw it
@@ -54,7 +63,14 @@ export const SummaryInput = z.object({
   pre_merge: z.array(z.object({ check: z.string(), status: z.enum(["pass", "warn", "fail"]), detail: z.string() })).default([]),
   still_open: z.array(z.object({ url: z.string().regex(THREAD_URL).catch(""), title: z.string() })).default([]), // "" renders the title alone
   checks: z.array(z.object({ tool: z.string(), status: z.enum(["ran", "unavailable"]), findings: z.number().default(0), reason: z.string().optional() })).default([]),
-  lenses: z.array(z.object({ lens: z.string(), model: z.string().default(""), scope: z.union([z.string(), z.array(z.string())]).default("full"), status: z.enum(["ok", "failed", "could_not_run"]), take: z.string().default(""), skill_blob: z.string().default("") })).default([]),
+  lenses: z
+    .array(
+      z
+        .object({ lens: z.string(), model: z.string().default(""), scope: z.union([z.string(), z.array(z.string())]).default("full"), status: z.string().transform(STATUS_ALIAS).pipe(z.enum(["ok", "failed", "could_not_run"])), take: z.string().default(""), reason: z.string().default(""), skill_blob: z.string().default("") })
+        // A lens skipped "with a reason", as the local record writes it, keeps the reason as its take.
+        .transform(({ reason, ...l }) => ({ ...l, take: l.take || reason })),
+    )
+    .default([]),
   lenses_yml_blob: z.string().default(""),
 });
 

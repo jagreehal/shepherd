@@ -473,8 +473,19 @@ The verdict is advice to the author. It never becomes a GitHub approval.
 
 Write the round as JSON first (`references/formats.md`): the inline review and
 the summary are both rendered from it, so neither is ever hand-written Markdown.
-With `$SHEPHERD_HANDOFF` set, write it to `$SHEPHERD_HANDOFF/round.json` and
-stop here: the publish job renders and posts both. Otherwise post every inline finding as **one** review, pinned to the reviewed commit:
+With `$SHEPHERD_HANDOFF` set, write it to `$SHEPHERD_HANDOFF/round.json`,
+then check it before you stop:
+
+```bash
+shepherd summary "$SHEPHERD_HANDOFF/round.json" --body > /dev/null
+```
+
+It prints every field the renderer rejects. Fix `round.json` and run it again
+until it prints nothing. The round is its own shape (`references/formats.md`):
+not the Step 8 report (`posted`, `counts`, `narration`) and not the local
+record (`stages`, `candidates`). `verdict` is `blocked`, `changes`, `nits` or
+`good`; `verified` is the text of what the verifier checked. Then stop: the
+publish job renders and posts both. Otherwise post every inline finding as **one** review, pinned to the reviewed commit:
 
 ```bash
 shepherd inline round.json > review.json
