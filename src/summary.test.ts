@@ -71,7 +71,12 @@ describe("swarm summary", () => {
     const bad = (over: Partial<SummaryInput>) => () => renderSummary({ ...ROUND, ...over }, BRANDING.emoji, null);
 
     expect(bad({ findings: [{ file: "a.ts", line: "3`<img src=x>", severity: "LOW", lens: "x", body: "" }] })).toThrow();
-    expect(bad({ still_open: [{ url: "https://github.com/o/r) @team [x](https://evil", title: "t" }] })).toThrow();
+    // A link that is not a GitHub thread URL is dropped and its title kept.
+    const md = renderSummary({ ...ROUND, still_open: [{ url: "https://github.com/o/r) @team [x](https://evil", title: "t" }], findings: [{ ...ROUND.findings![1]!, url: "not a url", reintroduces: "javascript:x" }] }, BRANDING.emoji, null);
+    expect(md).toContain("- t\n");
+    expect(md).not.toContain("evil");
+    expect(md).not.toContain("javascript:");
+    expect(md).not.toContain("not a url");
     expect(renderSummary({ ...ROUND, why: "![x][r] `@team" }, BRANDING.emoji, null)).toContain("!\\[x][r] `@\u200bteam");
   });
 });
@@ -209,9 +214,32 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(md).toContain("_Graded MEDIUM, not HIGH: it names no input with the expected and actual result._");
     expect(md).toContain("**🟠 HIGH** · `src/welcome.ts:9` · checks/secrets"); // a check carries its own evidence
     expect(md.match(/⚠️ unverified/g)).toHaveLength(2); // both MEDIUMs, not the check
-    expect(md).toContain("## ⚠️ CHANGES NEEDED"); // 1 HIGH + 2 MEDIUM, whatever the round said
+    expect(md).toContain("## ⚠️ CHANGES NEEDED"); // a HIGH, whatever the round said
     expect(md).toContain("(Raised from LOOKS GOOD: the findings grade it CHANGES NEEDED.)");
     expect(md).toContain('**Input:** "Ada Lovelace" · **Expected:** "Ada" · **Actual:** "Lovelace"');
+  });
+
+  test("one confirmed HIGH means changes needed, the router is an expected reviewer, and a lens's take comes from its findings", () => {
+    const round = { ...RICH, verdict: "nits" as const, findings: [BUG, { ...BUG, severity: "MEDIUM" as const, file: "src/welcome.test.ts", line: 10 }] };
+    expect(renderSummary(round, BRANDING.emoji, null)).toContain("## ⚠️ CHANGES NEEDED");
+    expect(renderSummary({ ...RICH, verdict: "good", findings: [{ ...BUG, severity: "MEDIUM" }] }, BRANDING.emoji, null)).toContain("## 💬 APPROVE WITH NITS");
+
+    // The round reported correctness as LOW and left the router out; the fanout listed correctness for this head.
+    const fanout = { head_sha: RICH.head_sha, lenses: [{ lens: "correctness", scope: "full" }] };
+    const md = renderSummary({ ...round, lenses: [{ lens: "correctness", status: "ok", take: "LOW" }] }, BRANDING.emoji, null, undefined, fanout);
+    expect(md).toContain("| correctness |  | full | ok | HIGH (2) |  |"); // correctness tags both findings
+    expect(md).toContain("| router |  | full | could_not_run | listed by fanout, no result reported |  |");
+    expect(md).toContain("router did not run as its own reviewer, so this round is incomplete.");
+    // A lens no finding names keeps the model's own line.
+    expect(renderSummary({ ...RICH, lenses: [{ lens: "security", status: "ok", take: "nothing found" }] }, BRANDING.emoji, null)).toContain("| security |  | full | ok | nothing found |  |");
+  });
+
+  test("the inline review's marker names the head and its comments, so a new round on the same head posts again", () => {
+    const marker = (r: SummaryInput) => /<!-- shepherd-inline @ ([0-9a-f]{7}) ([0-9a-f]{12}) -->/.exec(renderReview(r, BRANDING.emoji, HEADER).body);
+    const first = marker(RICH);
+    expect(first?.[1]).toBe(RICH.head_sha.slice(0, 7));
+    expect(marker(RICH)?.[2]).toBe(first?.[2]); // the same comments: publish skips them
+    expect(marker({ ...RICH, findings: [{ ...BUG, line: 10 }] })?.[2]).not.toBe(first?.[2]); // moved: posts again
   });
 
   test("a lens that did not finish leaves the round incomplete, and a line past the end of its file never anchors inline", () => {
