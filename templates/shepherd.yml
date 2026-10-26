@@ -341,7 +341,8 @@ jobs:
           mkdir -p "$SHEPHERD_HANDOFF" && cp "$SHEPHERD_FANOUT" "$SHEPHERD_HANDOFF/fanout.json"
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
-          the router and every lens listed there in one message. Write the round to $SHEPHERD_HANDOFF/round.json: the publish
+          the router and every lens listed there in one message. Write the round to $SHEPHERD_HANDOFF/round.json and check it
+          with 'shepherd summary $SHEPHERD_HANDOFF/round.json --body > /dev/null', fixing every error it prints: the publish
           job renders and posts the inline review and the summary from it, so post neither yourself. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
