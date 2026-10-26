@@ -2,6 +2,7 @@
  * Swarm's summary comment, rendered in code from the round's JSON. The comment keeps the same shape every round, so a
  * reader scans one line per section and garden parses the heading. Every model-written string is defused here.
  */
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BRANDING } from "./config.ts";
 
@@ -26,7 +27,8 @@ const Finding = z.object({
   convergent: z.boolean().default(false),
   // A reader triages by the title alone: a claim they can check, such as "`firstName` returns the second word".
   title: z.string().default(""),
-  url: z.string().regex(THREAD_URL).optional(), // the finding's inline thread, linked from the summary
+  // A thread link that is not a GitHub URL is dropped and the finding kept.
+  url: z.string().regex(THREAD_URL).optional().catch(undefined), // the finding's inline thread, linked from the summary
   verified: z.string().default(""), // what the verifier checked, quoted code included
   // The claim made checkable: an input, what the code should do on it, and what it does.
   evidence: z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) }).optional(),
@@ -35,7 +37,7 @@ const Finding = z.object({
   // The read-only commands the reviewer or verifier ran to check it.
   checked: z.array(z.object({ command: z.string(), result: z.string() })).default([]),
   docs: z.array(z.object({ url: z.string().regex(/^https:\/\/[^\s()<>`]+$/), title: z.string() })).default([]), // the documentation the claim rests on
-  reintroduces: z.string().regex(THREAD_URL).optional(), // a resolved thread whose fix this change undoes
+  reintroduces: z.string().regex(THREAD_URL).optional().catch(undefined), // a resolved thread whose fix this change undoes
 });
 
 export const SummaryInput = z.object({
@@ -50,7 +52,7 @@ export const SummaryInput = z.object({
   diagram: z.string().default(""), // mermaid flowchart source, when the change has a flow worth drawing
   // Pre-merge checks: do the title, description, linked issue and scope match the diff.
   pre_merge: z.array(z.object({ check: z.string(), status: z.enum(["pass", "warn", "fail"]), detail: z.string() })).default([]),
-  still_open: z.array(z.object({ url: z.string().regex(THREAD_URL), title: z.string() })).default([]),
+  still_open: z.array(z.object({ url: z.string().regex(THREAD_URL).catch(""), title: z.string() })).default([]), // "" renders the title alone
   checks: z.array(z.object({ tool: z.string(), status: z.enum(["ran", "unavailable"]), findings: z.number().default(0), reason: z.string().optional() })).default([]),
   lenses: z.array(z.object({ lens: z.string(), model: z.string().default(""), scope: z.union([z.string(), z.array(z.string())]).default("full"), status: z.enum(["ok", "failed", "could_not_run"]), take: z.string().default(""), skill_blob: z.string().default("") })).default([]),
   lenses_yml_blob: z.string().default(""),
@@ -146,9 +148,10 @@ function verdictFloor(findings: { severity: z.infer<typeof Severity> }[]): keyof
 
   if (n("CRITICAL")) return "blocked";
 
-  if (n("HIGH") >= 2 || (n("HIGH") === 1 && n("MEDIUM") >= 2)) return "changes";
+  // A HIGH that survives checkedRound names an input the code gets wrong, or is a failing check.
+  if (n("HIGH")) return "changes";
 
-  return n("HIGH") || n("MEDIUM") ? "nits" : "good";
+  return n("MEDIUM") ? "nits" : "good";
 }
 
 const STRICTNESS = ["good", "nits", "changes", "blocked"] as const;
@@ -189,6 +192,14 @@ export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>) {
   return s;
 }
 
+/** The worst severity among the findings whose tag names the lens (`correctness/data`, `correctness + security`), and how many. */
+function lensTake(lens: string, findings: { lens: string; severity: z.infer<typeof Severity> }[]): string | undefined {
+  const mine = findings.filter((f) => f.lens.split(/[\s+/]+/).includes(lens));
+  const worst = SEVERITIES.find((sev) => mine.some((f) => f.severity === sev));
+
+  return worst && `${worst} (${mine.length})`;
+}
+
 /** A finding above NIT that no verifier checked. */
 const unverified = (f: z.infer<typeof Finding>) => f.severity !== "NIT" && !fromChecks(f) && !f.verified && !f.checked.length;
 
@@ -202,8 +213,11 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   // as could_not_run.
   const wave = fanout ? Fanout.parse(fanout) : null;
   const sameHead = wave !== null && (wave.head_sha.startsWith(s.head_sha) || s.head_sha.startsWith(wave.head_sha));
-  const skipped = sameHead ? wave.lenses.filter((w) => !s.lenses.some((l) => l.lens === w.lens)) : [];
-  const lenses = [...s.lenses, ...skipped.map((w) => ({ lens: w.lens, model: "", scope: w.scope, status: "could_not_run" as const, take: "listed by fanout, no result reported", skill_blob: "" }))];
+  // The router runs beside every first wave, so a round that leaves it out is missing a reviewer too.
+  const expected = sameHead ? [{ lens: "router", scope: "full" as const }, ...wave.lenses] : [];
+  const skipped = expected.filter((w) => !s.lenses.some((l) => l.lens === w.lens));
+  // A lens's take comes from the findings that name it, so it always agrees with them.
+  const lenses = [...s.lenses.map((l) => ({ ...l, take: lensTake(l.lens, s.findings) ?? l.take })), ...skipped.map((w) => ({ lens: w.lens, model: "", scope: w.scope, status: "could_not_run" as const, take: "listed by fanout, no result reported", skill_blob: "" }))];
   const [key, label] = VERDICT[s.verdict];
   const { round, history } = earlierRounds(previous);
   const sha = s.head_sha.slice(0, 7);
@@ -435,6 +449,10 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
     return comment;
   });
 
-  return { commit_id: s.head_sha, event: "COMMENT" as const, body: `${header}\n\nSee inline comments.\n<!-- shepherd-inline @ ${s.head_sha.slice(0, 7)} -->`, comments }; // the marker: publish posts no second review for this head
+  // The marker names the head and the comments: publish skips a review only when these same comments are already on
+  // the PR, so a new round on the same head posts its own.
+  const fingerprint = createHash("sha256").update(JSON.stringify(comments)).digest("hex").slice(0, 12);
+
+  return { commit_id: s.head_sha, event: "COMMENT" as const, body: `${header}\n\nSee inline comments.\n<!-- shepherd-inline @ ${s.head_sha.slice(0, 7)} ${fingerprint} -->`, comments };
 }
 

@@ -503,15 +503,25 @@ jobs:
           started=${RUN_STARTED:-$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)}
           fresh=$(jq -r --arg s "$started" 'select((.updated_at // "") >= $s) | .id' summary.json)
           if [ -f handoff/round.json ] && command -v shepherd >/dev/null; then
-            # The inline review, from the round JSON, unless one rendered for this head is already on the PR.
-            if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"<!-- shepherd-inline @ ${H0:0:7} -->\"))) | .id" | grep -q .; then
-              (cd repo && shepherd inline ../handoff/round.json) > review.json \
-                && [ "$(jq '.comments | length' review.json)" -gt 0 ] \
-                && gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --method POST --input review.json >/dev/null \
-                || echo "::warning::could not post the rendered inline review"
+            # The inline review, from the round JSON, unless these same comments are already on the PR: its marker names
+            # the head and a fingerprint of the comments, so a new round on an unchanged head still posts its own.
+            if ! (cd repo && shepherd inline ../handoff/round.json) > review.json; then
+              echo "::warning::could not render the inline review"
+            elif [ "$(jq '.comments | length' review.json)" -gt 0 ]; then
+              marker=$(jq -r .body review.json | grep -o '<!-- shepherd-inline @ [0-9a-f]* [0-9a-f]* -->' | tail -1)
+              if [ -n "$marker" ] && gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | .body' | grep -F -- "$marker" >/dev/null; then
+                echo "this round's inline review is already on the PR"
+              else
+                gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --method POST --input review.json >/dev/null || echo "::warning::could not post the rendered inline review"
+              fi
             fi
             fanout=(); [ -f handoff/fanout.json ] && fanout=(--fanout ../handoff/fanout.json)
-            (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md --body "${fanout[@]}") > rendered.md && mv rendered.md handoff/findings.md
+            # A round the CLI cannot render keeps whatever findings.md the model wrote; with neither, say so and stop.
+            if (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md --body "${fanout[@]}") > rendered.md; then
+              mv rendered.md handoff/findings.md
+            elif [ ! -f handoff/findings.md ]; then
+              echo "::warning::could not render the round's summary, and the iteration left no findings.md"; exit 0
+            fi
           else
             [ -n "$fresh" ] && grep -q "@ ${H0:0:7}" summary.md && { echo "the iteration posted its summary ($id)"; exit 0; }
           fi

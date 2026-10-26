@@ -85,13 +85,15 @@ change has a flow a reader would otherwise reconstruct (a request path, a state
 machine, data moving between modules); leave it empty for a helper function.
 The new fields are optional: a round without them renders as before.
 The renderers hold the round to what they can check. A `url`, `reintroduces`
-or still-open link that names no review comment on the PR loses its link.
+or still-open link that names no review comment on the PR, or is not a
+GitHub URL, loses its link.
 `convergent` needs a tag naming two lenses (`a + b`). A finding above NIT with
 neither `verified` nor `checked` is shown as unverified, `checks/*` findings
 aside. A HIGH or CRITICAL with no `evidence` is graded MEDIUM, `checks/*`
 findings aside, and says so. A `verdict` milder than the findings allow by
 Step 6's rule is raised to the stricter one, and `why` says so. A lens that
-did not finish marks the round incomplete. An inline finding whose line is
+did not finish marks the round incomplete. A lens's take is the worst
+severity among the findings its tag names, when any do. An inline finding whose line is
 past the end of its file stays in the summary. So give each thread
 link a review comment's `html_url` (`#discussion_r<id>`), and an issue comment's
 never.
@@ -107,7 +109,7 @@ title: findings, numbered and linked to their threads (open unless the
 verdict is LOOKS GOOD), one agent prompt holding every finding above NIT, the
 walkthrough (bullets, a file table, review effort, the diagram), still open,
 checks, lenses, and earlier rounds folded one line each. With `--fanout` (in CI,
-`$SHEPHERD_FANOUT`), a first-wave lens the round does not report shows as
+`$SHEPHERD_FANOUT`), the router or a first-wave lens the round does not report shows as
 `could_not_run` and the round says it is incomplete. With `--body` it keeps the
 round number but leaves the history out: the publish job folds the comment it
 replaces in itself, so the history would otherwise appear twice. It escapes markers, mentions

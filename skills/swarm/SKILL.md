@@ -463,8 +463,8 @@ new side of the diff.
   P1 counts as HIGH). A gate that refused this head for an issue the code still
   has counts too:
   - any CRITICAL -> `emoji.blocked` (🚫) BLOCKED
-  - 2+ HIGH, or 1 HIGH + 2 MEDIUM -> `emoji.changes_needed` (⚠️) CHANGES NEEDED
-  - 1 HIGH, or any MEDIUM -> `emoji.approve_with_nits` (💬) APPROVE WITH NITS
+  - any HIGH -> `emoji.changes_needed` (⚠️) CHANGES NEEDED
+  - any MEDIUM -> `emoji.approve_with_nits` (💬) APPROVE WITH NITS
   - only LOW, NIT, or nothing -> `emoji.looks_good` (✅) LOOKS GOOD
 
 The verdict is advice to the author. It never becomes a GitHub approval.
