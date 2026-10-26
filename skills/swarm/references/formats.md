@@ -83,7 +83,8 @@ left, 1 or 0 a HIGH or CRITICAL standing. `effort` is how long a careful human
 read takes, 1 (a minute) to 5 (an hour or more). Draw a `diagram` only when the
 change has a flow a reader would otherwise reconstruct (a request path, a state
 machine, data moving between modules); leave it empty for a helper function.
-The new fields are optional: a round without them renders as before.
+The new fields are optional: a round without them renders as before. A field
+written as `null` reads as absent and takes its default.
 The renderers hold the round to what they can check. A `url`, `reintroduces`
 or still-open link that names no review comment on the PR, or is not a
 GitHub URL, loses its link.

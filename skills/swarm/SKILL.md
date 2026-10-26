@@ -480,8 +480,9 @@ then check it before you stop:
 shepherd summary "$SHEPHERD_HANDOFF/round.json" --body > /dev/null
 ```
 
-It prints every field the renderer rejects. Fix `round.json` and run it again
-until it prints nothing. The round is its own shape (`references/formats.md`):
+It prints every field the renderer rejects on stderr, so keep stderr visible.
+Fix `round.json` and run it again until it prints nothing. The workflow runs
+the same check after you stop. The round is its own shape (`references/formats.md`):
 not the Step 8 report (`posted`, `counts`, `narration`) and not the local
 record (`stages`, `candidates`). `verdict` is `blocked`, `changes`, `nits` or
 `good`; `verified` is the text of what the verifier checked. Then stop: the

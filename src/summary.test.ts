@@ -271,6 +271,16 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(() => renderSummary({ ...RICH, verdict: "ship it" }, BRANDING.emoji, null)).toThrow();
   });
 
+  test("a field written as null reads as absent: the round renders with each field's default", () => {
+    const nulls = { suggestion: null, evidence: null, url: null, reintroduces: null, title: null, verified: null, checked: null, docs: null, inline: null, convergent: null };
+    const round = { ...RICH, why: null, confidence: null, effort: null, diagram: null, findings: [{ ...BUG, ...nulls }] };
+    const md = renderSummary(round, BRANDING.emoji, null);
+
+    expect(md).toContain("_Graded MEDIUM, not HIGH: it names no input with the expected and actual result._");
+    expect(md).not.toContain("Confidence");
+    expect(renderReview(round, BRANDING.emoji, HEADER).comments[0]!.body).not.toContain("```suggestion");
+  });
+
   test("a lens that did not finish leaves the round incomplete, and a line past the end of its file never anchors inline", () => {
     expect(renderSummary({ ...RICH, lenses: [{ lens: "security", status: "failed" }] }, BRANDING.emoji, null)).toContain("security (failed) did not finish, so its scope was not reviewed.");
     expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER, read).comments).toHaveLength(0);

@@ -342,11 +342,20 @@ jobs:
           opencode run --auto -m "$model" --title "shepherd #$PR" "Load the shepherd skill and run exactly one iteration on PR $PR in handoff mode:
           SHEPHERD_HANDOFF is set, so follow the skill's Handoff mode. Swarm's first wave is in $SHEPHERD_FANOUT: dispatch
           the router and every lens listed there in one message. Write the round to $SHEPHERD_HANDOFF/round.json and check it
-          with 'shepherd summary $SHEPHERD_HANDOFF/round.json --body > /dev/null', fixing every error it prints: the publish
-          job renders and posts the inline review and the summary from it, so post neither yourself. You are running in GitHub Actions on the PR branch,
+          with 'shepherd summary $SHEPHERD_HANDOFF/round.json --body > /dev/null', fixing every error it prints on stderr (never
+          redirect stderr): the publish job renders and posts the inline review and the summary from it, so post neither
+          yourself. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
           iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
+          # The job checks the round itself. A round that does not render gets one short call with the exact errors.
+          round="$SHEPHERD_HANDOFF/round.json"
+          if [ -f "$round" ] && ! errors=$(shepherd summary "$round" --body 2>&1 >/dev/null); then
+            echo "::warning::round.json does not render; asking the model to fix it"
+            opencode run --auto -m "$model" --title "shepherd #$PR round.json" "The round you wrote to $round does not
+          render. Fix exactly these errors in that file and change nothing else, then run 'shepherd summary $round --body > /dev/null'
+          and repeat until it prints nothing on stderr. Errors: ${errors:0:6000}" || true
+          fi
       - name: Bundle the commits
         env:
           H0: ${{ needs.gate.outputs.head }}

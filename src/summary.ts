@@ -14,51 +14,58 @@ const THREAD_URL = /^https:\/\/github\.com\/[\w./#-]+$/;
 // `changes_needed`, `skipped`, `verified: true`. Each maps onto the round's own value, so a near miss still renders.
 const alias = (table: Record<string, string>) => (v: string) => table[v.trim().toLowerCase().replaceAll(/[\s-]+/g, "_")] ?? v;
 
+// Models write `null` for a field they have nothing for. Null reads as absent, so the field takes its default.
+const absent = <T extends z.ZodType>(t: T) => t.nullish().transform((v) => v ?? undefined);
+
+const text = z.string().nullish().transform((v) => v ?? "");
+
+const flag = (fallback: boolean) => z.boolean().nullish().transform((v) => v ?? fallback);
+
 const VERDICT_ALIAS = alias({ changes_needed: "changes", approve_with_nits: "nits", looks_good: "good", approve: "good", approved: "good" });
 
 const STATUS_ALIAS = alias({ success: "ok", done: "ok", completed: "ok", complete: "ok", passed: "ok", error: "failed", errored: "failed", skipped: "could_not_run", not_run: "could_not_run", did_not_run: "could_not_run", missing: "could_not_run" });
 
 const Finding = z.object({
-  file: z.string().default(""),
-  line: z
-    .union([
+  file: text,
+  line: absent(
+    z.union([
       z.number().int().positive(),
       z
         .string()
         .regex(/^(?:[1-9]\d*(?:-[1-9]\d*)?|general)$/)
         .refine((l) => !l.includes("-") || Number(l.split("-")[0]) <= Number(l.split("-")[1]), "a range runs start-end, start first"),
-    ])
-    .optional(),
+    ]),
+  ),
   severity: Severity,
   lens: z.string(),
   body: z.string(),
-  convergent: z.boolean().default(false),
+  convergent: flag(false),
   // A reader triages by the title alone: a claim they can check, such as "`firstName` returns the second word".
-  title: z.string().default(""),
+  title: text,
   // A thread link that is not a GitHub URL is dropped and the finding kept.
-  url: z.string().regex(THREAD_URL).optional().catch(undefined), // the finding's inline thread, linked from the summary
+  url: absent(z.string().regex(THREAD_URL)).catch(undefined), // the finding's inline thread, linked from the summary
   // What the verifier checked, quoted code included. A bare `true` carries no evidence, so it reads as unverified.
-  verified: z.union([z.string(), z.boolean().transform(() => "")]).default(""),
+  verified: z.union([z.string(), z.boolean().transform(() => "")]).nullish().transform((v) => v ?? ""),
   // The claim made checkable: an input, what the code should do on it, and what it does.
-  evidence: z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) }).optional(),
-  suggestion: z.string().optional(), // replacement for exactly the lines the comment covers: GitHub's one-click commit
-  inline: z.boolean().default(true), // false when the finding has no line in the diff to anchor on
+  evidence: absent(z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) })),
+  suggestion: absent(z.string()), // replacement for exactly the lines the comment covers: GitHub's one-click commit
+  inline: flag(true), // false when the finding has no line in the diff to anchor on
   // The read-only commands the reviewer or verifier ran to check it.
-  checked: z.array(z.object({ command: z.string(), result: z.string() })).default([]),
-  docs: z.array(z.object({ url: z.string().regex(/^https:\/\/[^\s()<>`]+$/), title: z.string() })).default([]), // the documentation the claim rests on
-  reintroduces: z.string().regex(THREAD_URL).optional().catch(undefined), // a resolved thread whose fix this change undoes
+  checked: z.array(z.object({ command: z.string(), result: z.string() })).nullish().transform((v) => v ?? []),
+  docs: z.array(z.object({ url: z.string().regex(/^https:\/\/[^\s()<>`]+$/), title: z.string() })).nullish().transform((v) => v ?? []), // the documentation the claim rests on
+  reintroduces: absent(z.string().regex(THREAD_URL)).catch(undefined), // a resolved thread whose fix this change undoes
 });
 
 export const SummaryInput = z.object({
   head_sha: z.string().regex(/^[0-9a-f]{7,40}$/),
   verdict: z.string().transform(VERDICT_ALIAS).pipe(z.enum(["blocked", "changes", "nits", "good"])),
-  why: z.string().default(""),
-  confidence: z.number().int().min(0).max(5).optional(), // how safe to merge, 5 safest
+  why: text,
+  confidence: absent(z.number().int().min(0).max(5)), // how safe to merge, 5 safest
   findings: z.array(Finding).default([]),
   walkthrough: z.array(z.string()).default([]), // what the PR does, a few bullets for a reader who never saw it
   changes: z.array(z.object({ files: z.array(z.string()).min(1), summary: z.string() })).default([]),
-  effort: z.number().int().min(1).max(5).optional(), // review effort, 1 trivial to 5 a long careful read
-  diagram: z.string().default(""), // mermaid flowchart source, when the change has a flow worth drawing
+  effort: absent(z.number().int().min(1).max(5)), // review effort, 1 trivial to 5 a long careful read
+  diagram: text, // mermaid flowchart source, when the change has a flow worth drawing
   // Pre-merge checks: do the title, description, linked issue and scope match the diff.
   pre_merge: z.array(z.object({ check: z.string(), status: z.enum(["pass", "warn", "fail"]), detail: z.string() })).default([]),
   still_open: z.array(z.object({ url: z.string().regex(THREAD_URL).catch(""), title: z.string() })).default([]), // "" renders the title alone
