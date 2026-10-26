@@ -1,0 +1,15 @@
+{
+  "id": "suggestion-near-fix",
+  "split": "heldout",
+  "source": { "repo": ".", "base": "894ccf0a5e366b1e1b88b27ffad9998519e84923", "head": "bdda7221815c7c600803a28d99ff8f79e5df7524" },
+  "bugs": [
+    {
+      "id": "anchors-on-the-fix",
+      "claim": "anchorSuggestion moves a suggestion to the nearby window most like it, which can be code that already holds the fix: a wrong `xs[1]` on line 2 and a right `xs[0]` on line 5 put the `xs[0]` suggestion on line 5 and leave the bug.",
+      "checked": "Reproduced 2026-10-26 with that input; fixed with a regression test in src/summary.test.ts.",
+      "at": [{ "file": "src/summary.ts", "lines": [282, 292] }],
+      "match": ["(suggestion|anchor|placement|replacement)[^.]{0,80}(already (contains|holds|has|applies)|already-fixed|correct (code|line|lines))", "(already (contains|holds|has|applies) the fix|already-fixed|correct (code|line|lines))[^.]{0,80}(suggestion|anchor|replacement)", "(suggestion|anchor|replacement)[^.]{0,80}(leav(es|ing) the bug|wrong (line|lines|window))", "(relocat|ambiguous)[^.]{0,60}(suggestion|anchor)|(suggestion|anchor)[^.]{0,60}(relocat|ambiguous)"]
+    }
+  ],
+  "note": "The tag eval/suggestion-near-fix keeps the head reachable."
+}

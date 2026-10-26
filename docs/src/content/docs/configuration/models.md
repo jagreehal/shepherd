@@ -61,6 +61,10 @@ models:
 
 Your personal file (`~/.config/shepherd/lenses.yml`, `--global`) fills only names the team left open.
 
+## Choose models from measurements
+
+Pick a ladder from eval scores. [`shepherd eval`](/shepherd/contributing/evaluation/) runs each configuration several times over the same cases and names the cheapest one whose held-out recall and precision sit within noise of the best. Measure before you move a role down a rung.
+
 ## Model ids
 
 Write ids the way your harness takes them (`haiku` on Claude Code, `provider/model` on OpenCode), or stamp's `provider:model`, so one set of tiers serves both tools. Shepherd writes stamp's spelling the OpenCode way (`bedrock:` becomes `amazon-bedrock/`, `vertex:` becomes `google-vertex/`), and `shepherd models` shows both.

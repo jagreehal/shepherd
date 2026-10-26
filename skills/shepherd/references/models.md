@@ -64,6 +64,13 @@ silently land every runner on the session model: that is the costliest outcome
 and the one this ladder exists to prevent. When a caller passes a ladder, use it
 exactly and ignore this table.
 
+## Changing the defaults
+
+A default rung, the harness ladder above, or a role below changes only on
+`shepherd eval score` results over the held-out cases (`evals/README.md` in the
+shepherd repository): the cheapest configuration within noise of the best.
+Price alone never moves a role down a rung.
+
 ## Roles
 
 - **Bottom rung:** work that only reads and that a later step checks: the swarm

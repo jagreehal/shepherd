@@ -344,7 +344,7 @@ export function receiptStatus(repoRoot: string, base?: string): ReceiptStatus {
 
 const DEMO = path.resolve(import.meta.dir, "..", "examples", "local-demo");
 
-export type DemoBug = { id: string; class: string; file: string; lines: [number, number]; enters_as: string };
+export type DemoBug = { id: string; class: string; file: string; lines: [number, number]; enters_as: string; match: string[] };
 
 export const demoBugs = (): DemoBug[] => JSON.parse(readFileSync(path.join(DEMO, "expected.json"), "utf8")).bugs;
 

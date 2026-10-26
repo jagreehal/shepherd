@@ -44,7 +44,16 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | `shepherd local demo [<dir>]` | Create the planted-bug demonstration repository |
 | `shepherd acceptance <suggest\|local> [--pr <n>] -- <agent-command>...` | Run an agent and check its writes against the mode |
 
-A `complete` local record proves the review covered the captured ranges. It does not establish that the reviewer found each defect. An edit invalidates the matching receipt.
+A `complete` local record proves the review covered the captured ranges. It does not establish that the reviewer found each defect: `shepherd eval` measures that. An edit invalidates the matching receipt.
+
+## Evaluation: terminal
+
+| Command | Purpose |
+| --- | --- |
+| `shepherd eval run <cases-dir> --config <label> -- <agent-command>...` | Review each case in a fresh clone of its head and keep each run; `--repeat <n>`, `--out <dir>`; `{base}` and `{head}` in the command are filled in |
+| `shepherd eval score <runs-dir>` | Recall, precision, false positives and duplicates per configuration, development and held-out apart, and the cheapest configuration within noise of the best; `--cases <dir>`, `--json` |
+
+See [measure review accuracy](/shepherd/contributing/evaluation/).
 
 ## Operations: terminal
 

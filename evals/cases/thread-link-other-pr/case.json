@@ -1,0 +1,15 @@
+{
+  "id": "thread-link-other-pr",
+  "split": "heldout",
+  "source": { "repo": ".", "base": "bdda7221815c7c600803a28d99ff8f79e5df7524", "head": "f4364bf898010b58a89013917a5324138ab8564f" },
+  "bugs": [
+    {
+      "id": "id-only-link-check",
+      "claim": "checkedRound keeps a thread link when its `#discussion_r<id>` fragment names a review comment on the PR, whatever the rest of the URL says: with comment 42 on this PR, https://github.com/other/repo/pull/999#discussion_r42 survives.",
+      "checked": "Reproduced 2026-10-26 with that URL; fixed by matching the comments' html_url, with a regression test in src/summary.test.ts.",
+      "at": [{ "file": "src/summary.ts", "lines": [143, 143] }, { "file": "src/cli.ts", "lines": [176, 178] }],
+      "match": ["(other|another|different)[/ ](repo|pr|pull)", "(only|just) (the|its) (comment )?id", "(fragment|discussion_r|#discussion)[^.]{0,80}(only|alone|rest of the url|any (repo|pr|url))", "(canonical|full|whole) url|html_url"]
+    }
+  ],
+  "note": "The tag eval/thread-link-other-pr keeps the head reachable."
+}

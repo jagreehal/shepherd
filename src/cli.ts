@@ -25,6 +25,8 @@
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
 // shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
 // shepherd stack <pr>                              (JSON: a stacked parent and the range to review, or a wrong base)
+// shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...  (review each case, keep each run)
+// shepherd eval score <runs-dir> [--cases <dir>] [--json]  (precision and recall per configuration, dev and held-out apart)
 // shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]  (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
 // shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>
 // shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
@@ -50,6 +52,7 @@ import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts"
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
 import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
+import { loadCases, loadRuns, pick, prepare, runCase, scoreRuns, treeHash } from "./eval.ts";
 import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
 import { prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
@@ -88,6 +91,8 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
        shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
        shepherd stack <pr>
+       shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...
+       shepherd eval score <runs-dir> [--cases <dir>] [--json]
        shepherd model-id <provider:model | provider/model>
        shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]
        shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
@@ -128,7 +133,7 @@ const { values: opts, positionals } = parseArgs({
     label: { type: "string" }, // workflows: ci.label, the handoff label
     "aws-region": { type: "string" }, // workflows: ci.aws_region, for a bedrock: model
     stacks: { type: "boolean", default: false }, // init: add a lens for each stack the repository uses
-    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR
+    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR; summary, inline: the PR whose review threads a link may name
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
     retries: { type: "string" },
@@ -138,6 +143,10 @@ const { values: opts, positionals } = parseArgs({
     "ci-run": { type: "string" },
     "ci-attempt": { type: "string" },
     related: { type: "string", multiple: true }, // trace flush: traceparent of a related trace, such as stamp's review
+    config: { type: "string" }, // eval run: the label runs are grouped and compared under
+    repeat: { type: "string", default: "1" }, // eval run: reviews per case; one run says little about a model
+    out: { type: "string" }, // eval run: where run files go, default evals/runs
+    cases: { type: "string" }, // eval score: the cases the runs reviewed, default evals/cases
   },
 });
 
@@ -162,6 +171,24 @@ const report = (outcomes: Outcome[]) => {
 };
 
 const [command, sub, skillRef, ...rest] = positionals;
+
+/**
+ * The URLs of the review comments on the PR as GitHub gives them (`--pr`, or `$PR` in CI, with `$GITHUB_REPOSITORY`), so
+ * a rendered thread link can only name a thread that exists on this PR. Unknown (no PR, gh failing): undefined, and links are kept as the round gave them.
+ */
+function reviewThreads(): Set<string> | undefined {
+  const pr = opts.pr ?? process.env.PR;
+
+  if (!pr || !/^\d+$/.test(pr)) return undefined;
+
+  try {
+    const out = execFileSync("gh", ["api", `repos/${process.env.GITHUB_REPOSITORY ?? "{owner}/{repo}"}/pulls/${pr}/comments`, "--paginate", "--jq", ".[].html_url"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 });
+
+    return new Set(out.split("\n").filter(Boolean));
+  } catch {
+    return undefined;
+  }
+}
 
 /** Print a lens error as one line and exit 1. */
 const orExit = <T>(run: () => T): T => {
@@ -559,13 +586,16 @@ if (command === "install") {
 
   const fanout = fanoutFile && existsSync(fanoutFile) ? orExit(() => JSON.parse(readFileSync(fanoutFile, "utf8"))) : undefined;
 
-  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout)));
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads())));
 } else if (command === "inline" && sub) {
   // Swarm's inline review, rendered from the same round JSON: the payload for POST /pulls/<n>/reviews.
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
   const b = branding(policy(opts["working-tree"]));
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm)), null, 2));
+  // The checkout is the reviewed head: suggestions are placed against its files, read from the working directory.
+  const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
+
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads())), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
@@ -613,6 +643,47 @@ if (command === "install") {
   else for (const c of checks) console.log(`${c.status.padEnd(5)} ${c.check.padEnd(28)} ${c.detail}${c.fix ? `\n${"".padEnd(34)} -> ${c.fix}` : ""}`);
 
   if (checks.some((c) => c.status === "fail")) process.exitCode = 1;
+} else if (command === "eval" && sub === "run" && skillRef && rest.length && opts.config) {
+  // Each case reviewed in a fresh copy of its head, so no PR comment can reach the reviewer; one file per run, in a
+  // directory of this invocation's own, so a later run never overwrites an earlier one.
+  const casesDir = path.resolve(skillRef);
+  const cases = orExit(() => loadCases(casesDir));
+  const caseRoot = execFileSync("git", ["-C", casesDir, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const out = path.resolve(opts.out ?? path.join(repoRoot, "evals", "runs"), opts.config.replace(/[^\w.-]/g, "_"), new Date().toISOString().replace(/[:.]/g, "-"));
+
+  const commit = (() => {
+    try {
+      return execFileSync("git", ["-C", BUNDLE_ROOT, "rev-parse", "--short", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return "unknown";
+    }
+  })();
+
+  mkdirSync(out, { recursive: true });
+
+  for (const c of cases) {
+    for (let n = 0; n < Number(opts.repeat); n++) {
+      const scratch = mkdtempSync(path.join(tmpdir(), `shepherd-eval-${c.id}-`));
+      const run = orExit(() => runCase(c, prepare(c, caseRoot, scratch), rest, { config: opts.config!, run: n, shepherd: `${bundleVersion()}@${commit} skills:${treeHash(path.join(BUNDLE_ROOT, "skills"))}` }));
+
+      writeFileSync(path.join(out, `${c.id}-${n}.json`), `${JSON.stringify(run, null, 2)}\n`);
+      console.log(`${run.status.padEnd(10)} ${c.id} #${n}  ${run.findings.length} finding(s)  ${(run.duration_ms / 1000).toFixed(0)}s${run.cost_usd === null ? "" : `  $${run.cost_usd.toFixed(2)}`}${run.reason ? `  ${run.reason}` : ""}`);
+    }
+  }
+} else if (command === "eval" && sub === "score" && skillRef) {
+  const cases = orExit(() => loadCases(path.resolve(opts.cases ?? path.join(repoRoot, "evals", "cases"))));
+  const rows = orExit(() => scoreRuns(cases, loadRuns(path.resolve(skillRef))));
+  const choice = pick(rows);
+  const pct = (x: number | null) => (x === null ? "-" : `${(x * 100).toFixed(0)}%`);
+
+  if (opts.json) console.log(JSON.stringify({ rows, pick: choice }, null, 2));
+  else {
+    console.log(`${"split".padEnd(8)} ${"config".padEnd(24)} ${"runs".padStart(4)} ${"incomplete".padStart(10)} ${"recall".padStart(6)} ${"precision".padStart(9)} ${"fp".padStart(4)} ${"near".padStart(4)} ${"dup".padStart(4)} ${"cost".padStart(7)} ${"time".padStart(6)}`);
+
+    for (const r of rows) console.log(`${r.split.padEnd(8)} ${r.config.padEnd(24)} ${String(r.runs).padStart(4)} ${String(r.not_complete).padStart(10)} ${pct(r.recall).padStart(6)} ${pct(r.precision).padStart(9)} ${String(r.false_positives).padStart(4)} ${String(r.near_misses).padStart(4)} ${String(r.duplicates).padStart(4)} ${(r.cost_usd === null ? "-" : `$${r.cost_usd.toFixed(2)}`).padStart(7)} ${(r.duration_ms === null ? "-" : `${(r.duration_ms / 1000).toFixed(0)}s`).padStart(6)}`);
+
+    console.log(`\npick: ${choice.config ?? "none"} (${choice.reason})`);
+  }
 } else if (command === "acceptance" && (sub === "suggest" || sub === "local") && skillRef) {
   const threads = opts.pr ? ghThreads(Number(opts.pr)) : () => [];
   const before = orExit(() => snapshot(repoRoot, threads));

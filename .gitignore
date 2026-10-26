@@ -6,3 +6,6 @@ node_modules
 # Documentation build output
 docs/.astro/
 docs/dist/
+
+# Eval runs: per-machine results, scored with shepherd eval score
+evals/runs/

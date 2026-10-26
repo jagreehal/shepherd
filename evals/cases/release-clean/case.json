@@ -1,0 +1,7 @@
+{
+  "id": "release-clean",
+  "split": "dev",
+  "source": { "repo": ".", "base": "e32d26a0c94bf351236a9fc86d2ab0ca3479af5c", "head": "894ccf0a5e366b1e1b88b27ffad9998519e84923" },
+  "bugs": [],
+  "note": "A release commit: the changeset applied to CHANGELOG.md and the version bumped. Published as 0.10.0 with no fix to it since. Every finding above NIT is a false positive."
+}
