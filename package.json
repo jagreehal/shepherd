@@ -1,6 +1,6 @@
 {
   "name": "@jagreehal/shepherd",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Agent skills that drive a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp.",
   "license": "MIT",
   "repository": "github:jagreehal/shepherd",
