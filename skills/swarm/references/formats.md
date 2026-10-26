@@ -73,7 +73,7 @@ Never write the summary's Markdown yourself. Write the round as JSON and let
 
 ```bash
 shepherd summary round.json --previous summary.md > comment.md   # --previous: the comment already on the PR, if any
-shepherd summary round.json --previous summary.md --body > "$SHEPHERD_HANDOFF/findings.md"   # the handoff copy: no marker, header or history
+cp round.json "$SHEPHERD_HANDOFF/round.json"   # handoff mode: post nothing; the publish job renders and posts both
 ```
 
 `findings` holds the current round only, with a convergent finding's `lens`

@@ -95,7 +95,9 @@ Append to every brief when `SHEPHERD_HANDOFF` is set (`../SKILL.md`, Handoff
 mode):
 
 > Handoff mode: this session cannot push, and a later job pushes your commits.
-> Post review comments as usual: only pushing is withheld. Never call the
+> Swarm writes its round to `$SHEPHERD_HANDOFF/round.json` and posts no review
+> or summary: the publish job renders and posts both. Other comments and
+> replies post as usual: only pushing is withheld. Never call the
 > statuses API; the workflow sets the status. Commit, never push. Resolve no thread; the next iteration does once the fix
 > is pushed. Never run `gh pr update-branch`: to update the branch, merge
 > `origin/<base>` locally and commit the merge with your trailer. Never run

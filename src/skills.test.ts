@@ -75,12 +75,12 @@ describe("skill pack", () => {
     expect(shepherd).toContain("Never glob or search for them: a glob can skip dot-directories");
   });
 
-  test("in CI handoff mode swarm still posts, and nothing calls the statuses API with the read-only token", () => {
+  test("in CI handoff mode swarm hands its round to the publish job, which renders it, and nothing calls the statuses API with the read-only token", () => {
     const handoff = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8").replace(/\s+/g, " ");
 
-    expect(handoff).toContain("**Swarm posts as on any PR.**");
+    expect(handoff).toContain("**Swarm hands its round off instead of posting it.**");
     expect(handoff).toContain("Never call the statuses API");
-    expect(readFileSync(path.join(SKILLS, "shepherd/references/dispatch.md"), "utf8").replace(/\s+/g, " ")).toContain("Post review comments as usual");
+    expect(readFileSync(path.join(SKILLS, "shepherd/references/dispatch.md"), "utf8").replace(/\s+/g, " ")).toContain("Swarm writes its round to `$SHEPHERD_HANDOFF/round.json`");
   });
 
   test("every relative file a skill points at exists", () => {

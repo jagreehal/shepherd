@@ -96,15 +96,15 @@ credential: the CI workflow (`templates/shepherd.yml`) runs the model with a
 token that can comment and read but not write code, and a later job with no
 model pushes what you hand it. An iteration then differs in six places:
 
-- **Swarm posts as on any PR.** Only the push credential is withheld. Swarm
-  posts its inline comments and summary with the job's token, which has
-  pull requests: write, under every fix mode. Under `suggest` posting is the
-  whole review: a run that ends with findings and nothing on the PR has failed.
-  Also write the summary body to `$SHEPHERD_HANDOFF/findings.md` with
-  `shepherd summary round.json --previous summary.md --body`, `summary.md`
-  being the summary already on the PR (swarm's Step 7 finds it), so the round
-  number carries on. The publish job posts it only when no summary for this head reached the
-  PR, so a failed post still leaves the review on the PR.
+- **Swarm hands its round off instead of posting it.** Write the round JSON
+  (swarm's `references/formats.md`) to `$SHEPHERD_HANDOFF/round.json` and post
+  neither the inline review nor the summary: the publish job, which runs no
+  model, renders both with `shepherd inline` and `shepherd summary` and posts
+  them, the summary carrying on the round number of the one already on the PR.
+  A model that wrote review Markdown itself once posted bare comments with no
+  header, title or prompt. Under `suggest` the review is the whole output: a
+  run that ends with findings and no `round.json` has failed. Threads still
+  resolve and triage still runs with the job's token as before.
 
 - **Commit, never push.** Commit on the PR branch as usual. Append the handoff
   addition from `references/dispatch.md` to every runner brief. After a runner,

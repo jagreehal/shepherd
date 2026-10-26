@@ -252,7 +252,11 @@ These become `CHECK_FINDINGS`. They post like any other finding, tagged
 missing or fails to start, record `checks: <tool> unavailable (<reason>)` and
 move on; the report's Checks section names each as `checks skipped: <tool>
 (<reason>)`, and a round where a check the repository configures did not run
-is never reported clean.
+is never reported clean. "Fails to start" includes a runner that cannot load
+its own config or dependencies (`Startup Error`, `Cannot find module`), a
+`tsc` that cannot resolve the test framework's types, and dependencies never
+installed: that is `unavailable`, never "ran, 0 findings". A trial reported
+"test ✅, typecheck ✅" over `Cannot find module 'vite-plus'`.
 
 ## Step 3: First wave
 
@@ -449,7 +453,8 @@ The verdict is advice to the author. It never becomes a GitHub approval.
 
 Write the round as JSON first (`references/formats.md`): the inline review and
 the summary are both rendered from it, so neither is ever hand-written Markdown.
-Post every inline finding as **one** review, pinned to the reviewed commit:
+With `$SHEPHERD_HANDOFF` set, write it to `$SHEPHERD_HANDOFF/round.json` and
+stop here: the publish job renders and posts both. Otherwise post every inline finding as **one** review, pinned to the reviewed commit:
 
 ```bash
 shepherd inline round.json > review.json

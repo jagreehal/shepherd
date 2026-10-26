@@ -660,25 +660,50 @@ describe("publish: posting findings the iteration did not", () => {
   const script = template.jobs.publish.steps.find((s) => s.name === "Post findings the iteration did not")?.run ?? "";
   const h0 = "abcdef1234567890abcdef1234567890abcdef12";
 
-  const run = (findings: string, posted = "[]") => {
+  const run = (findings: string, posted = "[]", extra: (dir: string) => void = () => {}) => {
     const dir = mkdtempSync(path.join(tmpdir(), "shepherd-findings-"));
 
     roots.push(dir);
-    put(dir, "handoff/findings.md", findings);
+
+    if (findings) put(dir, "handoff/findings.md", findings);
+
+    extra(dir);
     // gh: `api` runs its --jq over the comments in POSTED; `api -X PATCH` records the comment
     // and body it edited, and `pr comment` records the body it was given.
-    put(dir, "bin/gh", `#!/bin/sh\nif [ "$1" = api ] && [ "$2" = -X ]; then echo "$4" > "$OUT.patched"; cp "\${6#body=@}" "$OUT"; exit 0; fi\nif [ "$1" = api ]; then while [ $# -gt 0 ]; do [ "$1" = --jq ] && f=$2; shift; done; printf '%s' "$POSTED" | jq -r "$f"; exit 0; fi\nwhile [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$OUT"; shift; done\n`);
+    put(dir, "bin/gh", `#!/bin/sh\ncase " $* " in *" --input "*) for a; do [ "$prev" = --input ] && cp "$a" "$OUT.review"; prev=$a; done; exit 0;; esac\nif [ "$1" = api ] && [ "$2" = -X ]; then echo "$4" > "$OUT.patched"; cp "\${6#body=@}" "$OUT"; exit 0; fi\nif [ "$1" = api ]; then while [ $# -gt 0 ]; do [ "$1" = --jq ] && f=$2; shift; done; printf '%s' "$POSTED" | jq -r "$f"; exit 0; fi\nwhile [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$OUT"; shift; done\n`);
     chmodSync(path.join(dir, "bin/gh"), 0o755);
-    const r = spawnSync("bash", ["-e", "-c", script], { cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, PR: "7", H0: h0, GITHUB_REPOSITORY: "o/r", POSTED: posted, OUT: path.join(dir, "posted.md") } });
+    const r = spawnSync("bash", ["-e", "-c", script], { cwd: dir, encoding: "utf8", env: { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, PR: "7", H0: h0, GITHUB_REPOSITORY: "o/r", POSTED: posted, RUN_STARTED: "2026-10-25T10:00:00Z", OUT: path.join(dir, "posted.md") } });
 
     expect(r.status).toBe(0);
 
     const out = path.join(dir, "posted.md");
 
-    return existsSync(out) ? { body: readFileSync(out, "utf8"), patched: existsSync(`${out}.patched`) ? readFileSync(`${out}.patched`, "utf8").trim() : null } : null;
+    return existsSync(out) ? { body: readFileSync(out, "utf8"), patched: existsSync(`${out}.patched`) ? readFileSync(`${out}.patched`, "utf8").trim() : null, review: existsSync(`${out}.review`) ? readFileSync(`${out}.review`, "utf8") : null } : null;
   };
 
-  const summary = (id: number, body: string, login = "github-actions[bot]") => JSON.stringify([{ id, user: { login }, body: `<!-- shepherd-swarm-summary -->\n${body}` }]);
+  const summary = (id: number, body: string, login = "github-actions[bot]", updated_at = "2026-10-25T10:05:00Z") => JSON.stringify([{ id, user: { login }, updated_at, body: `<!-- shepherd-swarm-summary -->\n${body}` }]);
+
+  test("a summary for this head from an earlier run is replaced, not taken for this round's", () => {
+    const posted = run("## findings", summary(123, "<sub>(handoff @ abcdef1)</sub>\n\n## old", "github-actions[bot]", "2026-10-23T17:40:26Z"));
+
+    expect(posted?.patched).toBe("repos/o/r/issues/comments/123");
+    expect(posted?.body).toContain("## findings");
+  });
+
+  test("with round.json, the inline review and the summary are rendered by shepherd, never taken from model Markdown", () => {
+    const posted = run("## hand-written", summary(123, "## 🔴 BLOCKED <sub>(round 1 @ abcdef1)</sub>"), (dir) => {
+      put(dir, "handoff/round.json", "{}");
+      put(dir, "handoff/fanout.json", "{}");
+      mkdirSync(path.join(dir, "repo"));
+      // A stand-in CLI that says what it was asked to render.
+      put(dir, "bin/shepherd", `#!/bin/sh\nif [ "$1" = inline ]; then echo '{"commit_id":"x","event":"COMMENT","body":"b","comments":[{"path":"a","line":1}]}'; else echo "## rendered $*"; fi\n`);
+      chmodSync(path.join(dir, "bin/shepherd"), 0o755);
+    });
+
+    expect(JSON.parse(posted?.review ?? "{}").comments).toHaveLength(1);
+    expect(posted?.body).toContain("## rendered summary ../handoff/round.json --previous ../summary.md --body --fanout ../handoff/fanout.json");
+    expect(posted?.body).not.toContain("hand-written");
+  });
 
   test("posts nothing when the iteration's summary for this head is on the PR", () => {
     expect(run("## 🔴 BLOCKED", summary(123, "## 🔴 BLOCKED <sub>(round 2 @ abcdef1)</sub>"))).toBeNull();
