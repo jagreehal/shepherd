@@ -14,15 +14,25 @@ will be wrong in production, or tests that will not catch it when it is.
 
 ## How to read the diff
 
-1. Read the whole diff once for its intent. The PR title and body say what the
-   author meant; the diff says what they did. Gaps between the two are findings.
-2. Sort the changed files into the specialist areas below. Most diffs touch two
+1. List what the change promises before hunting for anything else. Each new
+   or changed function, endpoint, component or test promises something in its
+   name, doc comment, types, the PR title and body, the linked issue, and any
+   limit it states (a maximum length, a range, a format, an order). Done when
+   every changed unit has its promise written down.
+2. Test each promise with examples: an ordinary input, and the boundaries the
+   promise names (the limit, one past it, empty). Walk each through the code
+   and write the result. A promise the code breaks on such an input is the
+   first finding to report and outranks naming, style and enhancements.
+3. Sort the changed files into the specialist areas below. Most diffs touch two
    or three.
-3. For each area, read each hunk with at least 50 lines of context, then trace
+4. For each area, read each hunk with at least 50 lines of context, then trace
    one caller and one callee. Many bugs live at the boundary the diff changed.
-4. Check the incident patterns for every area you touched.
-5. Before you report a finding, find the line that proves it. "Could be null"
-   needs the path where it is null.
+5. Check the incident patterns for every area you touched.
+6. Before you report a finding, find the line that proves it and the input
+   that triggers it. "Could be null" needs the path where it is null. Input
+   the code was never meant to take (Unicode, huge values, odd types) is a
+   finding only when a caller in the repository passes it or the promise
+   covers it.
 
 ## Specialists
 
@@ -79,5 +89,7 @@ Check each one that fits the diff:
 
 End with `STRUCTURED_FINDINGS` and `OVERALL_SUMMARY` in the swarm format
 (`../swarm/references/formats.md`), tags like `correctness/concurrency`. Each
-body says what goes wrong, on which input, and the concrete fix. Standalone,
+body says what goes wrong, on which input (expected and actual result), and the
+concrete fix. A missing regression test for a bug you report goes in that
+finding, not a finding of its own. Standalone,
 print the same list, highest severity first.

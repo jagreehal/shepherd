@@ -44,7 +44,7 @@ An empty `delegations:` list means the router's findings are the review.
 
 ```
 VERIFICATION:
-- finding: <index> | result: <confirmed|downgrade:<SEVERITY>|refuted> | evidence: <quoted code or one-line reason>
+- finding: <index> | result: <confirmed|downgrade:<SEVERITY>|refuted> | input: <what triggers it> | expected: <what should happen, and where that is promised> | actual: <what the quoted code does on that input> | evidence: <quoted code, traced>
 ```
 
 ## Summary comment
@@ -58,7 +58,7 @@ Never write the summary's Markdown yourself. Write the round as JSON and let
   "verdict": "blocked|changes|nits|good",
   "why": "<one or two sentences: is it safe to merge, and what must change first>",
   "confidence": 4,
-  "findings": [{"file": "src/a.ts", "line": 3, "severity": "HIGH", "lens": "correctness/data", "title": "<a claim the reader can check>", "body": "<input, actual, expected, why it matters, the fix>", "verified": "<HIGH and CRITICAL: what the verifier quoted>", "suggestion": "<replacement lines, only when the fix replaces exactly line 3>", "url": "<its inline thread>", "inline": true, "convergent": false, "checked": [{"command": "rg -n 'firstName' src", "result": "<the line that settled it>"}], "docs": [{"url": "<https URL you are certain of>", "title": "<page title>"}], "reintroduces": "<a resolved thread whose fix this undoes>"}],
+  "findings": [{"file": "src/a.ts", "line": 3, "severity": "HIGH", "lens": "correctness/data", "title": "<a claim the reader can check>", "body": "<why it matters, the fix>", "evidence": {"input": "<what triggers it>", "expected": "<what should happen>", "actual": "<what happens>"}, "verified": "<what the verifier quoted>", "suggestion": "<replacement lines, only when the fix replaces exactly line 3>", "url": "<its inline thread>", "inline": true, "convergent": false, "checked": [{"command": "rg -n 'firstName' src", "result": "<the line that settled it>"}], "docs": [{"url": "<https URL you are certain of>", "title": "<page title>"}], "reintroduces": "<a resolved thread whose fix this undoes>"}],
   "pre_merge": [{"check": "Title|Description|Linked issue|Scope|Tests", "status": "pass|warn|fail", "detail": "<one line>"}],
   "walkthrough": ["<what the PR does, one bullet per behaviour, for a reader who never saw it>"],
   "changes": [{"files": ["src/a.ts", "src/a.test.ts"], "summary": "<what changed in these files>"}],
@@ -84,6 +84,17 @@ read takes, 1 (a minute) to 5 (an hour or more). Draw a `diagram` only when the
 change has a flow a reader would otherwise reconstruct (a request path, a state
 machine, data moving between modules); leave it empty for a helper function.
 The new fields are optional: a round without them renders as before.
+The renderers hold the round to what they can check. A `url`, `reintroduces`
+or still-open link that names no review comment on the PR loses its link.
+`convergent` needs a tag naming two lenses (`a + b`). A finding above NIT with
+neither `verified` nor `checked` is shown as unverified, `checks/*` findings
+aside. A HIGH or CRITICAL with no `evidence` is graded MEDIUM, `checks/*`
+findings aside, and says so. A `verdict` milder than the findings allow by
+Step 6's rule is raised to the stricter one, and `why` says so. A lens that
+did not finish marks the round incomplete. An inline finding whose line is
+past the end of its file stays in the summary. So give each thread
+link a review comment's `html_url` (`#discussion_r<id>`), and an issue comment's
+never.
 The summary shows `pre_merge` as a table (open when one fails), a finding's
 `docs` as links, `reintroduces` as a link to the earlier thread, and closes
 with the `/shepherd` and `/stamp` commands. An inline comment also carries

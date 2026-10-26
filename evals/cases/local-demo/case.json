@@ -1,0 +1,7 @@
+{
+  "id": "local-demo",
+  "split": "dev",
+  "source": { "demo": true },
+  "bugs": [],
+  "note": "The planted-bug demo (`shepherd local demo`). Its bugs come from examples/local-demo/expected.json. Public and tuned against, so dev only."
+}

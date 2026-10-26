@@ -4,8 +4,8 @@ description: >
   Multi-lens PR review. Runs the repo's own checks first, then a cheap router,
   the correctness lens and every matching custom lens in parallel, with a second
   wave of specialist lenses (security, simplicity, maintainability, slop) on the
-  hunks the router hands on. Verifies every serious finding,
-  and posts inline comments plus one summary comment that updates in place. Use
+  hunks the router hands on. Verifies every finding above NIT with a worked
+  example, and posts inline comments plus one summary comment that updates in place. Use
   for "/swarm", "swarm review", "review this PR from every angle", or when
   shepherd reaches its review step. Accepts an optional PR number, URL, or base
   branch, --preview to try unmerged lenses without posting, and --local to
@@ -303,6 +303,12 @@ a rung for them. Its brief:
 - You only read. Start no agents, invoke no skills, and write no files, not
   even scratch files: your output is findings and a plan, and the orchestrator
   starts every agent.
+- Start with what the change promises: each new or changed function, endpoint
+  or test says what it does in its name, doc comment, types, the PR title and
+  body, and any limit it states (a maximum length, a range, a format). Walk an
+  ordinary input and the boundary the promise names through the code before
+  anything else. A broken promise outranks naming, style and speculative
+  enhancements.
 - Review the whole diff for security, simplicity, maintainability, slop, and
   any bug you see. The correctness lens and the custom lenses named in your
   brief review this diff beside you; do not plan them for the scopes they
@@ -373,16 +379,27 @@ the summary: reviewers read, and a stray file can end up in the next commit.
 
 ## Step 5: Verify before posting
 
-Noise is the main way a review bot loses its readers. Before anything HIGH or
-CRITICAL posts, one verifier agent checks it, on the `verifier` pin when
-there is one, else on the rung above the router or on the finding author's own
-rung, whichever is higher. It never climbs above
-the author: a fresh instance at the same rung is independent enough.
+Noise is the main way a review bot loses its readers, at any severity. Before
+any finding above NIT posts, one
+verifier agent checks it, on the `verifier` pin when there is one, else on the
+rung above the router or on the finding author's own rung, whichever is higher.
+It never climbs above the author: a fresh instance at the same rung is
+independent enough. `checks/*` findings skip it: Step 2 already holds their
+evidence.
 
 - Give it the finding, the cited file and lines, and the question "is this real
   on this head, and is the severity right?"
-- It must quote the code that proves or refutes the finding. `confirmed` keeps
-  it, `downgrade` lowers the severity, `refuted` drops it.
+- It settles each finding with a worked example: the **input** that triggers
+  it, the **expected** result (from the code's name, doc comment, types, the PR
+  description, the linked issue or a test), and the **actual** result, traced
+  through the quoted code. Quoting the expression is not evidence on its own:
+  `split(" ")[1]` proves nothing until an input shows what it returns.
+  `confirmed` keeps the finding and its example goes in `evidence`, `downgrade`
+  lowers the severity, `refuted` drops it. With no input that triggers it, the
+  finding is a suspicion: MEDIUM at most, and `shepherd summary` grades a HIGH
+  or CRITICAL with no `evidence` MEDIUM itself.
+- Unsupported input (Unicode, huge values, odd types) is a finding only when a
+  caller in the repository passes it or the promise covers it.
 - It lists each read-only command it ran (`rg`, `sed -n`, `git show`, `git log
   -L`) with the one line of output that settled the question. They go in the
   finding's `checked`, so a reader can audit the claim without redoing it.
@@ -390,7 +407,9 @@ the author: a fresh instance at the same rung is independent enough.
   to be called; "nothing calls it yet" never lowers a finding's severity.
 - A finding the verifier cannot settle without outside facts (an API's
   documented behaviour, a library version) stays at its severity with the open
-  question stated, rather than dropping. A finding that rests on documented
+  question stated, rather than dropping: its `evidence` takes the expected
+  result from the documented behaviour and states the open question as the
+  actual. A finding that rests on documented
   behaviour names the page in `docs`: a URL in this repository, or an official
   documentation page you are certain exists. Never invent a URL; with no such
   page, leave `docs` empty and state the behaviour you rely on.
@@ -399,11 +418,9 @@ the author: a fresh instance at the same rung is independent enough.
   itself instead, since it did not write them. Every rule above binds it as
   it binds a verifier agent: quote the code, judge new code by its intended
   use (never "nothing calls it yet"), and name the verifier as `orchestrator` in
-  the summary. It verifies HIGH and CRITICAL findings only; everything below
-  posts at the severity its lens gave.
+  the summary.
 
-MEDIUM and below post unverified, but a finding with no file and line and no
-concrete fix drops to NIT.
+A finding with no file and line and no concrete fix drops to NIT.
 
 Before posting, check each grade against `../review-correctness/SKILL.md`'s
 Severity section, whoever wrote the finding. A finding that names an ordinary
@@ -419,9 +436,12 @@ new side of the diff.
 
 ## Step 6: Merge and grade
 
-- **Dedupe.** Findings on the same file within 5 lines, or on the same concern,
-  merge into one. Two or more independent lenses agreeing makes it
-  **convergent**; note every lens that found it.
+- **Dedupe by root cause.** Two findings are one issue when one change to the
+  code fixes both, wherever they sit; report it once, at the line the fix
+  changes. Distinct bugs stay separate even on neighbouring lines. A missing
+  regression test for a bug belongs in that bug's finding (name the test to
+  add), not in a finding of its own. Two or more independent lenses agreeing
+  makes it **convergent**; note every lens that found it.
 - **Conflicts with open threads.** A finding whose fix would keep or bring
   back a problem an open thread names (from any reviewer) says so in its body
   and names that thread: the author sees both before choosing.
@@ -474,7 +494,7 @@ into each finding's `url`, so the summary links every finding to its thread.
 
 Every run, including the first of a new session, fetches the unresolved
 Shepherd threads first (triage's Step 3 query) and does not post a finding that
-one of them already carries: same file, within 5 lines, same concern. Name it in
+one of them already carries: the same issue by Step 6's root-cause rule. Name it in
 the summary as "still open" instead. An earlier session may have reviewed this
 PR; the threads on GitHub are the record, not this session's memory. When this
 round grades it differently, edit that thread's first comment in place
@@ -487,21 +507,20 @@ first comment, in place: `<emoji.resolved> Resolved at <short_sha>` (✅ by
 default). The summary's "still
 open" entries link to their threads, so a reader sees what is left and where.
 
-Keep the thread count proportional to the change. Two findings on the same
-line merge into one.
+Keep the thread count proportional to the change: one thread per issue.
 
 Each finding carries a `title`: a claim a reader can check, such as
-"`firstName` returns the second word". Its `body` names the input, what the
-code does on it and what it should, then why it matters and the fix. A claim
-about what the code does at runtime whose body names no input, or no wrong
-result on one, is a suspicion: MEDIUM at most. A `checks/*` finding already
+"`firstName` returns the second word", and `evidence`: the input, the expected
+result and the actual one, from the verifier. Its `body` says why it matters
+and the fix. A claim about what the code does at runtime with no input, or no
+wrong result on one, is a suspicion: MEDIUM at most. A `checks/*` finding already
 carries its evidence (the failing check, the gate's refusal, the matched
 credential shape) and keeps the grade Step 2 gives it. Give a `suggestion`
 (the replacement lines, no fence) only when the fix replaces exactly the lines
 in `line`, written `"start-end"` for a range: GitHub commits it as written, so
 it must compile on its own. When the fix spans other lines or files, put a
 `diff` block in the body instead. `verified` holds what the verifier quoted,
-for HIGH and CRITICAL.
+for every finding above NIT.
 
 Severity emoji from the branding, defaults in brackets: `emoji.critical` (🔴)
 CRITICAL, `emoji.high` (🟠) HIGH, `emoji.medium` (🟡) MEDIUM, `emoji.low` (🟢)
@@ -583,7 +602,7 @@ each check finding the router weighed, `raised` (a finding carries it) or
 ```json
 {
   "fingerprint": "<from shepherd local change>",
-  "stages": [{"stage": "checks", "status": "ok"}, {"stage": "router", "status": "ok"}, {"stage": "verify", "status": "skipped", "reason": "no HIGH or CRITICAL findings"}],
+  "stages": [{"stage": "checks", "status": "ok"}, {"stage": "router", "status": "ok"}, {"stage": "verify", "status": "skipped", "reason": "no findings above NIT"}],
   "lenses": [{"lens": "router", "status": "ok", "scope": "full"}, {"lens": "security", "status": "ok", "scope": ["src/search.ts:1-8"]}],
   "candidates": [{"source": "checks/tsc", "file": "src/search.ts", "line": 5, "status": "raised"}],
   "findings": [{"file": "src/search.ts", "line": 5, "severity": "MEDIUM", "lens": "checks/tsc", "body": "A string is assigned to a number under @ts-ignore. Remove the suppression and fix the type."}]

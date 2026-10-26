@@ -175,6 +175,10 @@ export default defineConfig({
       {
         "label": "Develop Shepherd",
         "slug": "contributing/development"
+      },
+      {
+        "label": "Measure review accuracy",
+        "slug": "contributing/evaluation"
       }
     ]
   }

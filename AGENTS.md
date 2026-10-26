@@ -105,6 +105,9 @@ to all of them.
   loop checks the tree is clean after them.
 - GitHub is the record, not the session: swarm dedupes against open threads
   and numbers rounds from its summary comment on every run.
+- A default rung or role changes only on `shepherd eval` scores over the
+  held-out cases (`evals/README.md`): the cheapest configuration within noise
+  of the best, never price alone.
 - Runners work in the caller's own tree. Never `isolation: "worktree"`.
 - Runners never wait on background work; everything finishes inside the turn.
 - Triage, simplify, and ci-repair run in sequence, never in parallel: they
@@ -125,6 +128,9 @@ to all of them.
 - A skill's `description` is how an agent decides to load it: say what it does
   and when to use it, under 1024 characters.
 - Keep instructions direct: imperative, specific, no filler.
+- A skill edit meant to change what reviews find or post runs `shepherd eval`
+  before and after, and tunes against `dev` cases only: held-out results are
+  read as totals.
 - Write and edit skills by `skills/writing-for-agents/SKILL.md`: a checkable
   completion criterion on every step, and reference only some paths need
   pushed behind a pointer.
