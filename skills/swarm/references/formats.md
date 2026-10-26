@@ -84,6 +84,12 @@ read takes, 1 (a minute) to 5 (an hour or more). Draw a `diagram` only when the
 change has a flow a reader would otherwise reconstruct (a request path, a state
 machine, data moving between modules); leave it empty for a helper function.
 The new fields are optional: a round without them renders as before.
+The renderers hold the round to what they can check. A `url`, `reintroduces`
+or still-open link that names no review comment on the PR loses its link.
+`convergent` needs a tag naming two lenses (`a + b`). A HIGH or CRITICAL with
+neither `verified` nor `checked` is shown as unverified. So give each thread
+link a review comment's `html_url` (`#discussion_r<id>`), and an issue comment's
+never.
 The summary shows `pre_merge` as a table (open when one fails), a finding's
 `docs` as links, `reintroduces` as a link to the earlier thread, and closes
 with the `/shepherd` and `/stamp` commands. An inline comment also carries

@@ -134,11 +134,34 @@ const reintroduced = (f: z.infer<typeof Finding>) => (f.reintroduces ? ["", `↩
 const section = (summary: string, body: string[], open = false) => [`<details${open ? " open" : ""}>`, `<summary>${summary}</summary>`, "", ...body, "", "</details>", ""];
 
 /**
+ * What the round claims, held to what can be checked. A thread link must name a review comment that exists on the PR
+ * (`threads`: their ids, when known): a trial linked an issue comment's id as a thread. A finding is convergent only when
+ * its tag names more than one lens. Without `threads`, links are kept as given.
+ */
+export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>) {
+  const s = SummaryInput.parse(raw);
+  const real = (url: string | undefined) => (url === undefined || threads === undefined || threads.has(/#discussion_r(\d+)$/.exec(url)?.[1] ?? "") ? url : undefined);
+
+  for (const f of s.findings) {
+    f.convergent &&= f.lens.includes("+");
+    f.url = real(f.url);
+    f.reintroduces = real(f.reintroduces);
+  }
+
+  for (const t of s.still_open) t.url = real(t.url) ?? "";
+
+  return s;
+}
+
+/** A HIGH or CRITICAL finding no verifier checked: Greptile and CodeRabbit show their verification, so its absence shows too. */
+const unverified = (f: z.infer<typeof Finding>) => (f.severity === "HIGH" || f.severity === "CRITICAL") && !f.verified && !f.checked.length;
+
+/**
  * The summary comment: the verdict heading, why, then one collapsed section per part of the round. With a null header
  * it is the body alone, for the handoff file the publish job wraps in its own marker and header.
  */
-export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>): string {
-  const s = SummaryInput.parse(raw);
+export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>, threads?: ReadonlySet<string>): string {
+  const s = checkedRound(raw, threads);
   // A lens fanout listed for this head that the round does not report never ran as its own reviewer, so it shows
   // as could_not_run.
   const wave = fanout ? Fanout.parse(fanout) : null;
@@ -169,7 +192,7 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   out.push(
     ...section(
       `<strong>Findings:</strong> ${counts.join(" · ") || "none"}`,
-      findings.length ? findings.flatMap((f, n) => [`${n + 1}. **${glyph(f.severity)} ${f.severity}**${where(f)} · ${f.convergent ? "convergent: " : ""}${defuse(f.lens, true)}${title(f)}${f.reintroduces ? ` · ↩️ [reintroduced](${f.reintroduces})` : ""}`, "", defuse(f.body), ...docsLine(f), ""]) : ["Nothing this round."],
+      findings.length ? findings.flatMap((f, n) => [`${n + 1}. **${glyph(f.severity)} ${f.severity}**${where(f)} · ${f.convergent ? "convergent: " : ""}${defuse(f.lens, true)}${title(f)}${f.reintroduces ? ` · ↩️ [reintroduced](${f.reintroduces})` : ""}${unverified(f) ? " · ⚠️ unverified" : ""}`, "", defuse(f.body), ...docsLine(f), ""]) : ["Nothing this round."],
       s.verdict !== "good",
     ),
   );
@@ -204,7 +227,7 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   // Finishing touches: the commands this repository answers.
   if (findings.length) out.push("✨ Comment `/shepherd` to have shepherd work through these findings, as far as `fixes.mode` allows, or `/stamp` for a fresh verdict.", "");
 
-  if (s.still_open.length) out.push(...section(`<strong>Still open:</strong> ${s.still_open.length}`, s.still_open.map((t) => `- [${defuse(t.title, true).replace(/[[\]]/g, "")}](${t.url})`)));
+  if (s.still_open.length) out.push(...section(`<strong>Still open:</strong> ${s.still_open.length}`, s.still_open.map((t) => (t.url ? `- [${defuse(t.title, true).replace(/[[\]]/g, "")}](${t.url})` : `- ${defuse(t.title, true)}`))));
 
   if (s.checks.length) {
     const skipped = s.checks.length - ran.length;
@@ -295,8 +318,8 @@ export function anchorSuggestion(lines: string[], start: number, end: number, su
 /** A path inside the repository, as the model gave it: never absolute, never climbing out. */
 const insideRepo = (p: string) => !p.startsWith("/") && !p.split(/[\\/]/).includes("..");
 
-export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null) {
-  const s = SummaryInput.parse(raw);
+export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>) {
+  const s = checkedRound(raw, threads);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
   const posted = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general")).slice(0, PER_REVIEW);
 
@@ -329,6 +352,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
       ...docsLine(f),
       ...suggestion,
       ...(f.verified ? ["", `**Verified:** ${defuse(f.verified)}`] : []),
+      ...(unverified(f) ? ["", "⚠️ No verifier has checked this yet."] : []),
       ...checkedBlock(f),
       "",
       "<details>",

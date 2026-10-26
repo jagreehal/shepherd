@@ -155,6 +155,22 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(renderReview({ ...RICH, findings: [{ ...BUG, file: "../../etc/passwd" }] }, BRANDING.emoji, HEADER, () => "x").comments[0]!.body).not.toContain("```suggestion");
   });
 
+  test("links name only threads that exist, convergent needs two lenses, and an unchecked HIGH says so", () => {
+    const real = "https://github.com/o/r/pull/1#discussion_r42";
+    const fake = "https://github.com/o/r/pull/1#discussion_r6371020510"; // an issue comment's id, as a trial posted
+    const round = { ...RICH, findings: [{ ...BUG, verified: "", convergent: true, url: fake, reintroduces: real }], still_open: [{ url: fake, title: "firstName (was NIT)" }, { url: real, title: "kept" }] };
+    const md = renderSummary(round, BRANDING.emoji, null, undefined, undefined, new Set(["42"]));
+
+    expect(md).toContain("· correctness · **`firstName` returns the second word** · ↩️ [reintroduced](" + real + ") · ⚠️ unverified");
+    expect(md).not.toContain("convergent:");
+    expect(md).not.toContain(fake);
+    expect(md).toContain("- firstName (was NIT)\n- [kept](" + real + ")");
+    expect(renderReview(round, BRANDING.emoji, HEADER, () => null, new Set(["42"])).comments[0]!.body).toContain("⚠️ No verifier has checked this yet.");
+    // Unknown threads (no PR to ask): links stay as given.
+    expect(renderSummary(round, BRANDING.emoji, null)).toContain(fake);
+    expect(renderSummary({ ...round, findings: [{ ...BUG, lens: "correctness + security", convergent: true }] }, BRANDING.emoji, null)).toContain("convergent: correctness + security");
+  });
+
   test("inline comments: titled, with a one-click suggestion and an agent prompt; NITs, carried and lineless findings stay out", () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ ...BUG, line: i + 1, severity: "LOW" as const }));
     const review = renderReview({ ...RICH, findings: [...many, { ...BUG, line: "4-6" }, { ...BUG, inline: false }, { ...BUG, line: "general" }] }, BRANDING.emoji, HEADER);

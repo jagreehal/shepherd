@@ -128,7 +128,7 @@ const { values: opts, positionals } = parseArgs({
     label: { type: "string" }, // workflows: ci.label, the handoff label
     "aws-region": { type: "string" }, // workflows: ci.aws_region, for a bedrock: model
     stacks: { type: "boolean", default: false }, // init: add a lens for each stack the repository uses
-    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR
+    pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR; summary, inline: the PR whose review threads a link may name
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
     retries: { type: "string" },
@@ -162,6 +162,24 @@ const report = (outcomes: Outcome[]) => {
 };
 
 const [command, sub, skillRef, ...rest] = positionals;
+
+/**
+ * The ids of the review comments on the PR (`--pr`, or `$PR` in CI, with `$GITHUB_REPOSITORY`), so a rendered thread
+ * link can only name a thread that exists. Unknown (no PR, gh failing): undefined, and links are kept as the round gave them.
+ */
+function reviewThreads(): Set<string> | undefined {
+  const pr = opts.pr ?? process.env.PR;
+
+  if (!pr || !/^\d+$/.test(pr)) return undefined;
+
+  try {
+    const out = execFileSync("gh", ["api", `repos/${process.env.GITHUB_REPOSITORY ?? "{owner}/{repo}"}/pulls/${pr}/comments`, "--paginate", "--jq", ".[].id"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 });
+
+    return new Set(out.split("\n").filter((l) => /^\d+$/.test(l)));
+  } catch {
+    return undefined;
+  }
+}
 
 /** Print a lens error as one line and exit 1. */
 const orExit = <T>(run: () => T): T => {
@@ -559,7 +577,7 @@ if (command === "install") {
 
   const fanout = fanoutFile && existsSync(fanoutFile) ? orExit(() => JSON.parse(readFileSync(fanoutFile, "utf8"))) : undefined;
 
-  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout)));
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads())));
 } else if (command === "inline" && sub) {
   // Swarm's inline review, rendered from the same round JSON: the payload for POST /pulls/<n>/reviews.
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
@@ -568,7 +586,7 @@ if (command === "install") {
   // The checkout is the reviewed head: suggestions are placed against its files, read from the working directory.
   const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read)), null, 2));
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads())), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
