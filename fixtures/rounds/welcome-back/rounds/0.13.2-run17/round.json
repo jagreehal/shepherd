@@ -1,0 +1,64 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "verdict": "changes",
+  "why": "A HIGH bug in firstName returns the wrong name (second word instead of first), and the test is too loose to catch it.",
+  "confidence": 2,
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "line_end": 10,
+      "severity": "HIGH",
+      "lens": "correctness/data",
+      "title": "firstName returns the last name, not the first name",
+      "body": "The function `firstName` returns `name.trim().split(' ')[1]`, which is the second word in the name, not the first. For 'Ada Lovelace', it returns 'Lovelace' instead of 'Ada'. The doc comment says 'Returns the person's first name'.",
+      "evidence": {
+        "input": "'Ada Lovelace'",
+        "expected": "'Ada'",
+        "actual": "'Lovelace' (the code returns split(' ')[1])"
+      },
+      "verified": "Code trace: name.trim().split(' ')[1] on 'Ada Lovelace' = 'Lovelace'",
+      "suggestion": "export function firstName(name: string): string {\n  return name.trim().split(' ')[0];\n}",
+      "inline": true,
+      "convergent": false,
+      "checked": []
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 7,
+      "severity": "MEDIUM",
+      "lens": "correctness/tests",
+      "title": "Test uses loose regex that would pass even with wrong output",
+      "body": "The test `expect(welcomeBack('Ada Lovelace')).toMatch(/^Welcome back, /)` only checks that the result starts with 'Welcome back, '. It does not verify the actual name returned. This test would pass even if the function returned 'Welcome back, Wrong Name!'.",
+      "evidence": {
+        "input": "'Ada Lovelace'",
+        "expected": "A name that matches the input",
+        "actual": "Test only checks the prefix 'Welcome back, '"
+      },
+      "verified": "The regex /^Welcome back, / would match 'Welcome back, Wrong Name!'",
+      "suggestion": "expect(welcomeBack('Ada Lovelace')).toBe('Welcome back, Ada!');",
+      "inline": true,
+      "convergent": false,
+      "checked": []
+    }
+  ],
+  "pre_merge": [
+    {"check": "Title", "status": "pass", "detail": "Add welcomeBack function"},
+    {"check": "Description", "status": "warn", "detail": "No description"},
+    {"check": "Linked issue", "status": "pass", "detail": "none linked"},
+    {"check": "Scope", "status": "pass", "detail": "Only welcome.ts and welcome.test.ts changed"},
+    {"check": "Tests", "status": "fail", "detail": "Test has loose assertion that doesn't verify output"}
+  ],
+  "changes": [
+    {"files": ["src/welcome.ts", "src/welcome.test.ts"], "summary": "Added firstName helper and welcomeBack function with a test"}
+  ],
+  "effort": 1,
+  "diagram": "",
+  "still_open": [],
+  "checks": [],
+  "lenses": [
+    {"lens": "router", "model": "session", "scope": "full", "status": "ok", "take": "HIGH", "skill_blob": ""},
+    {"lens": "correctness", "model": "session", "scope": "full", "status": "ok", "take": "HIGH", "skill_blob": ""}
+  ],
+  "lenses_yml_blob": ""
+}
