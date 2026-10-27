@@ -126,7 +126,9 @@ model pushes what you hand it. An iteration then differs in six places:
   each job id ci-repair wants rerun on its own line in
   `$SHEPHERD_HANDOFF/rerun-jobs.txt`. The publish job pushes your commits,
   sets the status on the head it pushed (`pending` whenever it pushed: those
-  commits are not reviewed yet), reruns the jobs, and notifies. It refuses a
+  commits are not reviewed yet; with nothing pushed or rerun, `failure` in
+  place of `pending` when the round has findings above NIT), reruns the jobs,
+  and notifies. It refuses a
   push that is not a fast-forward of `H0` or that touches a protected path
   (workflows, hooks, package manager config, manifests, lockfiles), and sets
   `failure` naming why.

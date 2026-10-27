@@ -1,0 +1,111 @@
+{
+  "pr": 1,
+  "repo": "acme/app",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "round": 1,
+  "verdict": "changes",
+  "posted": {
+    "inline": 0,
+    "summary_comment_id": 0
+  },
+  "counts": {
+    "critical": 0,
+    "high": 5,
+    "medium": 0,
+    "low": 0,
+    "nit": 0
+  },
+  "dropped_by_verification": 0,
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` returns the LAST name, not the first name",
+      "body": "The function claims to return \"the person's first name\" but `split(\" \")[1]` returns the **second** word, which is the last name in \"First Last\" format.\n\n**Evidence:**\n- Input: \"Ada Lovelace\" → Output: \"Lovelace\" (should be \"Ada\")\n- Input: \"John Smith\" → Output: \"Smith\" (should be \"John\")\n\nThe correct implementation should use `split(\" \")[0]` to get the first word.",
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "verified": "Confirmed by tracing the code: `name.trim().split(\" \")` on \"Ada Lovelace\" returns [\"Ada\", \"Lovelace\"], so index [1] is \"Lovelace\" (the last name)."
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` crashes on single-word names",
+      "body": "When given a single name like \"Ada\", `split(\" \")[1]` is `undefined`, causing \"Welcome back, undefined!\"",
+      "suggestion": null,
+      "verified": "Confirmed: \"Ada\".split(\" \") returns [\"Ada\"], so [1] is undefined."
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` crashes on empty or whitespace-only strings",
+      "body": "For empty strings or strings with only spaces, `name.trim().split(\" \")[1]` is `undefined`.",
+      "suggestion": null,
+      "verified": "Confirmed: \"\".trim().split(\" \")[1] is undefined."
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "`firstName` returns empty string with multiple spaces between names",
+      "body": "\"Ada   Lovelace\".split(\" \") produces [\"Ada\", \"\", \"\", \"Lovelace\"], so [1] is \"\" (empty string), resulting in \"Welcome back, !\"",
+      "suggestion": null,
+      "verified": "Confirmed: \"Ada   Lovelace\".split(\" \")[1] === \"\"."
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` crashes with leading/trailing whitespace on single names",
+      "body": "\" Jane \".trim() is \"Jane\", then split(\" \") gives [\"Jane\"], so [1] is undefined.",
+      "suggestion": null,
+      "verified": "Confirmed: \" Jane \".trim().split(\" \")[1] is undefined."
+    }
+  ],
+  "checks": [
+    {
+      "tool": "tests",
+      "status": "unavailable",
+      "findings": 0,
+      "note": "Cannot run: vite-plus module not installed in environment"
+    },
+    {
+      "tool": "typecheck",
+      "status": "unavailable",
+      "findings": 0,
+      "note": "Cannot run: vite-plus module not installed"
+    }
+  ],
+  "lenses": [
+    {
+      "lens": "router",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 0,
+      "skill_blob": ""
+    },
+    {
+      "lens": "correctness",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 5,
+      "skill_blob": ""
+    }
+  ],
+  "narration": [
+    "[swarm] step 1 — PR #1, base f6e834e, head 133ece6",
+    "[swarm] step 2 — checks unavailable: vite-plus not installed",
+    "[swarm] step 3 — running correctness lens on full diff",
+    "[swarm] step 5 — verifying findings",
+    "[swarm] step 6 — grading: found 5 bugs, 5 HIGH severity"
+  ]
+}

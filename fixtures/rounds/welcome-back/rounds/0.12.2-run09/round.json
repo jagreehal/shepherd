@@ -1,0 +1,35 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "round": 1,
+  "verdict": "changes",
+  "posted": {"inline": 0, "summary_comment_id": null},
+  "counts": {"critical": 0, "high": 1, "medium": 0, "low": 0, "nit": 0},
+  "dropped_by_verification": 0,
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 40,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "firstName returns the second word, not the first",
+      "body": "The function `firstName` is named to suggest it returns the person's first name, and its doc comment says \"Returns the person's first name, for informal greetings.\" However, `name.trim().split(\" \")[1]` returns the **second** word in the name, not the first.\n\nFor \"Ada Lovelace\":\n- `split(\" \")` → `[\"Ada\", \"Lovelace\"]`\n- `[1]` → \"Lovelace\"\n\nSo `welcomeBack(\"Ada Lovelace\")` returns \"Welcome back, Lovelace!\" instead of \"Welcome back, Ada!\".\n\n**Fix:** Use `[0]` instead of `[1]` to get the first word.",
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "verified": "Confirmed: split(\" \")[1] returns index 1 (second element), not index 0 (first).",
+      "inline": true
+    }
+  ],
+  "lenses": [
+    {
+      "lens": "correctness",
+      "model": "session",
+      "scope": "full",
+      "status": "ok",
+      "findings": 1
+    }
+  ],
+  "checks": [],
+  "narration": [
+    "[swarm] step 3 — running correctness lens on full diff"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "round": 1,
+  "files": ["src/welcome.test.ts", "src/welcome.ts"],
+  "verdict": "changes_needed",
+  "counts": {"critical": 0, "high": 1, "medium": 0, "low": 0, "nit": 0},
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` returns the second word instead of the first",
+      "body": "The function `firstName` uses `split(\" \")[1]` which returns the second word. For \"Ada Lovelace\", it returns \"Lovelace\" instead of \"Ada\". This causes `welcomeBack(\"Ada Lovelace\")` to return \"Welcome back, Lovelace!\" instead of \"Welcome back, Ada!\".\n\n**Evidence:**\n- Input: `\"Ada Lovelace\"`\n- Expected: `\"Ada\"` (first word)\n- Actual: `\"Lovelace\"` (second word, index 1)\n\n**Fix:** Change `split(\" \")[1]` to `split(\" \")[0]`.",
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "verified": true,
+      "inline": true
+    }
+  ],
+  "pre_merge": [
+    {"check": "title", "status": "pass", "detail": "adds welcomeBack and firstName functions"},
+    {"check": "description", "status": "warn", "detail": "no description"},
+    {"check": "tests", "status": "warn", "detail": "test only checks prefix, not first name extraction"}
+  ],
+  "lenses": [
+    {
+      "lens": "router",
+      "status": "skipped",
+      "reason": "single lens in fanout, direct dispatch"
+    },
+    {
+      "lens": "correctness",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 1
+    }
+  ],
+  "checks": [],
+  "narration": [
+    "[swarm] step 1 — resolved PR #1, base=main, head=133ece6",
+    "[swarm] step 2 — checks skipped (fixes.mode: suggest)",
+    "[swarm] step 3 — first wave: correctness lens on full scope",
+    "[swarm] step 5 — verified finding before posting",
+    "[swarm] step 7 — handoff mode: wrote round.json, not posting"
+  ],
+  "posted": {"inline": 0, "summary_comment_id": null}
+}

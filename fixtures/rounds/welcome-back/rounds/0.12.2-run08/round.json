@@ -1,0 +1,61 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "pr_number": 1,
+  "repo": "acme/app",
+  "round": 1,
+  "verdict": "changes",
+  "posted": {
+    "inline": 0,
+    "summary_comment_id": null
+  },
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "low": 0,
+    "nit": 0
+  },
+  "dropped_by_verification": 0,
+  "lenses": [
+    {
+      "lens": "router",
+      "model": "",
+      "scope": "full",
+      "status": "ok",
+      "findings": 1,
+      "skill_blob": ""
+    },
+    {
+      "lens": "correctness",
+      "model": "",
+      "scope": "full",
+      "status": "ok",
+      "findings": 1,
+      "skill_blob": ""
+    }
+  ],
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "firstName returns last name instead of first name",
+      "body": "The function `firstName` returns `name.trim().split(' ')[1]` which is the second word (last name), not the first word (first name). For 'Ada Lovelace', it returns 'Lovelace' instead of 'Ada'.\n\nThe doc comment correctly says 'Returns the person's first name', but the implementation uses index [1] instead of [0].",
+      "evidence": {
+        "input": "Ada Lovelace",
+        "expected": "Ada",
+        "actual": "Lovelace"
+      },
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "verified": "Confirmed: split(' ')[1] returns the second element"
+    }
+  ],
+  "pre_merge": [],
+  "narration": [
+    "[swarm] step 1 — resolved PR #1, base=main, head=133ece6",
+    "[swarm] step 2 — router + correctness lens dispatched",
+    "[swarm] step 3 — verified finding: firstName uses index [1] instead of [0]"
+  ]
+}

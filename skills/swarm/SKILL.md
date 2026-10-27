@@ -497,7 +497,10 @@ gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input review.
 `shepherd inline` keeps the shape a reader learns once: the tag line, a bold
 title, the body, a suggestion block, `Verified:`, and a collapsed "Prompt for
 AI agents". It leaves out NITs, findings with `"inline": false`, and findings
-with no line, and posts at most 10, most severe first. A finding on a line
+with no line, and posts at most 10, most severe first, one per place: other
+findings on the same lines are named under it. Run it from the reviewed
+checkout, so it can place each `suggestion` on the lines it rewrites, at their
+indentation. A finding on a line
 outside the diff cannot anchor inline: keep its `line` and set
 `"inline": false`. When `review.json` has no `comments`, skip the post.
 Otherwise read the new threads' URLs

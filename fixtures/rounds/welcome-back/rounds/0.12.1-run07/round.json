@@ -1,0 +1,56 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "verdict": "changes",
+  "why": "A HIGH severity bug: firstName returns the second word instead of the first, so welcomeBack displays wrong names.",
+  "confidence": 3,
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 30,
+      "severity": "HIGH",
+      "lens": "correctness/data",
+      "title": "firstName returns the second word instead of the first",
+      "body": "The function promises to return \"the person's first name\" but uses array index `[1]` which accesses the second element. For \"Ada Lovelace\", it returns \"Lovelace\" instead of \"Ada\". Fix: change `split(\" \")[1]` to `split(\" \")[0]`.",
+      "evidence": {
+        "input": "firstName(\"Ada Lovelace\")",
+        "expected": "Ada",
+        "actual": "Lovelace"
+      },
+      "verified": "Confirmed by tracing: \"Ada Lovelace\".trim().split(\" \")[1] === \"Lovelace\"",
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "inline": true,
+      "convergent": false
+    }
+  ],
+  "pre_merge": [
+    {"check": "Title", "status": "pass", "detail": "Adds firstName and welcomeBack functions"},
+    {"check": "Description", "status": "pass", "detail": "PR describes adding welcomeBack feature"},
+    {"check": "Linked issue", "status": "pass", "detail": "none linked"},
+    {"check": "Scope", "status": "pass", "detail": "Changes match title and description"},
+    {"check": "Tests", "status": "warn", "detail": "Test uses loose regex /^Welcome back, / that would pass with wrong name"}
+  ],
+  "walkthrough": [
+    "Adds firstName(name) function that should return the first word of a name",
+    "Adds welcomeBack(name) function that uses firstName for informal greetings",
+    "Adds test for welcomeBack using a loose regex that doesn't verify the correct name"
+  ],
+  "changes": [
+    {"files": ["src/welcome.ts"], "summary": "Added firstName and welcomeBack functions"},
+    {"files": ["src/welcome.test.ts"], "summary": "Added test for welcomeBack"}
+  ],
+  "effort": 1,
+  "diagram": "",
+  "still_open": [],
+  "checks": [],
+  "lenses": [
+    {
+      "lens": "correctness",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "take": "HIGH",
+      "skill_blob": ""
+    }
+  ],
+  "lenses_yml_blob": ""
+}
