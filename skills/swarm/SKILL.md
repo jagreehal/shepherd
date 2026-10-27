@@ -533,7 +533,8 @@ carries its evidence (the failing check, the gate's refusal, the matched
 credential shape) and keeps the grade Step 2 gives it. Give a `suggestion`
 (the replacement lines, no fence) only when the fix replaces exactly the lines
 in `line`, written `"start-end"` for a range: GitHub commits it as written, so
-it must compile on its own. When the fix spans other lines or files, put a
+it must compile on its own. It holds the new code and nothing else; advice
+such as "use `toBe` for an exact match" belongs in the body. When the fix spans other lines or files, put a
 `diff` block in the body instead. `verified` holds what the verifier quoted,
 for every finding above NIT.
 

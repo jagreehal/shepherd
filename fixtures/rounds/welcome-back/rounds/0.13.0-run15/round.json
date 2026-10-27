@@ -1,0 +1,77 @@
+{
+  "pr": 1,
+  "owner": "acme",
+  "repo": "app",
+  "base": "main",
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "round": 1,
+  "verdict": "changes",
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "line_end": 10,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` returns undefined for single-word names",
+      "body": "The function `firstName` uses `split(' ')[1]`, which returns `undefined` when the input has only one word. For example, `firstName('Ada')` returns `undefined`, causing `welcomeBack('Ada')` to return \"Welcome back, undefined!\". This is wrong behavior users will hit.",
+      "evidence": {
+        "input": "'Ada'",
+        "expected": "a first name, or an error for single-word input",
+        "actual": "undefined"
+      },
+      "suggestion": "Handle single-word names: return the whole name if there's no space, or throw an error."
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 12,
+      "line_end": 13,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`welcomeBack` propagates undefined from `firstName`",
+      "body": "When `firstName` returns undefined, `welcomeBack` concatenates it into the greeting, producing \"Welcome back, undefined!\"",
+      "evidence": {
+        "input": "'Ada'",
+        "expected": "a greeting with a proper name",
+        "actual": "Welcome back, undefined!"
+      },
+      "suggestion": null
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 9,
+      "line_end": 11,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "Test assertion is too loose to catch the bug",
+      "body": "The test only checks that the output starts with \"Welcome back, \" but doesn't verify the actual first name. A regex like `/^Welcome back, /` passes even when the name is undefined.",
+      "evidence": {
+        "input": "'Ada Lovelace'",
+        "expected": "Welcome back, Lovelace!",
+        "actual": "The test passes because the regex only checks the prefix"
+      },
+      "suggestion": "Use `expect(welcomeBack('Ada Lovelace')).toBe('Welcome back, Lovelace!')` for an exact match."
+    }
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 2,
+    "medium": 1,
+    "low": 0,
+    "nit": 0
+  },
+  "narration": [
+    "[swarm] step 1 — resolved PR 1, base=main, head=133ece61",
+    "[swarm] step 2 — checks skipped: not on PR author branch",
+    "[swarm] step 3 — first wave: router + correctness lens",
+    "[swarm] step 4 — second wave: skipped (router plan empty)",
+    "[swarm] step 5 — verified 3 findings above NIT",
+    "[swarm] step 6 — merged and graded: verdict=changes"
+  ],
+  "lenses": [
+    {"lens": "router", "model": "minimax.minimax-m2.5", "scope": "full", "status": "ok", "findings": 0},
+    {"lens": "correctness", "model": "minimax.minimax-m2.5", "scope": "full", "status": "ok", "findings": 3}
+  ],
+  "checks": [],
+  "local": {"status": "none"}
+}
