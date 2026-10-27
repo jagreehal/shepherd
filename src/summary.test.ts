@@ -113,6 +113,45 @@ describe("reindent: a suggestion takes the indentation of the line it replaces",
   });
 });
 
+describe("a round reads the shapes models write", () => {
+  const base: SummaryInput = { head_sha: "43504ee000000000000000000000000000000000", verdict: "changes", why: "x" };
+  const evidenceOf = (evidence: string) => renderSummary({ ...base, findings: [{ file: "a.ts", line: 1, severity: "HIGH", lens: "correctness", body: "b", evidence }] }, BRANDING.emoji, null);
+
+  test("a worked example written as text keeps its three parts, whatever separates them", () => {
+    for (const evidence of [
+      'Input: "Ada Lovelace" | Expected: "Ada" | Actual: "Lovelace"',
+      '**Input:** "Ada Lovelace"\n**Expected:** "Ada"\n**Actual:** "Lovelace"',
+      'Expected: "Ada"; Actual: "Lovelace"; Input: "Ada Lovelace"',
+      'Given: "Ada Lovelace" → Got: "Lovelace", expected: "Ada"',
+    ]) {
+      const md = evidenceOf(evidence);
+
+      expect(md).toContain('**Input:** "Ada Lovelace" · **Expected:** "Ada" · **Actual:** "Lovelace"');
+      expect(md).toContain("**🟠 HIGH**");
+    }
+
+    expect(evidenceOf('Input: "a, b", Expected: "a", Actual: "b"')).toContain('**Input:** "a, b" · **Expected:** "a" · **Actual:** "b"');
+    expect(evidenceOf("Input: -1 | Expected: -2 | Actual: -3")).toContain("**Input:** -1 · **Expected:** -2 · **Actual:** -3");
+    expect(evidenceOf("Input: -1 -> Expected: -2 - Actual: -3")).toContain("**Input:** -1 · **Expected:** -2 · **Actual:** -3");
+    expect(evidenceOf('__Input:__ "__init__" | __Expected:__ "__new__" | __Actual:__ "__init__"')).toContain('**Input:** "__init__" · **Expected:** "__new__" · **Actual:** "__init__"');
+    expect(evidenceOf("**Input**: `2 ** 3` | **Expected**: `8` | **Actual**: `6`")).toContain("**Input:** `2 ** 3` · **Expected:** `8` · **Actual:** `6`");
+    expect(evidenceOf('Input: "result: 5" | Expected: "5" | Actual: "result: 5"')).toContain('**Input:** "result: 5" · **Expected:** "5" · **Actual:** "result: 5"');
+    expect(evidenceOf("Input: f() | Expected: x; | Actual: y;")).toContain("**Input:** f() · **Expected:** x; · **Actual:** y;");
+    expect(evidenceOf("Input: f()\nExpected: a,\nActual: b.")).toContain("**Input:** f() · **Expected:** a, · **Actual:** b.");
+    expect(evidenceOf(String.raw`Input: "say \"result: ok\"" | Expected: "ok"`)).toContain("_Graded MEDIUM, not HIGH");
+    expect(evidenceOf(String.raw`Input: "say \"result: ok\"" | Expected: "ok" | Actual: "say"`)).toContain('**Input:** "say \\"result: ok\\"" · **Expected:** "ok" · **Actual:** "say"');
+    expect(evidenceOf("Test uses a regex that only checks the prefix")).toContain("_Graded MEDIUM, not HIGH");
+  });
+
+  test("a range written as line and line_end reads as start-end, and a finding without a title takes its first sentence", () => {
+    const md = renderSummary({ ...base, findings: [{ file: "a.ts", line: 8, line_end: 10, severity: "LOW", lens: "correctness", body: "firstName crashes on one word. Guard the index." }] }, BRANDING.emoji, null);
+
+    expect(md).toContain("`a.ts:8-10`");
+    expect(renderSummary({ ...base, findings: [{ file: "a.ts", line: "8", line_end: "10", severity: "LOW", lens: "correctness", title: "t", body: "b" }] }, BRANDING.emoji, null)).toContain("`a.ts:8-10`");
+    expect(md).toContain("**firstName crashes on one word.**");
+  });
+});
+
 describe("suggestions over code carry code", () => {
   test("advice over code is caught with or without punctuation", () => {
     const replaced = ['    expect(welcomeBack("Ada Lovelace")).toMatch(/^Welcome back, /);'];

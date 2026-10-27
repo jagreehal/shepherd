@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BRANDING } from "./config.ts";
-import { adviceOverCode, renderReview, renderSummary } from "./summary.ts";
+import { adviceOverCode, checkedRound, renderReview, renderSummary } from "./summary.ts";
 
 // Real rounds that models handed off in CI, kept with the files they reviewed (fixtures/rounds/README.md). Each one is
 // rendered as the publish job renders it and held to what a reader relies on.
@@ -34,6 +34,17 @@ describe("replayed CI rounds", () => {
       const md = renderSummary(round, BRANDING.emoji, null, undefined, fanout, undefined, read);
       const review = renderReview(round, BRANDING.emoji, "header", read);
       const places = review.comments.map((comment) => `${comment.path}:${comment.start_line ? `${comment.start_line}-` : ""}${comment.line}`);
+
+      // Every finding has a title, and a worked example that names its three parts keeps them.
+      const checked = checkedRound(round, undefined, read);
+
+      for (const [i, finding] of checked.findings.entries()) {
+        const written = String(round.findings[i].evidence ?? "");
+
+        expect(finding.title).not.toBe("");
+
+        if (/input/i.test(written) && /expected/i.test(written) && /actual/i.test(written)) expect(finding.evidence).toBeDefined();
+      }
 
       // One comment per place.
       expect(new Set(places).size).toBe(places.length);

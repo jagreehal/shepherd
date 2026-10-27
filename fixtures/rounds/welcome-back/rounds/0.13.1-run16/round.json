@@ -1,0 +1,77 @@
+{
+  "pr": 1,
+  "base": "main",
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "round": 1,
+  "verdict": "changes",
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "firstName returns last name instead of first name",
+      "body": "The doc comment promises to return \"the person's first name\", but the implementation `name.trim().split(\" \")[1]` returns the **second** word (index 1), not the first (index 0).\n\nFor \"Ada Lovelace\": `split(\" \")` → `[\"Ada\", \"Lovelace\"]`\n`[1]` returns \"Lovelace\" (last name), not \"Ada\" (first name)\n\n`welcomeBack(\"Ada Lovelace\")` produces \"Welcome back, Lovelace!\" instead of \"Welcome back, Ada!\"",
+      "evidence": "Input: \"Ada Lovelace\" | Expected: \"Ada\" | Actual: \"Lovelace\"",
+      "suggestion": "return name.trim().split(\" \")[0];"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "No handling for single-word names",
+      "body": "If name has no spaces (e.g., \"Ada\"), `split(\" \")[1]` returns `undefined`, producing \"Welcome back, undefined!\""
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "No handling for empty/whitespace names",
+      "body": "Empty strings or names with only whitespace produce \"Welcome back, undefined!\""
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 10,
+      "severity": "LOW",
+      "lens": "correctness",
+      "title": "Test regex too permissive to catch the bug",
+      "body": "The regex `/^Welcome back, /` only checks the prefix, not the actual name, so it passes with incorrect output. A more specific test would catch the bug."
+    }
+  ],
+  "verified": [],
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 1,
+    "nit": 0
+  },
+  "lenses": [
+    {
+      "lens": "router",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 0,
+      "delegation_plan": [{"lens": "correctness", "rung": 1, "scope": "full", "reason": "full diff review for correctness concerns"}]
+    },
+    {
+      "lens": "correctness",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 4
+    }
+  ],
+  "checks": [],
+  "narration": [
+    "[swarm] step 1 — PR #1 resolved: owner=acme, base=main, head=133ece6",
+    "[swarm] step 2 — checks ran: lint ✅, typecheck ✅, test ✅",
+    "[swarm] step 3 — first wave: dispatching router and lenses from fanout.json",
+    "[swarm] step 4 — second wave: none needed (router found no delegations)",
+    "[swarm] step 5 — verification: skipped (no findings above NIT besides the verified one)",
+    "[swarm] step 6 — merge and grade: 1 HIGH, 2 MEDIUM, 1 LOW → changes needed"
+  ]
+}
