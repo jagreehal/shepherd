@@ -23,11 +23,52 @@ const flag = (fallback: boolean) => z.boolean().nullish().transform((v) => v ?? 
 
 const EvidenceParts = z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) });
 
-/** `Input: "Ada Lovelace", Expected: "Ada", Actual: "Lovelace"`, in any case and with `;` or `·` between: the three parts, or nothing. */
-function evidenceFromLine(line: string) {
-  const m = /input:\s*(.+?)\s*[,;·]\s*expected:\s*(.+?)\s*[,;·]\s*actual:\s*(.+)$/is.exec(line.trim());
+/** The body's first sentence or line, up to 100 characters. */
+function firstSentence(body: string): string {
+  const sentence = body.trim().split(/(?<=[.!?])\s|\n/)[0] ?? "";
 
-  return m ? { input: m[1]!, expected: m[2]!, actual: m[3]! } : undefined;
+  return sentence.length > 100 ? `${sentence.slice(0, 99).trimEnd()}…` : sentence;
+}
+
+// A label with any bold around it (`**Input:**`, `**Input**:`, `__Input:__`), so emphasis is read off the label alone.
+const label = (words: string) => new RegExp(String.raw`(?:\*\*|__)?(?<![a-z0-9])(?:${words})(?:\*\*|__)?\s*[:=](?:\*\*|__)?`, "i");
+
+// The labels a worked example uses for its three parts, with the synonyms models reach for.
+const EVIDENCE_LABELS = {
+  input: label("input|given|for input|when called with"),
+  expected: label("expected|expect|should (?:be|return)|wanted|want"),
+  actual: label("actual|got|returns|result|observed"),
+};
+
+/**
+ * A worked example written as text, such as `Input: "Ada Lovelace" | Expected: "Ada" | Actual: "Lovelace"`: each label
+ * found in any order and case, bold around a label ignored, and any separator (`,` `;` `|` `·` `→` `->` ` - ` or a line
+ * break) between the parts. A label inside a quoted value is part of that value, and each value keeps its own
+ * characters, so `-1` and a closing `;` stay. The three parts, or nothing when a label is missing.
+ */
+function evidenceFromLine(line: string) {
+  // Blank each quoted value to its own length, so a label inside a quote stays part of the value and positions match.
+  const unquoted = line.replaceAll(/"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\\n])*`|(?<![a-z0-9])'(?:\\.|[^'\\\n])*'/gi, (quoted) => " ".repeat(quoted.length));
+
+  const found = Object.entries(EVIDENCE_LABELS).flatMap(([part, pattern]) => {
+    const m = pattern.exec(unquoted);
+
+    return m ? [{ part, start: m.index, from: m.index + m[0].length }] : [];
+  });
+
+  if (found.length < 3) return undefined;
+  const ordered = [...found].sort((a, b) => a.start - b.start);
+
+  // One separator comes off a value that runs into the next label on the same line; a line break is separator enough.
+  const valueOf = (raw: string, last: boolean) => {
+    const value = raw.trim();
+
+    return last || /\n\s*$/.test(raw) ? value : value.replace(/\s*(?:[|,;·→]|[-=]>|(?<=\s)-)$/, "");
+  };
+
+  const parts = Object.fromEntries(ordered.map((p, i) => [p.part, valueOf(line.slice(p.from, ordered[i + 1]?.start ?? line.length), i === ordered.length - 1)]));
+
+  return parts.input && parts.expected && parts.actual ? { input: parts.input, expected: parts.expected, actual: parts.actual } : undefined;
 }
 
 const VERDICT_ALIAS = alias({ changes_needed: "changes", approve_with_nits: "nits", looks_good: "good", approve: "good", approved: "good" });
@@ -64,6 +105,12 @@ const Finding = z.object({
   checked: z.array(z.object({ command: z.string(), result: z.string() })).nullish().transform((v) => v ?? []),
   docs: z.array(z.object({ url: z.string().regex(/^https:\/\/[^\s()<>`]+$/), title: z.string() })).nullish().transform((v) => v ?? []), // the documentation the claim rests on
   reintroduces: absent(z.string().regex(THREAD_URL)).catch(undefined), // a resolved thread whose fix this change undoes
+  // A range written as `line` and `line_end` reads as "line-line_end".
+  line_end: absent(z.union([z.number().int().positive(), z.string().regex(/^[1-9]\d*$/).transform(Number)])),
+}).transform(({ line_end: last, ...f }) => {
+  const start = /^\d+$/.test(String(f.line)) ? Number(f.line) : undefined;
+
+  return last !== undefined && start !== undefined && last > start ? { ...f, line: `${start}-${last}` } : f;
 });
 
 export const SummaryInput = z.object({
@@ -204,6 +251,8 @@ export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, r
 
   for (const f of s.findings) {
     f.convergent &&= f.lens.includes("+");
+    // A finding without a title takes its first sentence, so a reader can triage it by the title alone.
+    f.title ||= firstSentence(f.body);
     f.url = real(f.url);
     f.reintroduces = real(f.reintroduces);
 
