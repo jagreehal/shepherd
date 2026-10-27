@@ -284,13 +284,15 @@ describe("publish: an iteration that failed or timed out", () => {
 describe("publish: the status the model asked for", () => {
   const statusScript = template.jobs.publish.steps.find((s) => s.name === "Set the shepherd status")?.run ?? "";
 
-  function run(statusJson: string | null, pushed = "", refused = "") {
+  function run(statusJson: string | null, pushed = "", refused = "", handoff: Record<string, string> = {}) {
     const root = mkdtempSync(path.join(tmpdir(), "shepherd-status-"));
 
     roots.push(root);
     mkdirSync(path.join(root, "handoff"));
 
     if (statusJson !== null) writeFileSync(path.join(root, "handoff", "status.json"), statusJson);
+
+    for (const [name, text] of Object.entries(handoff)) writeFileSync(path.join(root, "handoff", name), text);
     const bin = path.join(root, "bin");
 
     mkdirSync(bin);
@@ -313,6 +315,20 @@ describe("publish: the status the model asked for", () => {
     expect(r.code).toBe(0);
     expect(r.args).toContain("state=failure");
     expect(r.description).toBe("stamp refused: retry loop");
+  });
+
+  test("with nothing pushed and no re-run asked for, findings above NIT turn pending into failure; nothing turns it into success", () => {
+    const pending = JSON.stringify({ state: "pending", description: "round 1 reviewed, 1 finding posted" });
+    const round = (severity: string) => JSON.stringify({ findings: [{ severity }] });
+
+    expect(run(pending, "", "", { "round.json": round("HIGH") }).args).toContain("state=failure");
+    expect(run(pending, "", "", { "round.json": round("HIGH") }).description).toBe("1 finding(s) for the author; round 1 reviewed, 1 finding posted");
+    // Success needs stamp's approval, green CI and no open thread, none of which this step can see.
+    expect(run(pending, "", "", { "round.json": round("NIT") }).args).toContain("state=pending");
+    expect(run(pending, "", "", { "round.json": JSON.stringify({ findings: [] }) }).args).toContain("state=pending");
+    expect(run(pending, "", "", { "round.json": round("HIGH"), "rerun-jobs.txt": "[]" }).args).toContain("state=failure"); // an empty list asks for nothing
+    expect(run(pending, "", "", { "round.json": round("HIGH"), "rerun-jobs.txt": "[123]" }).args).toContain("state=pending"); // CI re-runs wake the next iteration
+    expect(run(pending).args).toContain("state=pending"); // no round: nothing to decide from
   });
 
   test("an unknown state becomes pending, and text is held to one short line", () => {

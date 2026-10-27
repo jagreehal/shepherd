@@ -1,2 +1,4 @@
 [test]
 preload = ["executable-stories-bun/preload"]
+# Replayed rounds keep the files they reviewed, test files included, as data.
+pathIgnorePatterns = ["fixtures/**"]

@@ -586,7 +586,10 @@ if (command === "install") {
 
   const fanout = fanoutFile && existsSync(fanoutFile) ? orExit(() => JSON.parse(readFileSync(fanoutFile, "utf8"))) : undefined;
 
-  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads())));
+  // Read from the reviewed checkout, as inline does, so both place each suggestion on the same lines.
+  const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
+
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads(), read)));
 } else if (command === "inline" && sub) {
   // Swarm's inline review, rendered from the same round JSON: the payload for POST /pulls/<n>/reviews.
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));

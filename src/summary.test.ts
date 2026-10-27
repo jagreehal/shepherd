@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDING } from "./config.ts";
-import { anchorSuggestion, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
+import { anchorSuggestion, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
 const HEADER = "> 🤖 Automated comment by **Shepherd swarm**, not written by a human";
 
@@ -78,6 +78,38 @@ describe("swarm summary", () => {
     expect(md).not.toContain("javascript:");
     expect(md).not.toContain("not a url");
     expect(renderSummary({ ...ROUND, why: "![x][r] `@team" }, BRANDING.emoji, null)).toContain("!\\[x][r] `@\u200bteam");
+  });
+});
+
+describe("reindent: a suggestion takes the indentation of the line it replaces", () => {
+  test("too little or too much indentation becomes the target's", () => {
+    expect(reindent('return name.trim().split(" ")[0];', "  ")).toBe('  return name.trim().split(" ")[0];');
+    expect(reindent("        return x;", "    ")).toBe("    return x;"); // eight spaces for a four-space line
+    expect(reindent("  return x;", "  ")).toBe("  return x;");
+  });
+
+  test("a replacement that dedents keeps its shape: the baseline is the replaced block's shared indentation", () => {
+    // Python: the replaced lines sit at eight and four spaces, and the replacement keeps that shape.
+    const py = ["def total(items):", "    for item in items:", "        if item.skip:", "            continue", "        n += 1", "    return n", ""].join("\n");
+
+    const round: SummaryInput = {
+      head_sha: "43504ee000000000000000000000000000000000",
+      verdict: "changes",
+      why: "x",
+      findings: [{ file: "total.py", line: "5-6", severity: "HIGH", lens: "correctness", body: "Counts after the loop.", evidence: { input: "[a]", expected: "1", actual: "0" }, suggestion: "        n = n + 1\n    return n" }],
+    };
+
+    const body = renderReview(round, BRANDING.emoji, "H", (p) => (p === "total.py" ? py : null)).comments[0]!.body;
+
+    expect(body).toContain("```suggestion\n        n = n + 1\n    return n\n```");
+    expect(reindent("    a\nb", "    ")).toBe("        a\n    b"); // under-indented as a block: shifted together
+  });
+
+  test("tabs convert either way, and what each line adds on top of the shared indentation is kept", () => {
+    expect(reindent("    return x;", "\t")).toBe("\treturn x;");
+    expect(reindent("\t\treturn x;", "  ")).toBe("  return x;");
+    expect(reindent("      if (a) {\n        b();\n\n      }", "  ")).toBe("  if (a) {\n    b();\n\n  }");
+    expect(reindent("if (a) {\n\tb();\n}", "\t")).toBe("\tif (a) {\n\t\tb();\n\t}");
   });
 });
 
@@ -281,9 +313,20 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(renderReview(round, BRANDING.emoji, HEADER).comments[0]!.body).not.toContain("```suggestion");
   });
 
-  test("a lens that did not finish leaves the round incomplete, and a line past the end of its file never anchors inline", () => {
+  test("evidence written as one line is split into its parts, and a line that is not one is dropped", () => {
+    const md = renderSummary({ ...RICH, findings: [{ ...BUG, evidence: 'Input: "Ada Lovelace", Expected: "Ada", Actual: "Lovelace"' }] }, BRANDING.emoji, null);
+
+    expect(md).toContain('**Input:** "Ada Lovelace" · **Expected:** "Ada" · **Actual:** "Lovelace"');
+    expect(md).not.toContain("Graded MEDIUM");
+    expect(renderSummary({ ...RICH, findings: [{ ...BUG, evidence: "it is wrong" }] }, BRANDING.emoji, null)).toContain("Graded MEDIUM");
+  });
+
+  test("a lens that did not finish leaves the round incomplete, and a line past the end of its file anchors only through its suggestion", () => {
     expect(renderSummary({ ...RICH, lenses: [{ lens: "security", status: "failed" }] }, BRANDING.emoji, null)).toContain("security (failed) did not finish, so its scope was not reviewed.");
-    expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER, read).comments).toHaveLength(0);
+    expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40, suggestion: undefined }] }, BRANDING.emoji, HEADER, read).comments).toHaveLength(0);
+    // A cited line past the end of the file: the suggestion matches one line, so the comment moves there.
+    const moved = renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER, read).comments;
+    expect(moved.map((c) => c.line)).toEqual([9]);
     expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER).comments).toHaveLength(1); // no file to check against
   });
 });

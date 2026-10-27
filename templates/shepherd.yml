@@ -479,6 +479,21 @@ jobs:
               state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
           elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
+          elif state == "pending":
+              # Nothing pushed and no CI re-run asked for: findings above NIT leave work for the author, so the status
+              # is failure and the sweep, which re-runs pending PRs every half hour, leaves the PR to them. Otherwise it
+              # stays pending: success needs stamp's approval, green CI and no open thread, which this step cannot see.
+              try:
+                  reruns = open("handoff/rerun-jobs.txt").read().strip() not in ("", "[]")
+              except OSError:
+                  reruns = False
+              try:
+                  r = json.load(open("handoff/round.json"))
+                  found = [f for f in (r.get("findings") or []) if isinstance(f, dict) and f.get("severity") != "NIT"]
+                  if found and not reruns:
+                      state, desc = "failure", f"{len(found)} finding(s) for the author; {desc}"
+              except Exception:
+                  pass
           print(state)
           print(desc[:139])
           PY

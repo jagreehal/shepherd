@@ -1,0 +1,79 @@
+{
+  "pr": 1,
+  "round": 1,
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "verdict": "changes",
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "firstName returns the LAST name, not the first name",
+      "body": "The function promises 'first name' but returns the second word (last name). For 'Ada Lovelace', it returns 'Lovelace' when it should return 'Ada'. This is an off-by-one error: it uses index [1] instead of [0].",
+      "suggestion": "return name.trim().split(\" \")[0];",
+      "evidence": {
+        "input": "Ada Lovelace",
+        "expected": "Ada",
+        "actual": "Lovelace"
+      },
+      "verified": "orchestrator"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "No handling for single-word names or empty strings",
+      "body": "Single names like 'Ada' cause undefined to appear in the greeting message: 'Welcome back, undefined!'",
+      "suggestion": "Add handling: const parts = name.trim().split(\" \"); return parts[0] || name;",
+      "evidence": {
+        "input": "Ada",
+        "expected": "Ada",
+        "actual": "undefined"
+      },
+      "verified": "orchestrator"
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 10,
+      "severity": "LOW",
+      "lens": "correctness",
+      "title": "Test only checks prefix, misses the actual value",
+      "body": "The test uses toMatch(/^Welcome back, /) which passes even when firstName returns undefined. It should verify the actual name extracted.",
+      "suggestion": "expect(welcomeBack(\"Ada Lovelace\")).toBe(\"Welcome back, Ada!\");",
+      "evidence": {
+        "input": "Ada Lovelace",
+        "expected": "Welcome back, Ada!",
+        "actual": "matches /^Welcome back, / (accepts undefined)"
+      },
+      "verified": "orchestrator"
+    }
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 1,
+    "low": 1,
+    "nit": 0
+  },
+  "lenses": [
+    {
+      "lens": "correctness",
+      "model": "minimax.minimax-m2.5",
+      "scope": "full",
+      "status": "ok",
+      "findings": 3
+    }
+  ],
+  "checks": [],
+  "narration": [
+    "[swarm] step 1 — resolving PR #1, base=main, head=133ece6",
+    "[swarm] step 2 — running checks",
+    "[swarm] step 3 — first wave: correctness lens",
+    "[swarm] step 4 — second wave: none needed",
+    "[swarm] step 5 — verified 3 findings",
+    "[swarm] step 6 — merged and graded: verdict=changes"
+  ]
+}

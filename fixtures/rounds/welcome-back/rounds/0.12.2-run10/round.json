@@ -1,0 +1,47 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "verdict": "changes",
+  "why": "A HIGH correctness bug causes welcomeBack to use the wrong name.",
+  "confidence": 2,
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "firstName returns the second word instead of the first name",
+      "body": "The function uses split(' ')[1] which returns the second word. For 'Ada Lovelace', it returns 'Lovelace' not 'Ada'. The doc comment says it returns 'the person's first name'.",
+      "evidence": {"input": "Ada Lovelace", "expected": "Ada", "actual": "Lovelace"},
+      "suggestion": "return name.trim().split(' ')[0];",
+      "verified": "Input: 'Ada Lovelace', Expected: 'Ada', Actual: 'Lovelace'",
+      "inline": true,
+      "convergent": false
+    }
+  ],
+  "pre_merge": [
+    {"check": "Title", "status": "pass", "detail": "Adds welcomeBack function"},
+    {"check": "Description", "status": "warn", "detail": "No description"},
+    {"check": "Linked issue", "status": "pass", "detail": "none linked"},
+    {"check": "Scope", "status": "pass", "detail": "Two files changed"},
+    {"check": "Tests", "status": "pass", "detail": "Test added for welcomeBack"}
+  ],
+  "walkthrough": [
+    "Adds firstName helper that extracts first name from full name",
+    "Adds welcomeBack function that greets returning users",
+    "Adds test for welcomeBack"
+  ],
+  "changes": [
+    {"files": ["src/welcome.ts", "src/welcome.test.ts"], "summary": "Added firstName and welcomeBack functions with tests"}
+  ],
+  "effort": 1,
+  "diagram": "",
+  "still_open": [],
+  "checks": [
+    {"tool": "tsc", "status": "unavailable", "reason": "Cannot find module 'vitest'"},
+    {"tool": "vp", "status": "unavailable", "reason": "not found"}
+  ],
+  "lenses": [
+    {"lens": "correctness", "model": "bedrock:minimax.minimax-m2.5", "scope": "full", "status": "ok", "findings": 1, "skill_blob": ""}
+  ],
+  "lenses_yml_blob": ""
+}

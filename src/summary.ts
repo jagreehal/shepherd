@@ -21,6 +21,15 @@ const text = z.string().nullish().transform((v) => v ?? "");
 
 const flag = (fallback: boolean) => z.boolean().nullish().transform((v) => v ?? fallback);
 
+const EvidenceParts = z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) });
+
+/** `Input: "Ada Lovelace", Expected: "Ada", Actual: "Lovelace"`, in any case and with `;` or `·` between: the three parts, or nothing. */
+function evidenceFromLine(line: string) {
+  const m = /input:\s*(.+?)\s*[,;·]\s*expected:\s*(.+?)\s*[,;·]\s*actual:\s*(.+)$/is.exec(line.trim());
+
+  return m ? { input: m[1]!, expected: m[2]!, actual: m[3]! } : undefined;
+}
+
 const VERDICT_ALIAS = alias({ changes_needed: "changes", approve_with_nits: "nits", looks_good: "good", approve: "good", approved: "good" });
 
 const STATUS_ALIAS = alias({ success: "ok", done: "ok", completed: "ok", complete: "ok", passed: "ok", error: "failed", errored: "failed", skipped: "could_not_run", not_run: "could_not_run", did_not_run: "could_not_run", missing: "could_not_run" });
@@ -47,7 +56,8 @@ const Finding = z.object({
   // What the verifier checked, quoted code included. A bare `true` carries no evidence, so it reads as unverified.
   verified: z.union([z.string(), z.boolean().transform(() => "")]).nullish().transform((v) => v ?? ""),
   // The claim made checkable: an input, what the code should do on it, and what it does.
-  evidence: absent(z.object({ input: z.string().min(1), expected: z.string().min(1), actual: z.string().min(1) })),
+  // Also accepted as one line, `Input: …, Expected: …, Actual: …`, and split into its parts.
+  evidence: absent(z.union([EvidenceParts, z.string().transform(evidenceFromLine).pipe(EvidenceParts.optional())])),
   suggestion: absent(z.string()), // replacement for exactly the lines the comment covers: GitHub's one-click commit
   inline: flag(true), // false when the finding has no line in the diff to anchor on
   // The read-only commands the reviewer or verifier ran to check it.
@@ -188,7 +198,7 @@ const fromChecks = (f: { lens: string }) => f.lens.startsWith("checks/");
  * input, expected and actual result is graded MEDIUM. The verdict is at least as strict as its findings. Without
  * `threads`, links are kept as given.
  */
-export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>) {
+export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, read?: (path: string) => string | null) {
   const s = SummaryInput.parse(raw);
   const real = (url: string | undefined) => (url === undefined || threads === undefined || threads.has(url) ? url : undefined);
 
@@ -212,7 +222,56 @@ export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>) {
 
   for (const t of s.still_open) t.url = real(t.url) ?? "";
 
+  // With the reviewed files at hand, each suggestion is placed once, so the summary and the inline comment cite the
+  // same lines.
+  if (read) for (const f of s.findings) place(f, read);
+
   return s;
+}
+
+/** A suggestion moved onto the lines it rewrites and given their indentation, or dropped when it fits nowhere near. */
+function place(f: z.infer<typeof Finding>, read: (path: string) => string | null) {
+  if (f.suggestion === undefined) return;
+
+  const text = f.suggestion.includes("```") || !insideRepo(f.file) ? null : read(f.file);
+  const [start, end] = String(f.line).split("-").map(Number);
+  const lines = text?.split("\n") ?? [];
+  // Near the cited line first, then across the whole file, which still needs one clear best match.
+  const at = text === null || !start ? null : (anchorSuggestion(lines, start, end ?? start, f.suggestion) ?? anchorSuggestion(lines, start, end ?? start, f.suggestion, lines.length));
+
+  if (!at) {
+    f.suggestion = undefined;
+
+    return;
+  }
+
+  f.line = end === undefined ? at.start : `${at.start}-${at.end}`;
+  // The baseline is the indentation the replaced lines share, so a block that dedents keeps its shape.
+  f.suggestion = reindent(f.suggestion, sharedIndent(lines.slice(at.start - 1, at.end)));
+}
+
+/**
+ * The suggestion at the indentation of the lines it replaces, since GitHub commits it as written. The indentation its
+ * non-blank lines share becomes `target`, in spaces or tabs, and each line keeps what it adds on top.
+ */
+export function reindent(suggestion: string, target: string): string {
+  const lines = suggestion.split("\n");
+  const common = sharedIndent(lines);
+
+  return lines.map((l) => (l.trim() ? target + l.slice(common.length) : l)).join("\n");
+}
+
+/** The leading whitespace every non-blank line starts with: the block's own indentation. */
+function sharedIndent(lines: string[]): string {
+  const indents = lines.flatMap((l) => (l.trim() ? [/^[ \t]*/.exec(l)![0]] : []));
+
+  return indents.reduce((shared, own) => {
+    let n = 0;
+
+    while (n < shared.length && n < own.length && shared[n] === own[n]) n++;
+
+    return shared.slice(0, n);
+  }, indents[0] ?? "");
 }
 
 /** The worst severity among the findings whose tag names the lens (`correctness/data`, `correctness + security`), and how many. */
@@ -230,8 +289,8 @@ const unverified = (f: z.infer<typeof Finding>) => f.severity !== "NIT" && !from
  * The summary comment: the verdict heading, why, then one collapsed section per part of the round. With a null header
  * it is the body alone, for the handoff file the publish job wraps in its own marker and header.
  */
-export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>, threads?: ReadonlySet<string>): string {
-  const s = checkedRound(raw, threads);
+export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>, threads?: ReadonlySet<string>, read?: (path: string) => string | null): string {
+  const s = checkedRound(raw, threads, read);
   // A lens fanout listed for this head that the round does not report never ran as its own reviewer, so it shows
   // as could_not_run.
   const wave = fanout ? Fanout.parse(fanout) : null;
@@ -383,7 +442,7 @@ const AHEAD = 0.1; // how far a moved suggestion's window must lead the next mos
  * rewrites. The lines named stay when they are alike enough. Otherwise it moves to the window of the same size, within
  * five lines, that is alike enough, differs from the suggestion and leads the next most alike; with none, it is dropped.
  */
-export function anchorSuggestion(lines: string[], start: number, end: number, suggestion: string): { start: number; end: number } | null {
+export function anchorSuggestion(lines: string[], start: number, end: number, suggestion: string, near = NEAR): { start: number; end: number } | null {
   const size = end - start + 1;
   const flat = (t: string) => t.replace(/\s+/g, " ").trim();
 
@@ -394,10 +453,13 @@ export function anchorSuggestion(lines: string[], start: number, end: number, su
   };
 
   if (end <= lines.length && score(start) >= LIKE) return { start, end };
-  const near: { from: number; score: number }[] = [];
+  const tried: { from: number; score: number }[] = [];
 
-  for (let from = Math.max(1, start - NEAR); from <= Math.min(lines.length - size + 1, start + NEAR); from++) near.push({ from, score: score(from) });
-  const [best, next] = near.sort((a, b) => b.score - a.score);
+  // A whole-file search (near >= the file's length) covers every window, wherever the cited line was.
+  const [lo, hi] = near >= lines.length ? [1, lines.length - size + 1] : [Math.max(1, start - near), Math.min(lines.length - size + 1, start + near)];
+
+  for (let from = lo; from <= hi; from++) tried.push({ from, score: score(from) });
+  const [best, next] = tried.sort((a, b) => b.score - a.score);
 
   return best && best.score >= LIKE && best.score - (next?.score ?? 0) >= AHEAD ? { start: best.from, end: best.from + size - 1 } : null;
 }
@@ -406,7 +468,7 @@ export function anchorSuggestion(lines: string[], start: number, end: number, su
 const insideRepo = (p: string) => !p.startsWith("/") && !p.split(/[\\/]/).includes("..");
 
 export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>) {
-  const s = checkedRound(raw, threads);
+  const s = checkedRound(raw, threads, read);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
 
   // A line past the end of the file it names cannot anchor: GitHub rejects the whole review over one such comment.
@@ -416,20 +478,22 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
     return text === null || Number(String(f.line).split("-").at(-1)) <= text.replace(/\n$/, "").split("\n").length;
   };
 
-  const posted = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f))).slice(0, PER_REVIEW);
+  const anchored = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f)));
+  // One comment per place, the most severe finding's. Others on the same lines are named under it and appear in full
+  // in the summary.
+  const at = (f: (typeof s.findings)[number]) => `${f.file}:${f.line}`;
+  const posted = anchored.filter((f, i) => anchored.findIndex((g) => at(g) === at(f)) === i).slice(0, PER_REVIEW);
+
+  const alsoHere = (f: (typeof s.findings)[number]) => {
+    const rest = anchored.filter((g) => g !== f && at(g) === at(f));
+
+    return rest.length ? ["", `**Also here:** ${rest.map((g) => `${glyph(g.severity)} ${g.severity} ${defuse(g.title || g.body.split("\n")[0]!, true)}`).join(" · ")}`] : [];
+  };
 
   const comments = posted.map((f) => {
-    let [start = 0, end] = String(f.line).split("-").map(Number); // `posted` kept only numeric lines and "a-b" ranges
-    // A suggestion is committed as written: it posts only when it cannot close its own fence and its lines are placed.
-    let fix = f.suggestion !== undefined && !f.suggestion.includes("```") ? f.suggestion : undefined;
-    const text = fix !== undefined && insideRepo(f.file) ? read(f.file) : null;
-
-    if (fix !== undefined) {
-      const at = text === null ? null : anchorSuggestion(text.split("\n"), start, end ?? start, fix);
-
-      if (at) [start, end] = [at.start, end === undefined ? undefined : at.end];
-      else fix = undefined;
-    }
+    const [start = 0, end] = String(f.line).split("-").map(Number); // `posted` kept only numeric lines and "a-b" ranges
+    // checkedRound placed the suggestion and kept it only where it fits.
+    const fix = f.suggestion;
 
     const suggestion = fix !== undefined ? ["", "```suggestion", fix, "```"] : [];
     const where = end === undefined ? `${start}` : `${start}-${end}`;
@@ -446,6 +510,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
       ...evidenceBlock(f),
       ...docsLine(f),
       ...suggestion,
+      ...alsoHere(f),
       ...(f.verified ? ["", `**Verified:** ${defuse(f.verified)}`] : []),
       ...(unverified(f) ? ["", "⚠️ No verifier has checked this yet."] : []),
       ...checkedBlock(f),

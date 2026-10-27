@@ -1,0 +1,70 @@
+{
+  "pr": 1,
+  "round": 1,
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "verdict": "changes",
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 3,
+    "low": 0,
+    "nit": 0
+  },
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "body": "firstName returns the second word (last name) instead of the first name. name.trim().split(' ')[1] gets index 1 (second element), not index 0 (first). Input: 'Ada Lovelace', Expected: 'Ada', Actual: 'Lovelace'",
+      "suggestion": "return name.trim().split(' ')[0];",
+      "verified": "Confirmed: node -e \"console.log('Ada Lovelace'.trim().split(' ')[1])\" outputs 'Lovelace'"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "body": "Returns undefined when name has no space (single name). Input: 'Ada', Expected: 'Ada', Actual: undefined",
+      "suggestion": "Add handling for single names: return name.trim().split(' ')[0] || name"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 8,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "body": "Returns undefined for empty string. Input: '', Expected: '' or error, Actual: undefined",
+      "suggestion": "Add guard for empty string before processing"
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "body": "Test assertion too loose - only checks prefix '/^Welcome back, /' without verifying the extracted name. Would pass even if firstName returns wrong value.",
+      "suggestion": "Add specific assertion: expect(welcomeBack('Ada Lovelace')).toBe('Welcome back, Ada!')"
+    }
+  ],
+  "lenses": [
+    {
+      "lens": "router",
+      "model": "",
+      "scope": "full",
+      "status": "ok",
+      "findings": 5
+    },
+    {
+      "lens": "correctness",
+      "model": "",
+      "scope": "full",
+      "status": "ok",
+      "findings": 4
+    }
+  ],
+  "narration": [
+    "[shepherd] step 2 round 1 — diff touches src/welcome.ts; running swarm",
+    "[swarm] step 3 — dispatching router and correctness lens",
+    "[swarm] step 4 — router graded MEDIUM, correctness confirmed findings"
+  ]
+}

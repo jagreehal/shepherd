@@ -1,0 +1,15 @@
+{
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "files": [
+    "src/welcome.test.ts",
+    "src/welcome.ts"
+  ],
+  "lenses": [
+    {
+      "lens": "correctness",
+      "scope": "full",
+      "skill": "../review-correctness/SKILL.md"
+    }
+  ]
+}

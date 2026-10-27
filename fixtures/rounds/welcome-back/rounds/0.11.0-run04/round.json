@@ -1,0 +1,75 @@
+{
+  "head_sha": "133ece617aff5c609650822f169bc34c4dfde748",
+  "base_sha": "f6e834ed1682697f6abaf093da91779876092825",
+  "round": 1,
+  "verdict": "changes",
+  "files": ["src/welcome.ts", "src/welcome.test.ts"],
+  "findings": [
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "`firstName` returns the last name instead of first name",
+      "body": "The function uses `split(\" \")[1]` which returns index 1 (the second word), but the first name is at index 0. For \"Ada Lovelace\", this returns \"Lovelace\" instead of \"Ada\".",
+      "evidence": "Input: \"Ada Lovelace\", Expected: \"Ada\", Actual: \"Lovelace\"",
+      "suggestion": "Change `split(\" \")[1]` to `split(\" \")[0]`"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "Single-word names return undefined",
+      "body": "For a single name like \"John\", `split(\" \")[1]` returns `undefined`, producing \"Welcome back, undefined!\"",
+      "evidence": "Input: \"John\", Expected: \"John\", Actual: undefined",
+      "suggestion": "Add handling for single-word names or check array bounds"
+    },
+    {
+      "file": "src/welcome.ts",
+      "line": 9,
+      "severity": "MEDIUM",
+      "lens": "correctness",
+      "title": "Multi-word names return wrong name",
+      "body": "For names like \"Jane Doe Smith\", this returns the middle name \"Doe\" instead of the first name \"Jane\".",
+      "evidence": "Input: \"Jane Doe Smith\", Expected: \"Jane\", Actual: \"Doe\"",
+      "suggestion": "Use `split(\" \")[0]` to always get the first word"
+    },
+    {
+      "file": "src/welcome.test.ts",
+      "line": 16,
+      "severity": "HIGH",
+      "lens": "correctness",
+      "title": "Test doesn't verify correct name extraction",
+      "body": "The test only checks that output matches `/^Welcome back, /` which is too loose - it doesn't verify the first name is actually correct. This weak assertion let the bug pass.",
+      "evidence": "Test uses regex that only checks prefix, not the actual name",
+      "suggestion": "Add assertions that verify the exact first name extracted, e.g., `expect(welcomeBack(\"Ada Lovelace\")).toBe(\"Welcome back, Ada!\")`"
+    }
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 3,
+    "medium": 1,
+    "low": 0,
+    "nit": 0
+  },
+  "lenses": [
+    {
+      "lens": "router",
+      "scope": "full",
+      "status": "ok",
+      "findings": 4
+    },
+    {
+      "lens": "correctness",
+      "scope": "full",
+      "status": "ok",
+      "findings": 4
+    }
+  ],
+  "checks": [],
+  "narration": [
+    "[swarm] first wave — dispatch router and correctness lens on full diff",
+    "[swarm] verify — both router and correctness agree on HIGH bug in firstName"
+  ]
+}
