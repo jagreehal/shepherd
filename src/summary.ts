@@ -239,7 +239,10 @@ function place(f: z.infer<typeof Finding>, read: (path: string) => string | null
   // Near the cited line first, then across the whole file, which still needs one clear best match.
   const at = text === null || !start ? null : (anchorSuggestion(lines, start, end ?? start, f.suggestion) ?? anchorSuggestion(lines, start, end ?? start, f.suggestion, lines.length));
 
-  if (!at) {
+  const replaced = lines.slice((at?.start ?? 1) - 1, at?.end ?? 0);
+
+  // A suggestion is committed as written, so over code it carries code: advice stays in the comment.
+  if (!at || adviceOverCode(f.file, f.suggestion, replaced, lines.slice(0, at.start - 1).join("\n"))) {
     f.suggestion = undefined;
 
     return;
@@ -247,7 +250,87 @@ function place(f: z.infer<typeof Finding>, read: (path: string) => string | null
 
   f.line = end === undefined ? at.start : `${at.start}-${at.end}`;
   // The baseline is the indentation the replaced lines share, so a block that dedents keeps its shape.
-  f.suggestion = reindent(f.suggestion, sharedIndent(lines.slice(at.start - 1, at.end)));
+  f.suggestion = reindent(f.suggestion, sharedIndent(replaced));
+}
+
+// Files whose lines are prose: a sentence there is the content, not advice.
+const PROSE_FILE = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
+
+// Words that mark English advice rather than code: articles and the verbs reviewers use to recommend a change.
+const ADVICE_WORDS = new Set(["the", "an", "instead", "should", "use", "rather", "than", "consider", "prefer", "avoid", "please", "add", "replace", "change", "remove", "make", "sure"]);
+
+/**
+ * Whether a suggestion over code carries advice in place of code: a run of three or more plain words outside strings
+ * and comments that holds an English marker word, with at least two in three of its words new to the replaced lines.
+ * `before` is the file above the replaced lines, so a string or comment already open there counts as open.
+ */
+export function adviceOverCode(file: string, suggestion: string, replaced: string[], before = ""): boolean {
+  if (PROSE_FILE.test(file)) return false;
+
+  const known = new Set(replaced.join("\n").toLowerCase().match(/[a-z]+/g) ?? []);
+  const code = outsideStrings(suggestion, outsideStrings(before).open);
+
+  return (code.text.match(/[A-Za-z]+(?:[ \t]+[A-Za-z]+){2,}/g) ?? []).some((run) => {
+    const words = run.toLowerCase().split(/[ \t]+/);
+
+    return words.some((w) => ADVICE_WORDS.has(w)) && words.filter((w) => !known.has(w)).length * 3 >= words.length * 2;
+  });
+}
+
+/**
+ * The text outside string literals and comments, each masked by `◊`, and the string or block comment still open at
+ * the end. Backticks, triple quotes and block comments carry across lines; single and double quotes, and `//`, `#`
+ * and `--` comments, end at the line. `open` starts the scan inside one.
+ */
+function outsideStrings(text: string, open = "") {
+  let out = "";
+  let i = 0;
+  let inside = open;
+
+  while (i < text.length) {
+    if (inside) {
+      const close = text.indexOf(inside, i);
+      const newline = inside === '"' || inside === "'" ? text.indexOf("\n", i) : -1;
+
+      if (newline >= 0 && (close < 0 || close > newline)) {
+        [i, inside] = [newline, ""];
+        out += " ◊ ";
+        continue;
+      }
+
+      if (inside.length === 1 && close > 0 && text[close - 1] === "\\") {
+        i = close + 1;
+        continue;
+      }
+
+      i = close < 0 ? text.length : close + inside.length;
+      inside = close < 0 ? inside : "";
+      out += " ◊ ";
+      continue;
+    }
+
+    const rest = text.slice(i);
+    const opener = /^("""|'''|\/\*|["'`])/.exec(rest)?.[1];
+
+    if (opener) {
+      inside = opener === "/*" ? "*/" : opener;
+      i += opener.length;
+      continue;
+    }
+
+    if (/^(\/\/|#|--)/.test(rest)) {
+      const newline = text.indexOf("\n", i);
+
+      i = newline < 0 ? text.length : newline;
+      out += " ◊ ";
+      continue;
+    }
+
+    out += text[i];
+    i++;
+  }
+
+  return { text: out, open: inside };
 }
 
 /**

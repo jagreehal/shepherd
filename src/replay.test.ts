@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BRANDING } from "./config.ts";
-import { renderReview, renderSummary } from "./summary.ts";
+import { adviceOverCode, renderReview, renderSummary } from "./summary.ts";
 
 // Real rounds that models handed off in CI, kept with the files they reviewed (fixtures/rounds/README.md). Each one is
 // rendered as the publish job renders it and held to what a reader relies on.
@@ -48,7 +48,13 @@ describe("replayed CI rounds", () => {
         // A suggestion is committed as written, so it carries the indentation of the line it replaces.
         const suggestion = /```suggestion\n([\s\S]*?)\n```/.exec(comment.body)?.[1];
 
-        if (suggestion !== undefined) expect(indent(suggestion)).toBe(indent(lines[(comment.start_line ?? comment.line) - 1] ?? ""));
+        if (suggestion !== undefined) {
+          const replaced = lines.slice((comment.start_line ?? comment.line) - 1, comment.line);
+
+          expect(indent(suggestion)).toBe(indent(replaced[0] ?? ""));
+          // Over code it carries code, not advice.
+          expect(adviceOverCode(comment.path, suggestion, replaced, lines.slice(0, (comment.start_line ?? comment.line) - 1).join("\n"))).toBe(false);
+        }
       }
     });
   }

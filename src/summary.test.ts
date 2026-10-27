@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDING } from "./config.ts";
-import { anchorSuggestion, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
+import { adviceOverCode, anchorSuggestion, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
 const HEADER = "> 🤖 Automated comment by **Shepherd swarm**, not written by a human";
 
@@ -110,6 +110,61 @@ describe("reindent: a suggestion takes the indentation of the line it replaces",
     expect(reindent("\t\treturn x;", "  ")).toBe("  return x;");
     expect(reindent("      if (a) {\n        b();\n\n      }", "  ")).toBe("  if (a) {\n    b();\n\n  }");
     expect(reindent("if (a) {\n\tb();\n}", "\t")).toBe("\tif (a) {\n\t\tb();\n\t}");
+  });
+});
+
+describe("suggestions over code carry code", () => {
+  test("advice over code is caught with or without punctuation", () => {
+    const replaced = ['    expect(welcomeBack("Ada Lovelace")).toMatch(/^Welcome back, /);'];
+
+    for (const advice of [
+      "    Use `expect(welcomeBack('Ada Lovelace')).toBe('Welcome back, Ada!')` for an exact match.",
+      "    Use `expect(welcomeBack('Ada Lovelace')).toBe('Welcome back, Ada!')` for an exact match",
+      "    Use toBe instead",
+      "    You should assert the full greeting",
+      "    Consider asserting the whole string",
+      "    Replace the regex with an exact match",
+    ])
+      expect(adviceOverCode("a.test.ts", advice, replaced)).toBe(true);
+  });
+
+  test("code, comments and string content are not advice, wherever the string opened", () => {
+    const code = ['  return name.trim().split(" ")[0];', "    expect(x).toBe(1);", "  // Use the first word instead", "  # Use the first word instead", "export default class Greeter extends Base {", "  if x is not None and y:", "  for a in items:", "use std::io;"];
+
+    for (const line of code) expect(adviceOverCode("a.ts", line, ["  return x;"])).toBe(false);
+
+    // A template literal's content changes, whole or from inside a literal opened above.
+    expect(adviceOverCode("a.ts", "const msg = `\n  Hello world! Use the app instead.\n`;", ["const msg = `", "  hello world", "`;"])).toBe(false);
+    expect(adviceOverCode("a.ts", "  Welcome to the app, please sign in", ["  hello world"], "const msg = `")).toBe(false);
+    // A docstring line inside triple quotes opened above.
+    expect(adviceOverCode("a.py", "    Return the first name of the person.", ["    Return the name."], 'def first(name):\n    """')).toBe(false);
+    // An edit that reuses the replaced words is an edit, not advice.
+    expect(adviceOverCode("a.ts", "  throw new Error(the message should be clear)", ["  throw new Error(the message)"])).toBe(false);
+    // Prose files carry prose.
+    expect(adviceOverCode("guide.md", "Use the setup script instead", ["Run setup first."])).toBe(false);
+  });
+
+  test("an advice suggestion over code is dropped and the comment kept; over prose it stays", () => {
+    const code = ["test(\"x\", () => {", "    expect(welcomeBack(\"Ada Lovelace\")).toMatch(/^Welcome back, /);", "});", ""].join("\n");
+    const finding = { file: "a.test.ts", line: 2, severity: "MEDIUM" as const, lens: "correctness", title: "Loose assertion", body: "Only the prefix is checked.", suggestion: "    Use `expect(welcomeBack(\"Ada Lovelace\")).toBe(\"Welcome back, Ada!\")` for an exact match." };
+    const round: SummaryInput = { head_sha: "43504ee000000000000000000000000000000000", verdict: "nits", why: "x", findings: [finding] };
+    const [comment] = renderReview(round, BRANDING.emoji, "H", (p) => (p === "a.test.ts" ? code : null)).comments;
+
+    expect(comment!.line).toBe(2);
+    expect(comment!.body).not.toContain("```suggestion");
+
+    const doc = ["# Guide", "", "Run the setup script first.", ""].join("\n");
+    const prose = { ...finding, file: "guide.md", line: 3, suggestion: "Run the setup script before anything else." };
+    const docs = renderReview({ ...round, findings: [prose] }, BRANDING.emoji, "H", (p) => (p === "guide.md" ? doc : null)).comments;
+
+    expect(docs[0]!.body).toContain("```suggestion\nRun the setup script before anything else.\n```");
+
+    // A template literal's text, changed inside the literal, posts as a suggestion.
+    const literal = ["export const greeting = `", "  hello world", "`;", ""].join("\n");
+    const text = { ...finding, file: "greeting.ts", line: 2, suggestion: "  Hello world!" };
+    const kept = renderReview({ ...round, findings: [text] }, BRANDING.emoji, "H", (p) => (p === "greeting.ts" ? literal : null)).comments;
+
+    expect(kept[0]!.body).toContain("```suggestion\n  Hello world!\n```");
   });
 });
 
