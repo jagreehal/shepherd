@@ -7,7 +7,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { buildDemo, demoBugs, finish, git, ReviewRecord, stateDir } from "./local.ts";
@@ -318,4 +318,60 @@ export function runCase(c: EvalCase, prepared: Prepared, agent: string[], meta: 
   const record = ReviewRecord.safeParse(JSON.parse(json));
 
   return EvalRun.parse({ ...base, status: checked.status, reason: [...checked.errors, ...checked.missing].join("; "), findings: record.success ? record.data.findings : [] });
+}
+
+/**
+ * The case as a repository another reviewer can open as a PR: a clone with `main` at the case's base and `pr` at its
+ * head, checked out on `pr`. Push both to a scratch repository, open `pr` against `main`, and import what it posts.
+ */
+export type Exported = { tree: string; base: string; head: string };
+
+export function exportCase(c: EvalCase, caseRoot: string, dir: string): Exported {
+  if ("demo" in c.source) throw new Error(`${c.id} is the demo case, which builds itself: run it with eval run`);
+  mkdirSync(dir, { recursive: true });
+  const { tree, base } = prepare(c, caseRoot, dir);
+  const head = c.source.head;
+
+  git(tree, ["branch", "-f", "main", base]);
+  git(tree, ["checkout", "-q", "-B", "pr", head]);
+
+  return { tree, base, head };
+}
+
+// Inline comments as `gh api repos/<o>/<r>/pulls/<n>/comments --paginate` lists them: who wrote each, and the
+// comment it replies to, so replies and other people's comments stay out of the run.
+export const PostedComments = z.array(
+  z.object({
+    path: z.string(),
+    line: z.number().int().positive().nullable().optional(),
+    original_line: z.number().int().positive().nullable().optional(),
+    body: z.string().min(1),
+    user: z.object({ login: z.string() }),
+    in_reply_to_id: z.number().int().nullable().optional(),
+  }),
+);
+
+export type PostedComments = z.infer<typeof PostedComments>;
+
+/**
+ * Another reviewer's inline comments on an exported case PR, as a run `eval score` reads like any other: only the
+ * comments `login` wrote that open a thread. A reply ("Thanks, fixed") is no finding, and neither is anyone else's
+ * comment. Every finding counts as actionable (MEDIUM): an outside reviewer marks no NITs shepherd can read, so its
+ * precision counts them all.
+ */
+export function importRun(c: EvalCase, comments: PostedComments, meta: { config: string; run: number; login: string; cost_usd: number | null; duration_ms: number }): EvalRun {
+  const posted = comments.filter((p) => p.user.login === meta.login && p.in_reply_to_id == null);
+
+  return EvalRun.parse({
+    case: c.id,
+    config: meta.config,
+    run: meta.run,
+    shepherd: `external:${meta.login}`,
+    agent: [meta.login],
+    started_at: new Date().toISOString(),
+    duration_ms: meta.duration_ms,
+    cost_usd: meta.cost_usd,
+    status: "complete",
+    findings: posted.map((p) => ({ file: p.path, line: p.line ?? p.original_line ?? "general", severity: "MEDIUM", lens: meta.login, body: p.body })),
+  });
 }

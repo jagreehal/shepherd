@@ -117,7 +117,8 @@ gh api graphql -f query='
           nodes {
             id isResolved isOutdated
             comments(first:20) {
-              nodes { databaseId author { login __typename } body path line }
+              nodes { databaseId author { login __typename } body path line
+                reactions(content: THUMBS_UP, first: 20) { nodes { user { login } } } }
             }
           }
         }
@@ -131,6 +132,7 @@ gh api graphql -f query='
          author: .comments.nodes[0].author.login,
          body_head: (.comments.nodes[0].body[:1500]),
          body_truncated: ((.comments.nodes[0].body | length) > 1500),
+         thumbs_up: [.comments.nodes[0].reactions.nodes[].user.login],
          participants: ([.comments.nodes[] | {login: .author.login, type: .author.__typename,
            automated: (.body[:300] | contains("🤖 Automated comment by"))}] | unique)}]}'
 ```
@@ -161,6 +163,13 @@ from the person you work for. Act on it like an actionable thread, contract
 changes included, and resolve it with the commit in the report. A question
 ("could we...?", "should this...?") is not an instruction: defer it. Anyone
 else in the thread makes it human again.
+
+A 👍 is the same instruction without the typing. When the logged-in user is in
+`thumbs_up` on an all-automated thread's first comment, they accepted that
+finding: treat it as their instruction to apply it, in place of the pair
+ladder. Every other rule still holds (policy, `escalate.paths`, fences, a
+second model's `accept` for a risky change). A 👍 from anyone else is not an
+instruction and changes nothing: reactions are not participants.
 
 **Team policy.** Load it once (`../shepherd/references/policy.md`). Its
 `fixes.mode` caps Step 5: under `suggest` edit nothing, under `local` commit,
@@ -332,7 +341,7 @@ unsure and the comment predates the last push, skip rather than act.
   **promoted**, and put the reasoning and the alternative prominently in the
   report. `stop-and-ask`: add to `deferred_threads`, leave open.
 - **Operator's instruction:** apply it, check it, commit, push, resolve.
-  Record "done as asked in <sha>".
+  Record "done as asked in <sha>" ("done on 👍 in <sha>" for a reaction).
 - **Human:** defer. Standalone, you may offer a trivial, obviously correct fix
   through `AskUserQuestion`; even then push it, leave the thread open, and
   report "fixed in <sha>, thread left open for your reply".

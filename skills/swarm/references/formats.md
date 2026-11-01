@@ -55,6 +55,7 @@ Never write the summary's Markdown yourself. Write the round as JSON and let
 ```json
 {
   "head_sha": "<reviewed head>",
+  "base_sha": "<full SHA of the base tip reviewed against: the parent's head for a stacked PR>",
   "verdict": "blocked|changes|nits|good",
   "why": "<one or two sentences: is it safe to merge, and what must change first>",
   "confidence": 4,

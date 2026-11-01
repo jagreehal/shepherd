@@ -21,6 +21,8 @@ flowchart TD
 
 A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. On a repo with Claude Code Review, shepherd reads its check run to know when the review finished or did not run, fixes 🔴 Important and 🟡 Nit findings like any bot finding, and leaves 🟣 Pre-existing ones to you as follow-ups. Round 1's fixes always get a second review round. In GitHub Actions an iteration runs one round, since swarm cannot comment on commits that are not pushed yet; the next iteration reviews them after the push.
 
+Later rounds review what moved, not the whole PR again. `shepherd interdiff` compares the PR's own change at the last reviewed head with the change at the new head, each squashed onto its own merge base. A base merge or a rebase then reads as no change, and a force-push still compares cleanly.
+
 ## Stacked PRs and wrong bases
 
 Before it writes the round's diff, the loop runs `shepherd stack <pr>`:

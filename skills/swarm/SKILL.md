@@ -160,9 +160,20 @@ When `shepherd` invokes you it passes `diff_path` (already the stacked delta whe
 `skip_checks` (true when it already ran Step 2 this round), and `since_sha` (the
 head swarm last reviewed, on round 2 onwards). Use them and do not re-derive.
 
-**Later rounds review the change, not the PR again.** With a `since_sha`, write
-`git diff <since_sha>..<head_sha>` as the round's focus. The router reviews
-that focus in full and the rest of the PR only for HIGH or CRITICAL issues. A
+**Later rounds review the change, not the PR again.** With a `since_sha`, run
+`shepherd interdiff <since_sha> <base_ref> --head <head_sha>` (for a stacked
+PR, the parent's head in place of `<base_ref>`). Add `--since-base <sha>` from
+`shepherd reviewed summary.md` (the bot's own summary comment, the one you pass
+as `--previous`) when its `head_sha` matches `since_sha`: the base tip that
+round reviewed against, so a stacked parent force-pushed since keeps its old
+change out of the focus. Its `text` is the round's
+focus: how the PR's own diff moved since the reviewed head, without the base's
+commits a merge or rebase brought in, which `git diff <since_sha>..<head_sha>`
+would carry. With `unchanged` true, the PR's change is the one already
+reviewed: report the round dry and post nothing. When the command exits
+non-zero, fall back to `git diff <since_sha>..<head_sha>` and say so in the
+summary. The router reviews the focus in full (its `files` first) and the
+rest of the PR only for HIGH or CRITICAL issues. A
 fresh read of unchanged code finds a new edge case every round, and the loop
 never converges.
 
@@ -279,6 +290,18 @@ ends `could_not_run`. Without the CLI, build the same list by hand from
 `references/custom-lenses.md`. Add `spec`, scope `full`, when the
 PR closes an issue or its body, commits or branch point at an issue or spec
 (`../review-spec/SKILL.md` says where specs live).
+
+Before dispatching, list where the change reaches beyond the diff:
+
+```bash
+shepherd impact "$diff_path" > impact.json
+```
+
+Its `lines` name each changed export with the files outside the PR that use
+it, and each changed source file with its tests, or "no test file matches its
+name". Give them to the router and the correctness lens as leads to check: a
+caller that breaks belongs at the call site's line. Leads say where to look;
+they never replace reading the diff, and an empty list proves nothing.
 
 Dispatch the router and every lens on that list **in one message**, in the
 foreground, so they run in parallel and all return inside this turn. Each
@@ -446,7 +469,7 @@ new side of the diff.
   back a problem an open thread names (from any reviewer) says so in its body
   and names that thread: the author sees both before choosing.
 - **Undone fixes.** From round 2 on, read the Shepherd threads resolved in
-  earlier rounds and the diff since the last reviewed head. A finding whose
+  earlier rounds and the round's focus (the interdiff above). A finding whose
   code brings back a problem one of them named sets `reintroduces` to that
   thread's URL and keeps at least that thread's severity: a fix the author
   already accepted came undone, often from an agent's later edit.
@@ -473,6 +496,22 @@ The verdict is advice to the author. It never becomes a GitHub approval.
 
 Write the round as JSON first (`references/formats.md`): the inline review and
 the summary are both rendered from it, so neither is ever hand-written Markdown.
+Set `base_sha` to the full SHA of the tip this round reviewed against (the
+parent's head for a stacked PR, else `git rev-parse origin/<base_ref>`); the
+summary records it for the next round's `--since-base`.
+
+Then check every changed range reached a lens that finished:
+
+```bash
+shepherd coverage round.json --diff "$diff_path"
+```
+
+When it exits non-zero, dispatch the correctness lens once over the
+`uncovered` ranges as its scope (`file:start-end`), merge its findings through
+Steps 5 and 6, add it to `lenses`, and run the check again. Ranges still
+uncovered go into `lenses` as one entry, `{"lens": "coverage", "scope":
+[<uncovered>], "status": "could_not_run"}`, so the summary marks the round
+incomplete. A round with a range no reviewer reached is never dry.
 With `$SHEPHERD_HANDOFF` set, write it to `$SHEPHERD_HANDOFF/round.json`,
 then check it before you stop:
 
@@ -489,7 +528,7 @@ record (`stages`, `candidates`). `verdict` is `blocked`, `changes`, `nits` or
 publish job renders and posts both. Otherwise post every inline finding as **one** review, pinned to the reviewed commit:
 
 ```bash
-shepherd inline round.json > review.json
+shepherd inline round.json --diff "$diff_path" > review.json
 gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input review.json \
   --jq '[.id]' > review-id.json
 ```
@@ -502,7 +541,9 @@ findings on the same lines are named under it. Run it from the reviewed
 checkout, so it can place each `suggestion` on the lines it rewrites, at their
 indentation. A finding on a line
 outside the diff cannot anchor inline: keep its `line` and set
-`"inline": false`. When `review.json` has no `comments`, skip the post.
+`"inline": false`. With `--diff`, `shepherd inline` also leaves out any
+finding whose lines fall outside the diff's hunks, since GitHub rejects the
+whole review over one; the summary still carries it. When `review.json` has no `comments`, skip the post.
 Otherwise read the new threads' URLs
 (`gh api repos/<owner>/<repo>/pulls/<number>/reviews/<id>/comments --jq '.[] | {path, line, html_url}'`)
 into each finding's `url`, so the summary links every finding to its thread.

@@ -20,7 +20,8 @@ to all of them.
 - **A thread with any human in it is never fixed, resolved, or replied to** by a
   skill. If a participant cannot be classified, they count as human. The one
   exception is the operator's own instruction: a thread whose only person is
-  the logged-in user, asking for a concrete change, is acted on. Their
+  the logged-in user, asking for a concrete change, is acted on, and so is an
+  all-automated thread whose finding the logged-in user gave a 👍. Their
   questions still wait for them.
 - **A thread left for the author fences its code.** No fix touches the code
   under a deferred thread, and fixes that between them would carry out its

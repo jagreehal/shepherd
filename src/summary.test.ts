@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDING } from "./config.ts";
-import { adviceOverCode, anchorSuggestion, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
+import { adviceOverCode, anchorSuggestion, commentableLines, reviewedTips, roundCoverage, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
 const HEADER = "> 🤖 Automated comment by **Shepherd swarm**, not written by a human";
 
@@ -181,6 +181,63 @@ describe("suggestions over code carry code", () => {
     expect(adviceOverCode("a.ts", "  throw new Error(the message should be clear)", ["  throw new Error(the message)"])).toBe(false);
     // Prose files carry prose.
     expect(adviceOverCode("guide.md", "Use the setup script instead", ["Run setup first."])).toBe(false);
+  });
+
+  test("a round covers the PR's diff only when every changed range reached a lens that finished", () => {
+    const diff = ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -1 +1,2 @@", "+x", "+y", "diff --git a/b.ts b/b.ts", "--- a/b.ts", "+++ b/b.ts", "@@ -5 +5 @@", "-old", "+new", ""].join("\n");
+    const round = (lenses: SummaryInput["lenses"]): SummaryInput => ({ head_sha: "43504ee", verdict: "good", why: "x", findings: [], lenses });
+
+    expect(roundCoverage(round([{ lens: "router", scope: "full", status: "ok" }]), diff)).toEqual({ complete: true, uncovered: [], failed: [] });
+    // The router failed; the lens that finished saw only a.ts, so b.ts reached no reviewer.
+    expect(roundCoverage(round([{ lens: "router", scope: "full", status: "failed" }, { lens: "security", scope: ["a.ts"], status: "ok" }]), diff)).toEqual({ complete: false, uncovered: ["b.ts:5-5"], failed: ["router"] });
+    // A scoped range holds only the lines inside it; a one-string scope reads as a list of one.
+    expect(roundCoverage(round([{ lens: "x", scope: "a.ts:1-1", status: "ok" }, { lens: "y", scope: ["b.ts"], status: "ok" }]), diff).uncovered).toEqual(["a.ts:1-2"]);
+  });
+
+  test("coverage asks only for the lines a hunk changes, never its context", () => {
+    const diff = ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -1,7 +1,7 @@", " 1", " 2", " 3", "-4", "+four", " 5", " 6", " 7", ""].join("\n");
+    const round: SummaryInput = { head_sha: "43504ee", verdict: "good", why: "x", findings: [], lenses: [{ lens: "x", scope: ["a.ts:4-4"], status: "ok" }] };
+
+    expect(roundCoverage(round, diff)).toEqual({ complete: true, uncovered: [], failed: [] });
+  });
+
+  test("a round with base_sha ends its summary with the tips it reviewed, which the next round reads back", () => {
+    const head = "43504ee000000000000000000000000000000000";
+    const base = "b".repeat(40);
+    const body = renderSummary({ head_sha: head, base_sha: base, verdict: "good", why: "x", findings: [] }, BRANDING.emoji, "H");
+
+    expect(body).toContain(`<!-- shepherd-reviewed:head=${head};base=${base} -->`);
+    expect(reviewedTips(body)).toEqual({ head_sha: head, base_sha: base });
+    expect(reviewedTips(renderSummary({ head_sha: head, verdict: "good", why: "x", findings: [] }, BRANDING.emoji, "H"))).toBeNull();
+  });
+
+  test("with the diff, only findings inside its hunks anchor inline; the rest stay out of the review", () => {
+    const diff = ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -10,3 +10,4 @@ fn", " ctx", "-old", "+new", "+added", " ctx", "diff --git a/gone.ts b/gone.ts", "--- a/gone.ts", "+++ /dev/null", "@@ -1 +0,0 @@", "-x", ""].join("\n");
+    const lines = commentableLines(diff);
+
+    expect([...lines.get("a.ts")!]).toEqual([10, 11, 12, 13]);
+    expect(lines.has("gone.ts")).toBe(false);
+
+    // A quoted path decodes; a binary file after it has no +++, so it ends the quoted file's hunk and adds nothing.
+    const quoted = commentableLines(['diff --git "a/caf\\303\\251.ts" "b/caf\\303\\251.ts"', '--- "a/caf\\303\\251.ts"', '+++ "b/caf\\303\\251.ts"', "@@ -1 +1,2 @@", " a", "+b", "diff --git a/img.png b/img.png", "Binary files a/img.png and b/img.png differ", "+not a line", "+++ b/space name.ts\t", ""].join("\n"));
+
+    expect([...quoted.get("café.ts")!]).toEqual([1, 2]);
+    expect([...quoted.keys()]).toEqual(["café.ts", "space name.ts"]);
+    expect([...quoted.get("space name.ts")!]).toEqual([]);
+
+    // An added "++ count;" reads "+++ count;" in the patch: inside a hunk it is a line, not a file header.
+    const plus = commentableLines(["diff --git a/c.ts b/c.ts", "--- a/c.ts", "+++ b/c.ts", "@@ -1,2 +1,4 @@", " a", "+++ count;", "+--- x;", "\\ No newline at end of file", " b", "@@ -9 +11 @@", "-old", "+new", ""].join("\n"));
+
+    expect([...plus.keys()]).toEqual(["c.ts"]);
+    expect([...plus.get("c.ts")!]).toEqual([1, 2, 3, 4, 11]);
+
+    const at = (line: number | string, file = "a.ts") => ({ file, line, severity: "HIGH" as const, lens: "correctness", title: `t${line}${file}`, body: "b" });
+    const round: SummaryInput = { head_sha: "43504ee000000000000000000000000000000000", verdict: "changes", why: "x", findings: [at(11), at("12-13"), at(9), at("13-14"), at(3, "other.ts")] };
+    const posted = renderReview(round, BRANDING.emoji, "H", () => null, undefined, lines).comments.map((c) => [c.line, c.start_line]);
+
+    expect(posted).toEqual([[11, undefined], [13, 12]]);
+    // Without the diff, nothing is known to be outside it.
+    expect(renderReview(round, BRANDING.emoji, "H").comments).toHaveLength(5);
   });
 
   test("an advice suggestion over code is dropped and the comment kept; over prose it stays", () => {

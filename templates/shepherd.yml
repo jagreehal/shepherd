@@ -530,7 +530,9 @@ jobs:
           if [ -f handoff/round.json ] && command -v shepherd >/dev/null; then
             # The inline review, from the round JSON, unless these same comments are already on the PR: its marker names
             # the head and a fingerprint of the comments, so a new round on an unchanged head still posts its own.
-            if ! (cd repo && shepherd inline ../handoff/round.json) > review.json; then
+            # The PR's diff from GitHub, never from the model's job: only lines inside its hunks can carry a comment.
+            gh pr diff "$PR" -R "$GITHUB_REPOSITORY" > pr.diff || : > pr.diff
+            if ! (cd repo && if [ -s ../pr.diff ]; then shepherd inline ../handoff/round.json --diff ../pr.diff; else shepherd inline ../handoff/round.json; fi) > review.json; then
               echo "::warning::could not render the inline review"
             elif [ "$(jq '.comments | length' review.json)" -gt 0 ]; then
               marker=$(jq -r .body review.json | grep -o '<!-- shepherd-inline @ [0-9a-f]* [0-9a-f]* -->' | tail -1)
