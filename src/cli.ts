@@ -25,6 +25,11 @@
 // shepherd acceptance <suggest|local> [--pr <n>] -- <agent command>...  (run it; check it kept to the mode)
 // shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
 // shepherd stack <pr>                              (JSON: a stacked parent and the range to review, or a wrong base)
+// shepherd interdiff <since> <base> [--head <sha>] [--since-base <sha>]  (JSON: how the PR's own change moved since a reviewed head)
+// shepherd coverage <round.json> --diff <path>     (JSON: changed ranges no finished lens reached; non-zero when any)
+// shepherd reviewed <summary.md>                   (JSON: the head and base tip the previous round reviewed)
+// shepherd eval export <case-id> <dir> | eval import <case-id> <comments.json> --config <label> --login <reviewer> [--cost <usd>]
+// shepherd impact <diff>                            (JSON: changed exports, files naming them, each source's tests)
 // shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...  (review each case, keep each run)
 // shepherd eval score <runs-dir> [--cases <dir>] [--json]  (precision and recall per configuration, dev and held-out apart)
 // shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]  (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
@@ -38,23 +43,24 @@
 // personal preview that prints locally and never posts. Model ids pass straight to the harness's agent
 // tool (`haiku` on Claude Code, `provider/model` on OpenCode); --model on a lens pins it to one.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, stringify } from "yaml";
 import { z } from "zod";
 import { branding, CI_DEFAULT_MODEL, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
-import { renderReview, renderSummary } from "./summary.ts";
+import { commentableLines, renderReview, renderSummary, reviewedTips, roundCoverage } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
 import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
-import { loadCases, loadRuns, pick, prepare, runCase, scoreRuns, treeHash } from "./eval.ts";
-import { buildDemo, captureChange, demoBugs, finish, receiptStatus } from "./local.ts";
-import { prStack } from "./stack.ts";
+import { exportCase, importRun, loadCases, PostedComments, loadRuns, pick, prepare, runCase, scoreRuns, treeHash } from "./eval.ts";
+import { buildDemo, captureChange, changedRanges, demoBugs, finish, receiptStatus } from "./local.ts";
+import { formatLeads, leadsAt } from "./leads.ts";
+import { prInterdiff, prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
 import { addLens, BUILT_IN_LENSES, ciOpencodeConfig, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setCi, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
 
@@ -91,8 +97,14 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd trace event <stage> <start|end> --pr <n> [--round <n>] [--outcome ok|failed|skipped] [--retries <n>] [--head <sha>]
        shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended> [--base <sha>] [--ci-run <id> --ci-attempt <n>] [--related <traceparent>]...
        shepherd stack <pr>
+       shepherd interdiff <since> <base> [--head <sha>] [--since-base <sha>]
+       shepherd impact <diff>
+       shepherd reviewed <summary.md>
+       shepherd coverage <round.json> --diff <path>
        shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...
        shepherd eval score <runs-dir> [--cases <dir>] [--json]
+       shepherd eval export <case-id> <dir>
+       shepherd eval import <case-id> <comments.json> --config <label> --login <reviewer> [--cost <usd>] [--duration-ms <n>]
        shepherd model-id <provider:model | provider/model>
        shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]
        shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
@@ -137,7 +149,12 @@ const { values: opts, positionals } = parseArgs({
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
     retries: { type: "string" },
-    head: { type: "string" }, // trace, notify: the head SHA
+    head: { type: "string" }, // trace, notify, interdiff: the head SHA
+    diff: { type: "string" }, // inline, coverage: the reviewed diff
+    "since-base": { type: "string" }, // interdiff: the base tip the earlier head was reviewed against
+    cost: { type: "string" }, // eval import: what the outside reviewer's run cost, in USD
+    login: { type: "string" }, // eval import: the reviewer's GitHub login, whose top-level comments are the findings
+    "duration-ms": { type: "string" }, // eval import: how long it took
     state: { type: "string" }, // notify: the commit status state just set
     repo: { type: "string" }, // trace flush: owner/repo
     "ci-run": { type: "string" },
@@ -395,6 +412,26 @@ if (command === "install") {
 } else if (command === "stack" && sub) {
   // Which diff to review: the delta over an open stacked parent, or nothing at all when the base is wrong.
   console.log(JSON.stringify(orExit(() => prStack(Number(sub), repoRoot)), null, 2));
+} else if (command === "coverage" && sub && opts.diff) {
+  // Before a round posts: did every changed range of the PR's diff reach a lens that finished? Non-zero when not.
+  const result = orExit(() => roundCoverage(JSON.parse(readFileSync(sub, "utf8")), readFileSync(opts.diff!, "utf8")));
+
+  console.log(JSON.stringify(result, null, 2));
+
+  if (!result.complete) process.exitCode = 1;
+} else if (command === "reviewed" && sub) {
+  // The head and base tip the previous round reviewed, from its summary comment: the next round's since_sha and --since-base.
+  console.log(JSON.stringify(reviewedTips(readFileSync(sub, "utf8"))));
+} else if (command === "impact" && sub) {
+  // Where the change may reach beyond its diff: changed exports, the files naming them, each changed source's tests.
+  const patch = readFileSync(sub, "utf8");
+  const changed = [...new Set(changedRanges(patch).map((r) => r.file))];
+  const leads = leadsAt(repoRoot, patch, changed) ?? { symbols: [], sources: [] };
+
+  console.log(JSON.stringify({ ...leads, lines: formatLeads(leads, (n) => n.replace(/[\n\r\t]+/g, " ")) }, null, 2));
+} else if (command === "interdiff" && sub && skillRef) {
+  // A later round's focus: the PR's own change since the head swarm last reviewed, without the base's commits.
+  console.log(JSON.stringify(orExit(() => prInterdiff(sub, opts.head ?? "HEAD", skillRef, repoRoot, opts["since-base"])), null, 2));
 } else if (command === "workflows") {
   const dest = path.join(repoRoot, ".github", "workflows");
 
@@ -598,7 +635,10 @@ if (command === "install") {
   // The checkout is the reviewed head: suggestions are placed against its files, read from the working directory.
   const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads())), null, 2));
+  // With --diff, a finding off the diff's hunks stays out of the review, which GitHub would reject whole.
+  const commentable = opts.diff ? commentableLines(readFileSync(opts.diff, "utf8")) : undefined;
+
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads(), commentable)), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
@@ -673,6 +713,29 @@ if (command === "install") {
       console.log(`${run.status.padEnd(10)} ${c.id} #${n}  ${run.findings.length} finding(s)  ${(run.duration_ms / 1000).toFixed(0)}s${run.cost_usd === null ? "" : `  $${run.cost_usd.toFixed(2)}`}${run.reason ? `  ${run.reason}` : ""}`);
     }
   }
+} else if (command === "eval" && sub === "export" && skillRef && rest[0]) {
+  // One case as a repository another reviewer can review as a PR: main at its base, pr at its head.
+  const casesDir = path.resolve(opts.cases ?? path.join(repoRoot, "evals", "cases"));
+  const c = orExit(() => loadCases(casesDir).find((x) => x.id === skillRef) ?? (() => { throw new Error(`no case ${skillRef} under ${casesDir}`); })());
+  const caseRoot = execFileSync("git", ["-C", casesDir, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const done = orExit(() => exportCase(c, caseRoot, path.resolve(rest[0]!)));
+
+  console.log(`${done.tree}: main at ${done.base.slice(0, 7)}, pr at ${done.head.slice(0, 7)}. Push both, open pr against main, then: shepherd eval import ${c.id} <comments.json> --config <label> --login <reviewer-login>`);
+} else if (command === "eval" && sub === "import" && skillRef && rest[0] && opts.config && opts.login) {
+  // Another reviewer's inline comments on an exported case PR, scored by eval score beside shepherd's runs.
+  const cases = orExit(() => loadCases(path.resolve(opts.cases ?? path.join(repoRoot, "evals", "cases"))));
+  const c = cases.find((x) => x.id === skillRef) ?? orExit(() => { throw new Error(`no case ${skillRef}`); });
+  const out = path.resolve(opts.out ?? path.join(repoRoot, "evals", "runs"), opts.config.replace(/[^\w.-]/g, "_"), "imported");
+  // Each import is the next run of this case: one more review, never a replacement for an earlier one.
+  const n = existsSync(out) ? readdirSync(out).filter((f) => f.startsWith(`${c.id}-`) && /^\d+\.json$/.test(f.slice(c.id.length + 1))).length : 0;
+
+  const run = orExit(() =>
+    importRun(c, PostedComments.parse(JSON.parse(readFileSync(rest[0]!, "utf8"))), { config: opts.config!, run: n, login: opts.login!, cost_usd: opts.cost === undefined ? null : Number(opts.cost), duration_ms: Number(opts["duration-ms"] ?? 0) }),
+  );
+
+  mkdirSync(out, { recursive: true });
+  writeFileSync(path.join(out, `${c.id}-${n}.json`), `${JSON.stringify(run, null, 2)}\n`);
+  console.log(`imported ${run.findings.length} finding(s) by ${opts.login} as ${path.join(out, `${c.id}-${n}.json`)}`);
 } else if (command === "eval" && sub === "score" && skillRef) {
   const cases = orExit(() => loadCases(path.resolve(opts.cases ?? path.join(repoRoot, "evals", "cases"))));
   const rows = orExit(() => scoreRuns(cases, loadRuns(path.resolve(skillRef))));

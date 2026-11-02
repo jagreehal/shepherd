@@ -108,3 +108,18 @@ One directory per case under `cases/`, holding `case.json`:
 Keep cases small and real: a bug that shipped and was fixed, the PR that
 introduced it as the pair. Grow held-out first; a handful of held-out cases
 says little.
+
+## Score another reviewer on the same change
+
+```bash
+shepherd eval export <case-id> /tmp/case       # main at the case's base, pr at its head
+# push both branches to a scratch repository, open pr against main, let the other reviewer review it
+gh api repos/<owner>/<repo>/pulls/<n>/comments --paginate > comments.json
+shepherd eval import <case-id> comments.json --config <label> --login <reviewer-login> --cost 0.12 --duration-ms 40000
+shepherd eval score evals/runs
+```
+
+`import` writes the comments `--login` wrote that open a thread as one more run of the case (replies and other people's comments stay out), under
+`evals/runs/<reviewer>/imported/`. An outside reviewer marks no NITs shepherd can read,
+so every comment counts as actionable: its precision counts them all. Score both on the
+same cases and the same number of repeats before reading `pick`.

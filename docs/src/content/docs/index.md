@@ -2,6 +2,8 @@
 title: "Shepherd documentation"
 ---
 
+<img src="/shepherd/shepherd.jpg" alt="Shepherd: a shepherd with a crook herding code-bracket sheep" width="420">
+
 Use Shepherd to review changes, fix findings and repair CI through skills in your coding agent. Start before you open a PR, review an existing PR, or run an iteration in GitHub Actions.
 
 Start with [your first review](/shepherd/start/quickstart/). Choose review-only mode first if you want to inspect findings before you let the agent edit code.

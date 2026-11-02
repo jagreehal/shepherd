@@ -1,5 +1,7 @@
 # Shepherd
 
+<p align="center"><img src="assets/shepherd.jpg" alt="Shepherd: a shepherd with a crook herding code-bracket sheep" width="480"></p>
+
 Shepherd reviews changes, fixes findings and repairs CI through skills in your coding agent. Use it before you open a PR, on an existing PR, or through GitHub Actions.
 
 Use Shepherd to work through review comments and failing CI logs under your team's policy. It leaves human decisions for you. [Stamp](https://github.com/jagreehal/stamp) supplies the approval verdict; you decide when to merge.

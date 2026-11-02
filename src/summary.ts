@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BRANDING } from "./config.ts";
+import { changedRanges, covers } from "./local.ts";
 
 const Severity = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "NIT"]);
 
@@ -115,6 +116,9 @@ const Finding = z.object({
 
 export const SummaryInput = z.object({
   head_sha: z.string().regex(/^[0-9a-f]{7,40}$/),
+  // The base tip the round reviewed against: the PR's base, or a stacked PR's parent head. The next round passes it
+  // to interdiff as --since-base, so a parent force-pushed in between keeps its old change out of the focus.
+  base_sha: z.string().regex(/^[0-9a-f]{40}$/).optional(),
   verdict: z.string().transform(VERDICT_ALIAS).pipe(z.enum(["blocked", "changes", "nits", "good"])),
   why: text,
   confidence: absent(z.number().int().min(0).max(5)), // how safe to merge, 5 safest
@@ -418,6 +422,34 @@ function lensTake(lens: string, findings: { lens: string; severity: z.infer<type
 const unverified = (f: z.infer<typeof Finding>) => f.severity !== "NIT" && !fromChecks(f) && !f.verified && !f.checked.length;
 
 /**
+ * Whether every changed range of the PR's diff reached a lens that finished, as `shepherd local finish` checks a local
+ * review. `uncovered` lists the ranges no finished lens's scope holds, for one more lens
+ * before the round posts; `failed` names the lenses that did not finish.
+ */
+export type RoundCoverage = { complete: boolean; uncovered: string[]; failed: string[] };
+
+export function roundCoverage(raw: SummaryInput, diff: string): RoundCoverage {
+  const lenses = SummaryInput.parse(raw).lenses;
+  const ok = lenses.filter((l) => l.status === "ok").map((l) => (Array.isArray(l.scope) ? l.scope : l.scope === "full" ? ("full" as const) : [l.scope]));
+  const uncovered = changedRanges(diff).flatMap((r) => (ok.some((scope) => covers(scope, r)) ? [] : [`${r.file}:${r.start}-${r.end}`]));
+  const failed = lenses.filter((l) => l.status !== "ok").map((l) => l.lens);
+
+  return { complete: !uncovered.length && !failed.length, uncovered, failed };
+}
+
+const REVIEWED = /<!-- shepherd-reviewed:head=([0-9a-f]{7,40});base=([0-9a-f]{40}) -->/;
+
+/** The head and base tip a round reviewed, as a marker at the end of its summary comment. */
+export const reviewedMarker = (head: string, base: string) => `<!-- shepherd-reviewed:head=${head};base=${base} -->`;
+
+/** The tips the previous summary reviewed, or null when it carries no marker. Read only from the bot's own summary. */
+export function reviewedTips(previous: string): { head_sha: string; base_sha: string } | null {
+  const m = REVIEWED.exec(previous);
+
+  return m ? { head_sha: m[1]!, base_sha: m[2]! } : null;
+}
+
+/**
  * The summary comment: the verdict heading, why, then one collapsed section per part of the round. With a null header
  * it is the body alone, for the handoff file the publish job wraps in its own marker and header.
  */
@@ -524,6 +556,8 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   // The handoff body (no header) leaves history to the publish job, which folds in the comment it replaces.
   if (history.length && header !== null) out.push(...section(`Earlier rounds (${history.length})`, [defuse(history.join("\n"))]));
 
+  if (s.base_sha) out.push("", reviewedMarker(s.head_sha, s.base_sha));
+
   return out.join("\n").trimEnd() + "\n";
 }
 
@@ -599,15 +633,100 @@ export function anchorSuggestion(lines: string[], start: number, end: number, su
 /** A path inside the repository, as the model gave it: never absolute, never climbing out. */
 const insideRepo = (p: string) => !p.startsWith("/") && !p.split(/[\\/]/).includes("..");
 
-export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>) {
+/** A C-quoted git path (`"b/caf\\303\\251.ts"`: escapes and octal UTF-8 bytes), or null when it is not one. */
+export function unquotePath(s: string): string | null {
+  if (!s.startsWith('"') || !s.endsWith('"') || s.length < 2) return null;
+  const named = new Map([["a", 7], ["b", 8], ["t", 9], ["n", 10], ["v", 11], ["f", 12], ["r", 13], ['"', 34], ["\\", 92]]);
+  const bytes: number[] = [];
+  const body = s.slice(1, -1);
+
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+
+    if (c !== "\\") {
+      bytes.push(...new TextEncoder().encode(c));
+      continue;
+    }
+
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
+    const e = octal ? parseInt(octal[0], 8) : named.get(body[i + 1] ?? "");
+
+    if (e === undefined) return null;
+    bytes.push(e);
+    i += octal ? 3 : 1;
+  }
+
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/**
+ * The new-side lines of each file a unified diff lets a review comment anchor on: the added and context lines
+ * inside its hunks. GitHub rejects a whole review over one comment anywhere else. The file comes from `+++`, bare
+ * (`b/f.ts`, with the tab git may append dropped) or C-quoted (`"b/caf\\303\\251.ts"`), and every `diff --git`
+ * line ends the one before, so a file with no `+++` (binary, a pure rename) never inherits its neighbour's lines.
+ */
+export function commentableLines(diff: string): Map<string, Set<number>> {
+  const lines = new Map<string, Set<number>>();
+  let file: Set<number> | null = null;
+  let at = 0;
+  // Lines a hunk still holds, from its header's counts. Inside one, "+++ x" is an added "++ x", never a file header.
+  let oldLeft = 0;
+  let newLeft = 0;
+
+  for (const l of diff.split("\n")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (l.startsWith("\\")) continue; // "\ No newline at end of file" belongs to neither side
+      const added = l.startsWith("+");
+      const removed = l.startsWith("-");
+
+      if (!removed) {
+        file?.add(at++);
+        newLeft--;
+      }
+
+      if (!added) oldLeft--;
+      continue;
+    }
+
+    const hunk = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(l);
+
+    if (l.startsWith("diff --git ")) {
+      file = null;
+    } else if (l.startsWith("+++ ")) {
+      const v = l.slice(4).replace(/\t$/, "");
+      const p = v === "/dev/null" ? null : (unquotePath(v) ?? v);
+
+      file = p?.startsWith("b/") ? new Set() : null;
+
+      if (file) lines.set(p!.slice(2), file);
+    } else if (hunk) {
+      at = Number(hunk[2]);
+      oldLeft = Number(hunk[1] ?? 1);
+      newLeft = Number(hunk[3] ?? 1);
+    }
+  }
+
+  return lines;
+}
+
+export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>, commentable?: Map<string, Set<number>>) {
   const s = checkedRound(raw, threads, read);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
 
-  // A line past the end of the file it names cannot anchor: GitHub rejects the whole review over one such comment.
+  // A line past the end of the file it names, or (given the diff) outside its hunks, cannot anchor: GitHub rejects
+  // the whole review over one such comment. The finding stays in the summary comment.
   const fits = (f: (typeof s.findings)[number]) => {
+    const [start = 0, end = start] = String(f.line).split("-").map(Number);
+
+    if (commentable) {
+      const inDiff = commentable.get(f.file);
+
+      for (let n = start; n <= end; n++) if (!inDiff?.has(n)) return false;
+    }
+
     const text = insideRepo(f.file) ? read(f.file) : null;
 
-    return text === null || Number(String(f.line).split("-").at(-1)) <= text.replace(/\n$/, "").split("\n").length;
+    return text === null || end <= text.replace(/\n$/, "").split("\n").length;
   };
 
   const anchored = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f)));

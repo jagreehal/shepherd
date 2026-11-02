@@ -93,6 +93,17 @@ describe("local change capture", () => {
     expect(captureChange(app).files).toContain("src/db.ts");
   });
 
+  test("in a GitHub diff, context lines are not changes, and an added ++ line is content, not a file header", () => {
+    // A hunk over lines 1-7 that changes only line 4, then `++ count;` added (it reads `+++ count;`), then a second hunk.
+    const patch = ["diff --git a/a.ts b/a.ts", "--- a/a.ts", "+++ b/a.ts", "@@ -1,7 +1,8 @@", " 1", " 2", " 3", "-4", "+four", "+++ count;", " 5", " 6", " 7", "@@ -20,3 +21,2 @@", " 20", "-21", " 22", ""].join("\n");
+
+    expect(changedRanges(patch)).toEqual([
+      { file: "a.ts", start: 4, end: 5 },
+      // The pure deletion of old line 21 changes the new lines either side of its gap: 21 and 22.
+      { file: "a.ts", start: 21, end: 22 },
+    ]);
+  });
+
   test("a deleted file's old lines are a range, marked deleted", () => {
     const patch = ["diff --git a/auth.ts b/auth.ts", "deleted file mode 100644", "--- a/auth.ts", "+++ /dev/null", "@@ -1,4 +0,0 @@", "-a", "-b", "-c", "-d"].join("\n");
 

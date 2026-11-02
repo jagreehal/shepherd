@@ -119,3 +119,135 @@ export function prStack(number: number, repoRoot: string): Stack {
     range: `${parent?.parentHead ?? baseSha}...${view.headRefOid}`,
   };
 }
+
+export type Interdiff = {
+  since: string;
+  head: string;
+  /** The PR's own change is the same as at `since`: only the base moved, or nothing did. */
+  unchanged: boolean;
+  /** Files whose part of the PR's change differs from what was reviewed at `since`. */
+  files: string[];
+  /** `git range-diff` of the two versions: a diff of the PR's diff, with base movement left out. */
+  text: string;
+};
+
+/**
+ * How the PR's own change moved between two reviewed heads, free of whatever the base brought in between. Each
+ * version is squashed onto its own merge base (`git commit-tree`, which writes an unreferenced commit and no ref),
+ * the old one is replayed onto the new merge base (`replay`), and `git range-diff` compares the two squashes.
+ * `git diff since..head` would carry every base commit merged since, and after a rebase it compares two unrelated
+ * histories; this survives both, and a base edit beside the PR's lines is no change either.
+ */
+export function interdiff(since: string, head: string, base: string, git: (...args: string[]) => string, sinceBase?: string): Interdiff {
+  const commit = (tree: string, parent: string) => git("-c", "user.name=shepherd", "-c", "user.email=shepherd@localhost", "commit-tree", tree, "-p", parent, "-m", "squash");
+
+  const ancestor = (a: string, b: string) => {
+    try {
+      git("merge-base", "--is-ancestor", a, b);
+
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const squash = (sha: string, from?: string) => {
+    const mb = from ?? git("merge-base", base, sha);
+
+    return { mb, sq: commit(`${sha}^{tree}`, mb) };
+  };
+
+  const b = squash(head);
+  // The base tip `since` was reviewed against, when it is still one of since's ancestors: a stacked parent force-pushed
+  // since then is no longer an ancestor of the new head, and squashing over today's merge base would carry its old change.
+  const a = replay(squash(since, sinceBase && ancestor(sinceBase, since) ? sinceBase : undefined), b.mb, git, commit);
+  // --creation-factor=1000: the two squashes always pair, however much they differ. Git's default treats a heavily
+  // rewritten one as a removed commit and an added one, and prints their subjects with no patch at all.
+  const text = git("range-diff", "--no-color", "--creation-factor=1000", `${a.mb}..${a.sq}`, `${b.mb}..${b.sq}`);
+
+  return { since, head, unchanged: /^\d+:\s+\S+ = /.test(text), files: rangeDiffFiles(text), text };
+}
+
+/**
+ * The old version replayed onto the new merge base, so a base edit near the PR's lines does not reach the
+ * comparison as changed context. `git merge-tree --merge-base` applies the old squash's change to the new base
+ * without touching the index or worktree. When the base moved under the PR's own lines it conflicts, and the old
+ * version stays where it was: that change needs a fresh look. Git before 2.40 lacks the flag, and falls back too.
+ */
+function replay(old: { mb: string; sq: string }, mb: string, git: (...args: string[]) => string, commit: (tree: string, parent: string) => string) {
+  if (old.mb === mb) return old;
+
+  try {
+    return { mb, sq: commit(git("merge-tree", "--write-tree", `--merge-base=${old.mb}`, mb, old.sq), mb) };
+  } catch {
+    return old;
+  }
+}
+
+/** range-diff's own sections, never files: the commit message and its metadata. */
+const NOT_FILES = new Set(["Commit message", "Metadata"]);
+
+/** A file as a range-diff header names it: `f.ts`, `f.ts (new)`, `old => new` (the path it has now). */
+const headerFile = (v: string) => v.replace(/ \((?:new|deleted|mode change)[^)]*\)$/, "").split(" => ").at(-1)!;
+
+/**
+ * The files whose part of the PR's change differs between the two versions. The range-diff is read in order: an
+ * inner file header (`## f.ts ##`, marked `-`/`+` when the header itself differs) or range-diff's own hunk line
+ * (`@@ f.ts`, `@@ f.ts: <function>`) sets the current file, and a file counts only once a line under it differs
+ * (a `-` or `+` in the outer column). A hunk line alone is context: it names where the hunk starts, which can be
+ * the file before the one that changed.
+ */
+export function rangeDiffFiles(text: string): string[] {
+  const lines = text.split("\n");
+  // Paths a header names whole, so a hunk line `src/b: c.ts: fn` resolves to `src/b: c.ts`, not `src/b`.
+  const known = lines.flatMap((l) => /^ {4}[-+ ]? ?## (.+) ##$/.exec(l)?.[1] ?? []).map(headerFile).sort((x, y) => y.length - x.length);
+  const files = new Set<string>();
+  let file: string | null = null;
+
+  for (const l of lines) {
+    const header = /^ {4}([-+ ]?) ?## (.+) ##$/.exec(l);
+    const hunk = /^ {4}@@ (.+)$/.exec(l);
+
+    if (header) {
+      file = NOT_FILES.has(header[2]!) ? null : headerFile(header[2]!);
+
+      if (file && header[1] !== " " && header[1] !== "") files.add(file); // the header itself differs: a new, removed or renamed file
+    } else if (hunk) {
+      const v = headerFile(hunk[1]!);
+
+      file = NOT_FILES.has(v) ? null : (known.find((k) => v === k || v.startsWith(`${k}: `)) ?? v.split(": ")[0]!);
+    } else if (file && /^ {4}[-+]/.test(l)) {
+      files.add(file);
+    }
+  }
+
+  return [...files];
+}
+
+/**
+ * `interdiff` against origin/<base>, or against a commit when `base` is a SHA (a stacked PR's parent head),
+ * fetching `since` when a force-push left it out of the local clone.
+ */
+export function prInterdiff(since: string, head: string, base: string, repoRoot: string, sinceBase?: string): Interdiff {
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", ...args], { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 << 20 }).trim();
+
+  const has = (sha: string) => {
+    try {
+      git("cat-file", "-e", `${sha}^{commit}`);
+
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  for (const sha of [since, sinceBase]) if (sha && !has(sha)) git("fetch", "-q", "origin", sha); // GitHub serves a force-pushed-away commit by SHA
+
+  const sha = git("rev-parse", `${head}^{commit}`);
+
+  if (/^[0-9a-f]{40}$/.test(base)) return interdiff(since, sha, base, git, sinceBase);
+  git("fetch", "-q", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`);
+
+  return interdiff(since, sha, `refs/remotes/origin/${base}`, git, sinceBase);
+}

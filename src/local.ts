@@ -148,13 +148,66 @@ const headerPath = (line: string): string | null => {
   return raw === "/dev/null" ? null : raw.slice(2);
 };
 
-/** Changed ranges from a zero-context patch: new-side lines, or old lines for a file the change deletes. */
+/**
+ * The lines a patch changes, as ranges: new-side lines it adds, the lines on both sides of a gap it deletes, or the
+ * old lines of a file it deletes. Each hunk is walked by its header's counts, so a context line never counts as
+ * changed (a GitHub diff carries three a side) and an added `++ x`, which reads `+++ x`, stays hunk content instead
+ * of naming a file.
+ */
 export function changedRanges(patch: string): ChangedRange[] {
-  const out: ChangedRange[] = [];
+  const lines = new Map<string, { deleted: boolean; at: Set<number> }>();
   let oldFile: string | null = null;
   let newFile: string | null = null;
+  let oldAt = 0;
+  let newAt = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
+  let emptyNew = false;
+  // The run of changed lines in progress: a deletion with no addition beside it changes the lines either side of its gap.
+  let block = { dels: 0, adds: 0, gap: 0 };
+
+  const mark = (file: string, deleted: boolean, ...ns: number[]) => {
+    const entry = lines.get(file) ?? { deleted, at: new Set<number>() };
+
+    for (const n of ns) entry.at.add(Math.max(n, 1));
+    lines.set(file, entry);
+  };
+
+  const endBlock = () => {
+    // In a hunk with no new lines, git numbers the line before the gap; otherwise the gap sits before `gap`.
+    if (block.dels && !block.adds && newFile !== null) mark(newFile, false, ...(emptyNew ? [block.gap, block.gap + 1] : [block.gap - 1, block.gap]));
+    block = { dels: 0, adds: 0, gap: 0 };
+  };
 
   for (const line of patch.split("\n")) {
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith("\\")) continue; // "\ No newline at end of file" belongs to neither side
+
+      if (line.startsWith("+")) {
+        if (newFile !== null) mark(newFile, false, newAt);
+        block.adds++;
+        newAt++;
+        newLeft--;
+      } else if (line.startsWith("-")) {
+        // A deleted file keeps its old lines.
+        if (newFile === null && oldFile !== null) mark(oldFile, true, oldAt);
+
+        if (!block.dels) block.gap = newAt;
+        block.dels++;
+        oldAt++;
+        oldLeft--;
+      } else {
+        endBlock();
+        oldAt++;
+        newAt++;
+        oldLeft--;
+        newLeft--;
+      }
+
+      if (oldLeft <= 0 && newLeft <= 0) endBlock();
+      continue;
+    }
+
     if (line.startsWith("diff --git ")) oldFile = newFile = null;
     else if (line.startsWith("--- ")) oldFile = headerPath(line);
     else if (line.startsWith("+++ ")) newFile = headerPath(line);
@@ -164,21 +217,32 @@ export function changedRanges(patch: string): ChangedRange[] {
       if (!m) continue;
       const count = (n: string | undefined) => (n === undefined ? 1 : Number(n));
 
-      if (newFile === null && oldFile !== null) {
-        out.push({ file: oldFile, start: Number(m[1]), end: Number(m[1]) + count(m[2]) - 1, deleted: true });
-        continue;
-      }
-
-      if (newFile === null) continue;
-      const start = Number(m[3]);
-      const added = count(m[4]);
-
-      // A pure deletion reports the line before it; the lines on both sides of the gap are what it changed.
-      out.push(added === 0 ? { file: newFile, start: Math.max(start, 1), end: start + 1 } : { file: newFile, start, end: start + added - 1 });
+      [oldAt, oldLeft, newAt, newLeft] = [Number(m[1]), count(m[2]), Number(m[3]), count(m[4])];
+      emptyNew = newLeft === 0;
     }
   }
 
-  return out;
+  // Consecutive changed lines become one range, files in the order the patch names them.
+  return [...lines].flatMap(([file, { deleted, at }]) => {
+    const sorted = [...at].sort((a, b) => a - b);
+    const out: ChangedRange[] = [];
+
+    for (const n of sorted) {
+      const last = out.at(-1);
+
+      if (last && n === last.end + 1) {
+        last.end = n;
+        continue;
+      }
+
+      const range: ChangedRange = { file, start: n, end: n };
+
+      if (deleted) range.deleted = true;
+      out.push(range);
+    }
+
+    return out;
+  });
 }
 
 /**
@@ -241,7 +305,7 @@ export type FinishResult = {
   receipt: string | null;
 };
 
-const covers = (scope: "full" | string[], r: ChangedRange): boolean =>
+export const covers = (scope: "full" | string[], r: ChangedRange): boolean =>
   scope === "full" ||
   scope.some((s) => {
     const m = /^(.*):(\d+)-(\d+)$/.exec(s);
