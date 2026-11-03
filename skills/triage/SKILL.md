@@ -357,8 +357,10 @@ signal. A deferred line in the report is cheaper than a wrong push.
 
 ### stamp's verdict
 
-`stamp` posts its verdict as a top-level review, not a thread. Read the latest
-one on the current head:
+`stamp` posts its verdict as a top-level review listing every issue. On `REFUSED`
+and `ESCALATE` it also pins each issue whose line is in the diff as an inline
+thread, whose comment carries `<!-- stamp-run:`. Read the latest review on the
+current head:
 
 ```bash
 gh pr view <number> --json latestReviews \
@@ -367,8 +369,9 @@ gh pr view <number> --json latestReviews \
 
 - **REFUSED with issues:** treat each item in the **Issues** section (a
   `<details>` block titled `Issues: <n>`, numbered or bulleted) as a bot thread and classify it the
-  same way. Fixes push; stamp re-reviews on the push. There
-  is nothing to resolve.
+  same way. An inline stamp thread repeats one of these items: count the pair
+  once and resolve the thread with it. Fixes push; stamp re-reviews on the push
+  and resolves its older threads, keeping any a person replied in.
 - **REFUSED by a gate** (the **Gates** section shows a failed gate such as
   `deny-list`, `secrets`, or `size`): a gate decides whether stamp approves,
   not whether the code may be fixed. Keep fixing every thread as usual; a hard
@@ -377,7 +380,8 @@ gh pr view <number> --json latestReviews \
   anything: a placeholder in place of a flagged value, moved, split, or renamed
   files, an `AGENT_APPROVALS.md`. Report the gate's message for the author; a
   deny-listed area still needs the human review stamp asks for, fixed or not.
-- **ESCALATE:** defer; it names the human assurance it needs.
+- **ESCALATE:** defer, inline threads included; it names the human assurance it
+  needs.
 
 ## Step 6: Report
 
