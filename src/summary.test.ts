@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BRANDING } from "./config.ts";
-import { adviceOverCode, anchorSuggestion, commentableLines, reviewedTips, roundCoverage, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
+import { adviceOverCode, anchorSuggestion, capped, checkedRound, commentableLines, reviewedTips, roundCoverage, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
 const HEADER = "> 🤖 Automated comment by **Shepherd swarm**, not written by a human";
 
@@ -480,4 +480,82 @@ describe("swarm review: titled findings, inline comments and walkthrough", () =>
     expect(moved.map((c) => c.line)).toEqual([9]);
     expect(renderReview({ ...RICH, findings: [{ ...BUG, line: 40 }] }, BRANDING.emoji, HEADER).comments).toHaveLength(1); // no file to check against
   });
+});
+
+describe("a finding on a removed line", () => {
+  type Finding = NonNullable<SummaryInput["findings"]>[number];
+
+  const diff = ["diff --git a/src/a.ts b/src/a.ts", "--- a/src/a.ts", "+++ b/src/a.ts", "@@ -4,3 +4,2 @@", " keep();", "-  checkAuth();", " go();", "diff --git a/gone.ts b/gone.ts", "--- a/gone.ts", "+++ /dev/null", "@@ -1 +0,0 @@", "-bye", ""].join("\n");
+  const finding = (over: Partial<Finding>): Finding => ({ file: "src/a.ts", line: 5, side: "LEFT", severity: "HIGH", lens: "correctness/authz", title: "the auth check is gone", body: "b", evidence: { input: "i", expected: "e", actual: "a" }, verified: "v", ...over });
+  const round = (f: Finding): SummaryInput => ({ head_sha: "1234567", verdict: "changes", why: "w", findings: [f] });
+  const review = (f: Finding, left = commentableLines(diff, "LEFT")) => renderReview(round(f), BRANDING.emoji, HEADER, () => null, undefined, commentableLines(diff), left);
+
+  test("each side's lines are the ones it can anchor on", () => {
+    expect([...commentableLines(diff, "LEFT").get("src/a.ts")!]).toEqual([4, 5, 6]);
+    expect([...commentableLines(diff).get("src/a.ts")!]).toEqual([4, 5]);
+    expect([...commentableLines(diff, "LEFT").get("gone.ts")!]).toEqual([1]);
+    expect(commentableLines(diff).has("gone.ts")).toBe(false);
+  });
+
+  test("anchors on the old side, and never carries a suggestion", () => {
+    const c = renderReview(round(finding({ suggestion: "checkAuth();" })), BRANDING.emoji, HEADER, () => "keep();\ngo();\n", undefined, commentableLines(diff), commentableLines(diff, "LEFT")).comments[0]!;
+
+    expect(c).toMatchObject({ path: "src/a.ts", line: 5, side: "LEFT" });
+    expect(c.body).not.toContain("```suggestion");
+  });
+
+  test("a range anchors both ends on the old side", () => {
+    expect(review(finding({ line: "4-5" })).comments[0]).toMatchObject({ start_line: 4, line: 5, side: "LEFT", start_side: "LEFT" });
+  });
+
+  test("a line the old side does not have stays in the summary, and so does any line without a diff to check it", () => {
+    expect(review(finding({ line: 9 })).comments).toEqual([]);
+    expect(renderReview(round(finding({})), BRANDING.emoji, HEADER).comments).toEqual([]);
+  });
+
+  test("the summary says the line is gone", () => {
+    expect(renderSummary(round(finding({})), BRANDING.emoji, HEADER)).toContain("`src/a.ts:5` (removed)");
+  });
+
+  test("a bad side reads as the new one", () => {
+    expect(review(finding({ ...JSON.parse('{"side":"UP"}'), line: 4 })).comments[0]).toMatchObject({ side: "RIGHT", line: 4 });
+  });
+});
+
+describe("a comment GitHub could reject for size", () => {
+  test("is cut at a line, with its fence and sections closed, and keeps the reviewed marker", () => {
+    const big = Array.from({ length: 4000 }, (_, i) => `finding body line ${i} `.repeat(4)).join("\n");
+    const md = renderSummary({ head_sha: "1234567", base_sha: "a".repeat(40), verdict: "changes", why: "w", findings: [{ file: "a.ts", line: 1, severity: "MEDIUM", lens: "x", title: "t", body: big, verified: "v" }] }, BRANDING.emoji, HEADER);
+
+    expect(md.length).toBeLessThan(65_536);
+    expect(md).toContain("_(truncated");
+    expect(md.match(/<details/g)?.length).toBe(md.match(/<\/details>/g)?.length);
+    expect(reviewedTips(md)).toEqual({ head_sha: "1234567", base_sha: "a".repeat(40) });
+  });
+
+  test("a cut inside a code fence closes it", () => {
+    const cut = capped(["<details>", "", "`````markdown", ...Array.from({ length: 100 }, () => "x".repeat(50))].join("\n"), 500);
+
+    expect(cut.match(/^`````$/m)).not.toBeNull();
+    expect(cut).toContain("</details>");
+  });
+
+  test("a comment under the limit is left alone", () => {
+    expect(capped("short")).toBe("short");
+  });
+});
+
+test("an agent prompt marks a finding on a removed line, whose number is the old side's", () => {
+  const round = (side: "LEFT" | "RIGHT"): SummaryInput => ({ head_sha: "1234567", verdict: "nits", why: "w", findings: [{ file: "a.ts", line: 7, side, severity: "HIGH", lens: "x", title: "t", body: "b" }] });
+
+  expect(renderSummary(round("LEFT"), BRANDING.emoji, HEADER)).toContain("a.ts:7 (removed line)");
+  expect(renderSummary(round("RIGHT"), BRANDING.emoji, HEADER)).not.toContain("(removed line)");
+});
+
+test("a body a model escaped twice reads as written, and a real line break leaves it alone", () => {
+  const round = (body: string): SummaryInput => ({ head_sha: "1234567", verdict: "nits", why: "w", findings: [{ file: "a.ts", line: 1, severity: "LOW", lens: "x", title: "t", body }] });
+
+  expect(checkedRound(round(String.raw`first\n\nsecond \"quoted\"`)).findings[0]!.body).toBe('first\n\nsecond "quoted"');
+  expect(checkedRound(round(`real\nbreak with ${String.raw`\n`} in code`)).findings[0]!.body).toBe(`real\nbreak with ${String.raw`\n`} in code`);
+  expect(checkedRound(round(String.raw`split("\n") drops the last line`)).findings[0]!.body).toBe(String.raw`split("\n") drops the last line`);
 });

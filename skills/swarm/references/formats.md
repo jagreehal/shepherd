@@ -35,7 +35,7 @@ DELEGATION_PLAN:
 danger: <LOW|MEDIUM|HIGH|CRITICAL>
 confidence: <HIGH|MEDIUM|LOW>
 delegations:
-- lens: <correctness|security|simplicity|maintainability|slop|spec|custom lens name> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | reason: <one line>
+- lens: <correctness|security|simplicity|maintainability|slop|spec|custom lens name> | rung: <ladder rung> | scope: <paths or hunks, or "full"> | question: <one falsifiable question, framed by its domain> | reason: <one line>
 ```
 
 An empty `delegations:` list means the router's findings are the review.
@@ -59,7 +59,7 @@ Never write the summary's Markdown yourself. Write the round as JSON and let
   "verdict": "blocked|changes|nits|good",
   "why": "<one or two sentences: is it safe to merge, and what must change first>",
   "confidence": 4,
-  "findings": [{"file": "src/a.ts", "line": 3, "severity": "HIGH", "lens": "correctness/data", "title": "<a claim the reader can check>", "body": "<why it matters, the fix>", "evidence": {"input": "<what triggers it>", "expected": "<what should happen>", "actual": "<what happens>"}, "verified": "<what the verifier quoted>", "suggestion": "<replacement lines, only when the fix replaces exactly line 3>", "url": "<its inline thread>", "inline": true, "convergent": false, "checked": [{"command": "rg -n 'firstName' src", "result": "<the line that settled it>"}], "docs": [{"url": "<https URL you are certain of>", "title": "<page title>"}], "reintroduces": "<a resolved thread whose fix this undoes>"}],
+  "findings": [{"file": "src/a.ts", "line": 3, "side": "RIGHT", "severity": "HIGH", "lens": "correctness/data", "title": "<a claim the reader can check>", "body": "<why it matters, the fix>", "evidence": {"input": "<what triggers it>", "expected": "<what should happen>", "actual": "<what happens>"}, "verified": "<what the verifier quoted>", "suggestion": "<replacement lines, only when the fix replaces exactly line 3>", "url": "<its inline thread>", "inline": true, "convergent": false, "checked": [{"command": "rg -n 'firstName' src", "result": "<the line that settled it>"}], "docs": [{"url": "<https URL you are certain of>", "title": "<page title>"}], "reintroduces": "<a resolved thread whose fix this undoes>"}],
   "pre_merge": [{"check": "Title|Description|Linked issue|Scope|Tests", "status": "pass|warn|fail", "detail": "<one line>"}],
   "walkthrough": ["<what the PR does, one bullet per behaviour, for a reader who never saw it>"],
   "changes": [{"files": ["src/a.ts", "src/a.test.ts"], "summary": "<what changed in these files>"}],
@@ -88,7 +88,9 @@ The new fields are optional: a round without them renders as before. A field
 written as `null` reads as absent and takes its default. Write `evidence` as
 the object above; text that labels its input, expected and actual result is
 read too. A finding without a `title` takes its body's first sentence, and
-`line` with `line_end` reads as `"line-line_end"`.
+`line` with `line_end` reads as `"line-line_end"`. `side` is `RIGHT` unless the
+finding is on a line the diff removes: `LEFT`, with `line` its old number. A
+`LEFT` finding posts inline only when `shepherd inline` is given `--diff`.
 The renderers hold the round to what they can check. A `url`, `reintroduces`
 or still-open link that names no review comment on the PR, or is not a
 GitHub URL, loses its link.
@@ -118,4 +120,5 @@ checks, lenses, and earlier rounds folded one line each. With `--fanout` (in CI,
 `could_not_run` and the round says it is incomplete. With `--body` it keeps the
 round number but leaves the history out: the publish job folds the comment it
 replaces in itself, so the history would otherwise appear twice. It escapes markers, mentions
-and images in every string you give it.
+and images in every string you give it, and cuts a comment that would pass
+GitHub's size limit.

@@ -62,8 +62,10 @@ router runs (`references/custom-lenses.md`).
 - **Reviewers read; they never act on the world.** No agent makes a network
   request beyond `gh` and `git` for this repository, writes to any outside
   service, or runs PR code outside Step 2's checks. A claim about an outside
-  API's behaviour is stated as an open question, never tested live. Put this
-  rule in every agent brief.
+  API's behaviour is stated as an open question, never tested live. The test
+  for any call, a tool added after this was written included: would it still
+  be a no-op if reverted? If not, a reviewer does not make it. Put this rule in
+  every agent brief.
 
 ## Preview mode
 
@@ -166,10 +168,11 @@ PR, the parent's head in place of `<base_ref>`). Add `--since-base <sha>` from
 `shepherd reviewed summary.md` (the bot's own summary comment, the one you pass
 as `--previous`) when its `head_sha` matches `since_sha`: the base tip that
 round reviewed against, so a stacked parent force-pushed since keeps its old
-change out of the focus. Its `text` is the round's
-focus: how the PR's own diff moved since the reviewed head, without the base's
-commits a merge or rebase brought in, which `git diff <since_sha>..<head_sha>`
-would carry. With `unchanged` true, the PR's change is the one already
+change out of the focus. Its `focus` is the round's
+focus: how the PR's own diff moved since the reviewed head, `+` and `-` marking
+what changed between the two versions, without the base's commits a merge or
+rebase brought in, which `git diff <since_sha>..<head_sha>` would carry (`text`
+is the same delta as raw `git range-diff`). With `unchanged` true, the PR's change is the one already
 reviewed: report the round dry and post nothing. When the command exits
 non-zero, fall back to `git diff <since_sha>..<head_sha>` and say so in the
 summary. The router reviews the focus in full (its `files` first) and the
@@ -298,10 +301,28 @@ shepherd impact "$diff_path" > impact.json
 ```
 
 Its `lines` name each changed export with the files outside the PR that use
-it, and each changed source file with its tests, or "no test file matches its
-name". Give them to the router and the correctness lens as leads to check: a
-caller that breaks belongs at the call site's line. Leads say where to look;
-they never replace reading the diff, and an empty list proves nothing.
+it, each changed source file with its tests, or "no test file matches its
+name", and each identifier whose count the diff changed with the unchanged
+lines still naming it, docs included. Give them to the router and the
+correctness lens as leads to check: a caller that breaks belongs at the call
+site's line, and a name the diff renamed or removed that a line still uses is a
+stale reference, runtime breakage before wrong docs before stale comments.
+Leads say where to look; they never replace reading the diff, and an empty list
+proves nothing.
+
+Then write the diff reviewers read, so nobody counts a line from a hunk header:
+
+```bash
+shepherd number "$diff_path" > "$diff_path.numbered"
+```
+
+Each hunk line reads `| OLD | NEW | TYPE | code`, under a contents list of each
+file's lines. A file marked `generated` needs no line-by-line read when its
+content is what the marker says; the marker reads the path alone, so read source
+code under `dist/` or `coverage/` as source. Pass this
+path to the router and every lens as the diff. `shepherd coverage` and
+`shepherd inline` keep reading `$diff_path`. When the command fails, pass
+`$diff_path`.
 
 Dispatch the router and every lens on that list **in one message**, in the
 foreground, so they run in parallel and all return inside this turn. Each
@@ -309,7 +330,11 @@ lens runs one rung above the router unless it has a `models:` pin. Each lens
 gets its lens skill body (a custom lens gets the lens brief from
 `references/custom-lenses.md`), the diff path, its scope, and
 `CHECK_FINDINGS`, and is told it is the only reviewer for that scope. It never
-learns about the router or the other lenses, so it cannot anchor on them.
+learns about the router or the other lenses, so it cannot anchor on them. Give
+it the diff and its scope, never a summary of the PR, a reading list or a
+judgement of your own: each frames it to confirm instead of question. A lens
+whose diff is empty or unreadable says so and ends `failed`, naming the path; it
+never guesses a `git diff` of its own.
 First-wave lenses do not count toward the cap. A personal lens's findings
 (from `~/.config/shepherd/lenses.yml`) never post: they skip Steps 5 to 7 and
 print under "Personal lenses" in the Step 8 report.
@@ -332,6 +357,12 @@ a rung for them. Its brief:
   ordinary input and the boundary the promise names through the code before
   anything else. A broken promise outranks naming, style and speculative
   enhancements.
+- Report what no line shows, as a finding with line `general`: something the
+  change should have done and did not (a caller left on the old contract, a
+  migration with no rollback), an order that must hold (deleting a column
+  before the code stops reading it), or a scope question the diff raises. A
+  concern that does anchor to a line goes on that line, however broad its
+  effect.
 - Review the whole diff for security, simplicity, maintainability, slop, and
   any bug you see. The correctness lens and the custom lenses named in your
   brief review this diff beside you; do not plan them for the scopes they
@@ -345,6 +376,12 @@ a rung for them. Its brief:
   what your own pass cannot cover safely. Delegate one rung above yours; name
   a higher rung only when the reason says why the lower one cannot cover it.
   An empty plan on a small, low-danger diff is the cheap path working.
+- Each delegation asks one falsifiable `question` that could change your grade,
+  framed by its domain: "billing: can a retried webhook charge twice?", not
+  "check correctness" (a named domain recalls failure modes a generic pass
+  misses). "Another look" is no question. Orthogonal questions get separate
+  delegations; never fold them into one broad ask. Diff size is no proxy for
+  how many you need.
 - **One delegation is mandatory** when you grade danger HIGH or CRITICAL, and,
   whatever your grade, when the diff adds or changes code in auth,
   permissions, secrets, billing, migrations, concurrency, CI/deploy workflows,
@@ -374,7 +411,9 @@ a rung for them. Its brief:
 
 ## Step 4: Second wave
 
-When the router returns, run its plan as written, with one addition: when the
+When the router returns, run its plan as written, each lens with its
+delegation's `question` and the evidence wanted for or against it, with one
+addition: when the
 plan lacks a delegation Step 3 makes mandatory (a HIGH or CRITICAL grade, a
 risky area), add it, one rung above the router, scoped to the hunks behind
 that grade. Never drop a planned delegation, and never re-grade a finding
@@ -425,7 +464,14 @@ evidence.
   caller in the repository passes it or the promise covers it.
 - It lists each read-only command it ran (`rg`, `sed -n`, `git show`, `git log
   -L`) with the one line of output that settled the question. They go in the
-  finding's `checked`, so a reader can audit the claim without redoing it.
+  finding's `checked`, so a reader can audit the claim without redoing it. For
+  code that was deleted or moved, where `git blame` shows nothing, use
+  `../git-archaeology/SKILL.md`.
+- A finding whose only fix adds ceremony is `refuted`, with the code that shows
+  it: a check for a case that cannot happen, an abstraction used once, a comment
+  restating the code, a test asserting a tautology. A fix must be sound, correct
+  and simple; one that trades simplicity for nominal correctness leaves the code
+  worse. A real bug with a heavy fix stays, and the finding names a lighter one.
 - Judge new code by its intended use. A function the PR adds and exports exists
   to be called; "nothing calls it yet" never lowers a finding's severity.
 - A finding the verifier cannot settle without outside facts (an API's
@@ -455,10 +501,14 @@ other HIGH, such as "`firstName` returns the second word".
 
 Check every finding's line against the diff before it posts. Cheap models
 misnumber lines: find the code the finding quotes and use its real line on the
-new side of the diff.
+new side of the diff, or the old side for a `LEFT` finding.
 
 ## Step 6: Merge and grade
 
+- **In scope.** A finding counts when its root cause sits in lines this PR
+  added or changed, or the PR introduced or amplified it, and the finding says
+  how. Drop the rest. Filter here, never in a lens brief: a lens told to skip
+  old code also misses the regression a change made worse.
 - **Dedupe by root cause.** Two findings are one issue when one change to the
   code fixes both, wherever they sit; report it once, at the line the fix
   changes. Distinct bugs stay separate even on neighbouring lines. A missing
@@ -541,12 +591,26 @@ findings on the same lines are named under it. Run it from the reviewed
 checkout, so it can place each `suggestion` on the lines it rewrites, at their
 indentation. A finding on a line
 outside the diff cannot anchor inline: keep its `line` and set
-`"inline": false`. With `--diff`, `shepherd inline` also leaves out any
+`"inline": false`. A finding about code the PR deletes sets `"side": "LEFT"`
+with the line's OLD number, so it anchors on the removal; it carries no
+`suggestion`. With `--diff`, `shepherd inline` also leaves out any
 finding whose lines fall outside the diff's hunks, since GitHub rejects the
 whole review over one; the summary still carries it. When `review.json` has no `comments`, skip the post.
 Otherwise read the new threads' URLs
 (`gh api repos/<owner>/<repo>/pulls/<number>/reviews/<id>/comments --jq '.[] | {path, line, html_url}'`)
 into each finding's `url`, so the summary links every finding to its thread.
+
+When the post fails, read why before changing anything:
+
+- A 5xx, or a 422 saying `internal error occurred`, is GitHub's fault, not the
+  review's. Send the same payload again after a few seconds, twice at most.
+  Never drop or edit a comment to get past it.
+- A 422 naming a `pending review` means this account holds an unsubmitted draft
+  on the PR, and GitHub allows one. Never delete it: it may be a person's work.
+  Skip the inline review, say so in the summary, and post the summary, which
+  carries every finding.
+- Any other 422 on the comments: the head moved, or a `suggestion` block is
+  malformed. Refresh the diff, or set those findings `"inline": false`.
 
 Every run, including the first of a new session, fetches the unresolved
 Shepherd threads first (triage's Step 3 query) and does not post a finding that
@@ -612,7 +676,9 @@ overwritten.
 ## Step 8: Report
 
 Standalone: print the verdict, counts by severity, convergent findings, which
-lenses ran on which rung, and anything dropped by verification.
+lenses ran on which rung, and anything dropped by verification. Read the PR's
+head once more: when it moved past `head_sha`, say `new commits since
+<short_sha>, not reviewed`, so nobody reads this round as covering them.
 
 As a `shepherd` sub-step: end with exactly this and nothing after it:
 

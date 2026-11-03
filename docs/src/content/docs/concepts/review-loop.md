@@ -23,6 +23,10 @@ A round is dry when triage fixed, resolved and promoted nothing, simplify change
 
 Later rounds review what moved, not the whole PR again. `shepherd interdiff` compares the PR's own change at the last reviewed head with the change at the new head, each squashed onto its own merge base. A base merge or a rebase then reads as no change, and a force-push still compares cleanly.
 
+Reviewers read the diff from `shepherd number`, with each line's old and new numbers written out, so a finding cites its line directly, on the new side or, for deleted code, the old side.
+
+When the base conflicts, ci-repair merges it and resolves the conflict if no decision hides in it: nothing under `escalate.paths` or a deferred thread, nothing risky, and no choice of what the product does. The next iteration reviews the result. The `shepherd` status reaches `success` only when no person's latest review requests changes.
+
 ## Stacked PRs and wrong bases
 
 Before it writes the round's diff, the loop runs `shepherd stack <pr>`:

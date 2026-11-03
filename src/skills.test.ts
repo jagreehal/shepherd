@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -27,7 +28,7 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] 
 
 describe("skill pack", () => {
   test("ships the loop, its runners, the ladder and every lens", () => {
-    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "incident", "lens-import", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
+    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "git-archaeology", "incident", "lens-import", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
   });
 
   test.each(names)("%s: frontmatter name matches its directory and has a description within the 1024-char limit", (name) => {
@@ -593,4 +594,84 @@ describe("garden", () => {
     // #1 was argued with, #6 only resolved it, #7 is by someone who cannot push: accepted on #2, #3 and #4.
     expect(recurring).toEqual([{ rule: arch, prs: [2, 3, 4], paths: ["w.ts", "y.ts", "z.ts"] }]);
   });
+});
+
+describe("a person's verdict holds up the green status", () => {
+  const filter = (file: string) => /jq -s '(add \/\/ \[\][^']*)'/.exec(readFileSync(path.join(ROOT, file), "utf8"))?.[1] ?? "";
+  const review = (login: string, state: string, type = "User", body = "") => ({ user: { login, type }, state, body });
+  const blocking = (reviews: object[][]) => JSON.parse(execFileSync("jq", ["-s", filter("skills/shepherd/SKILL.md")], { input: reviews.map((r) => JSON.stringify(r)).join("\n"), encoding: "utf8" }));
+
+  test("the skill and the publish job read reviews with one filter", () => {
+    expect(filter("skills/shepherd/SKILL.md")).not.toBe("");
+    expect(filter("templates/shepherd.yml")).toBe(filter("skills/shepherd/SKILL.md"));
+  });
+
+  test("the latest binding verdict stands, across pages", () => {
+    expect(blocking([[review("ann", "CHANGES_REQUESTED")], [review("ann", "COMMENTED")]])).toEqual(["ann"]);
+    expect(blocking([[review("ann", "CHANGES_REQUESTED")], [review("ann", "APPROVED")]])).toEqual([]);
+    expect(blocking([[review("ann", "CHANGES_REQUESTED"), review("ann", "DISMISSED")]])).toEqual([]);
+    expect(blocking([[review("ann", "APPROVED"), review("bob", "CHANGES_REQUESTED")]])).toEqual(["bob"]);
+  });
+
+  test("bots speak through their own gates, and no body text makes a person a bot", () => {
+    expect(blocking([[review("coderabbit[bot]", "CHANGES_REQUESTED", "Bot")]])).toEqual([]);
+    expect(blocking([[review("github-actions[bot]", "CHANGES_REQUESTED", "Bot", "<!-- stamp-run: 1 -->")]])).toEqual([]);
+    expect(blocking([[review("ann", "CHANGES_REQUESTED", "User", "quoting <!-- stamp-run: 1 -->")]])).toEqual(["ann"]);
+    expect(blocking([[{ user: null, state: "CHANGES_REQUESTED", body: "" }]])).toEqual([]);
+    expect(blocking([[]])).toEqual([]);
+  });
+});
+
+describe("triage reads a thread for what it cannot see", () => {
+  const triage = readFileSync(path.join(SKILLS, "triage", "SKILL.md"), "utf8");
+
+  test("a thread longer than the query is human", () => {
+    const first = Number(/comments\(first:(\d+)\)/.exec(triage)?.[1]);
+
+    expect(triage).toContain(`comments_truncated: (.comments.totalCount > ${first})`);
+    expect(triage).toMatch(/`comments_truncated` true[\s\S]{0,120}treat it as human/);
+  });
+
+  test("the header only counts from an account that can push", () => {
+    expect(triage).toContain("collaborators/<login>/permission");
+    expect(triage).toMatch(/anyone can paste it/);
+  });
+
+  test("reads the thread again before resolving it", () => {
+    expect(triage.indexOf("Look again before you resolve")).toBeLessThan(triage.indexOf("resolveReviewThread(input"));
+    expect(triage).toContain("PullRequestReviewThread");
+  });
+
+  test("a re-read that cannot show every comment defers", () => {
+    const first = Number(/comments\(first:(\d+)\)\{totalCount/.exec(triage)?.[1]);
+
+    expect(triage).toContain(`complete: (.comments.totalCount <= ${first})`);
+    expect(triage).toMatch(/`complete` false, or a read that fails/);
+    expect(triage).not.toContain("comments(last:");
+  });
+
+  test("reactions stay out of the paged thread query", () => {
+    const query = triage.slice(triage.indexOf("reviewThreads(first:100"), triage.indexOf("--jq '.data.repository"));
+
+    expect(query).not.toContain("reactions(");
+  });
+});
+
+test("ci-repair resolves a conflict by merge, and shepherd accepts the result", () => {
+  const ci = readFileSync(path.join(SKILLS, "ci-repair", "SKILL.md"), "utf8");
+  const loop = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8");
+
+  expect(ci).toContain("git merge --no-commit origin/<base>");
+  expect(ci).toContain("git merge --abort");
+  expect(ci.indexOf("house rules", ci.indexOf("### Resolving a conflict"))).toBeLessThan(ci.indexOf("git merge --no-commit"));
+  expect(ci).not.toMatch(/git rebase/);
+  expect(ci).toContain('"status": "updated|resolved|current|conflict"');
+  expect(loop).toContain("`resolved`, `current`, or `conflict`");
+});
+
+test("reviewers never reach the network for a claim", () => {
+  const swarm = readFileSync(path.join(SKILLS, "swarm", "SKILL.md"), "utf8");
+
+  expect(swarm).toContain("never tested live");
+  expect(swarm).not.toMatch(/web search|webfetch/i);
 });

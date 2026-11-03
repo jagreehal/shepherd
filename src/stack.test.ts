@@ -120,6 +120,7 @@ describe("interdiff", () => {
 
     expect(same.unchanged).toBe(true);
     expect(same.files).toEqual([]);
+    expect(same.focus).toBe("");
 
     const edited = write("h.txt", "new\nmore\n", "three");
     const moved = interdiff(reviewed, edited, "main", g);
@@ -128,7 +129,18 @@ describe("interdiff", () => {
     // g.txt changed between the two heads, through the base only: `git diff reviewed..edited` would list it.
     expect(moved.files).toEqual(["h.txt"]);
     expect(moved.text).toContain("++more");
+    // + means added since the reviewed head, with the file named above it.
+    expect(moved.focus).toContain("+more");
+    expect(moved.focus).not.toContain("++more");
+    expect(moved.focus).toContain("h.txt");
     expect(g("diff", "--name-only", reviewed, edited).split("\n")).toContain("g.txt");
+
+    // A line the old version left alone and this head deletes reads as a deletion.
+    const trimmed = write("g.txt", "y\n", "drops a line the PR had not touched");
+    const dropped = interdiff(edited, trimmed, "main", g);
+
+    expect(dropped.focus).toContain("-x");
+    expect(dropped.focus).not.toContain("+x");
   });
 
   test("a base edit beside the PR's lines, then a rebase, is no change; one under them is", () => {
