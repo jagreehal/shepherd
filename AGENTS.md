@@ -22,7 +22,10 @@ to all of them.
   exception is the operator's own instruction: a thread whose only person is
   the logged-in user, asking for a concrete change, is acted on, and so is an
   all-automated thread whose finding the logged-in user gave a 👍. Their
-  questions still wait for them.
+  questions still wait for them. The header marks a comment automated only from
+  an account that can push: anyone can paste it. A thread with more comments
+  than the query read counts as human, and triage reads a thread again before
+  resolving it.
 - **A thread left for the author fences its code.** No fix touches the code
   under a deferred thread, and fixes that between them would carry out its
   decision are deferred together: many small fixes must not make a call one
@@ -44,9 +47,14 @@ to all of them.
   no test covers.
 - **The loop's state lives on the PR.** Every iteration sets
   the `shepherd` commit status on the head: `success` only when stamp approved
-  and nothing is left open, `failure` naming what the author must do when the
+  and nothing is left open, no person's latest review requesting changes,
+  `failure` naming what the author must do when the
   loop can do no more, `pending` otherwise. A green PR with shepherd stopped
   short must never be possible. This is shepherd's only status write.
+- **A base conflict is resolved by a merge, never a rebase,** and only where
+  no decision hides in it: nothing under `escalate.paths` or a deferred thread,
+  nothing risky, no choice of what the product does. A resolution changes the
+  PR's diff, so it ends the iteration `pending` until swarm has read it.
 - **Behaviour changes made during review are disclosed** in one marked section
   of the PR description; the rest of the body is the author's.
 - **In CI the model holds no write credential.** Handoff mode commits and

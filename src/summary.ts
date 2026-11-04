@@ -87,6 +87,9 @@ const Finding = z.object({
         .refine((l) => !l.includes("-") || Number(l.split("-")[0]) <= Number(l.split("-")[1]), "a range runs start-end, start first"),
     ]),
   ),
+  // LEFT anchors on a line the diff removes: `line` is then its number in the old file. A finding about deleted code
+  // has no line on the new side.
+  side: z.enum(["LEFT", "RIGHT"]).nullish().catch(undefined).transform((v) => v ?? "RIGHT"),
   severity: Severity,
   lens: z.string(),
   body: z.string(),
@@ -183,7 +186,7 @@ export function earlierRounds(previous: string | undefined) {
 const fenced = (text: string) => defuse(text).replace(/`{5,}/g, "````");
 
 /** `file:line` or `file:start-end`, the way the agent prompts cite a finding. */
-const cite = (f: { file: string; line?: number | string }) => `${f.file}${f.line !== undefined && f.line !== "general" ? `:${f.line}` : ""}`;
+const cite = (f: { file: string; line?: number | string; side?: string }) => `${f.file}${f.line !== undefined && f.line !== "general" ? `:${f.line}` : ""}${f.side === "LEFT" ? " (removed line)" : ""}`;
 
 /**
  * Every finding as one prompt the author hands to the agent that wrote the PR, built in code so no finding is
@@ -249,11 +252,17 @@ const fromChecks = (f: { lens: string }) => f.lens.startsWith("checks/");
  * input, expected and actual result is graded MEDIUM. The verdict is at least as strict as its findings. Without
  * `threads`, links are kept as given.
  */
+/** Text a model escaped twice: two or more literal `\\n` and no real line break. One may be code the body quotes. */
+const unescaped = (t: string) => (!t.includes("\n") && t.split("\\n").length > 2 ? t.replaceAll("\\n", "\n").replaceAll("\\t", "\t").replaceAll('\\"', '"') : t);
+
 export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, read?: (path: string) => string | null) {
   const s = SummaryInput.parse(raw);
   const real = (url: string | undefined) => (url === undefined || threads === undefined || threads.has(url) ? url : undefined);
 
+  s.why = unescaped(s.why);
+
   for (const f of s.findings) {
+    f.body = unescaped(f.body);
     f.convergent &&= f.lens.includes("+");
     // A finding without a title takes its first sentence, so a reader can triage it by the title alone.
     f.title ||= firstSentence(f.body);
@@ -285,6 +294,13 @@ export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, r
 /** A suggestion moved onto the lines it rewrites and given their indentation, or dropped when it fits nowhere near. */
 function place(f: z.infer<typeof Finding>, read: (path: string) => string | null) {
   if (f.suggestion === undefined) return;
+
+  // GitHub applies a suggestion to the new side, and a removed line has no place there.
+  if (f.side === "LEFT") {
+    f.suggestion = undefined;
+
+    return;
+  }
 
   const text = f.suggestion.includes("```") || !insideRepo(f.file) ? null : read(f.file);
   const [start, end] = String(f.line).split("-").map(Number);
@@ -468,7 +484,7 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   const { round, history } = earlierRounds(previous);
   const sha = s.head_sha.slice(0, 7);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
-  const where = (f: (typeof s.findings)[number]) => (f.file ? ` · \`${defuse(f.file, true).replaceAll("`", "")}${f.line !== undefined && f.line !== "general" ? `:${f.line}` : ""}\`` : "");
+  const where = (f: (typeof s.findings)[number]) => (f.file ? ` · \`${defuse(f.file, true).replaceAll("`", "")}${f.line !== undefined && f.line !== "general" ? `:${f.line}` : ""}\`${f.side === "LEFT" ? " (removed)" : ""}` : "");
 
   const findings = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev));
 
@@ -556,15 +572,36 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   // The handoff body (no header) leaves history to the publish job, which folds in the comment it replaces.
   if (history.length && header !== null) out.push(...section(`Earlier rounds (${history.length})`, [defuse(history.join("\n"))]));
 
-  if (s.base_sha) out.push("", reviewedMarker(s.head_sha, s.base_sha));
+  const body = capped(out.join("\n").trimEnd());
 
-  return out.join("\n").trimEnd() + "\n";
+  return (s.base_sha ? `${body}\n\n${reviewedMarker(s.head_sha, s.base_sha)}` : body) + "\n";
+}
+
+/** GitHub rejects a comment over 65,536 characters, and the review with it; the room left is for the marker and the note. */
+const MAX_COMMENT = 60_000;
+
+/** A comment cut at a line, with its open code fence and collapsed sections closed, so what follows it still renders. */
+export function capped(text: string, max = MAX_COMMENT): string {
+  if (text.length <= max) return text;
+  const lines = text.slice(0, text.lastIndexOf("\n", max)).split("\n");
+  let fence = "";
+
+  for (const l of lines) {
+    const tick = /^`{3,}/.exec(l)?.[0];
+
+    if (tick && !fence) fence = tick;
+    else if (tick && tick.length >= fence.length) fence = "";
+  }
+
+  const open = lines.filter((l) => l === "<details>" || l === "<details open>").length - lines.filter((l) => l === "</details>").length;
+
+  return [...lines, ...(fence ? [fence] : []), ...Array.from({ length: Math.max(0, open) }, () => "\n</details>"), "", "_(truncated: the comment reached GitHub's size limit)_"].join("\n");
 }
 
 const PER_REVIEW = 10;
 
 /** One comment in POST /pulls/<n>/reviews: `start_line` and `start_side` only for a range. */
-type InlineComment = { path: string; line: number; side: "RIGHT"; body: string; start_line?: number; start_side?: "RIGHT" };
+type InlineComment = { path: string; line: number; side: "LEFT" | "RIGHT"; body: string; start_line?: number; start_side?: "LEFT" | "RIGHT" };
 
 /**
  * The inline review swarm posts, rendered from the same round JSON as the summary: each finding worth a thread, most
@@ -665,10 +702,12 @@ export function unquotePath(s: string): string | null {
  * (`b/f.ts`, with the tab git may append dropped) or C-quoted (`"b/caf\\303\\251.ts"`), and every `diff --git`
  * line ends the one before, so a file with no `+++` (binary, a pure rename) never inherits its neighbour's lines.
  */
-export function commentableLines(diff: string): Map<string, Set<number>> {
+export function commentableLines(diff: string, side: "LEFT" | "RIGHT" = "RIGHT"): Map<string, Set<number>> {
   const lines = new Map<string, Set<number>>();
   let file: Set<number> | null = null;
+  let oldName: string | null = null;
   let at = 0;
+  let oldAt = 0;
   // Lines a hunk still holds, from its header's counts. Inside one, "+++ x" is an added "++ x", never a file header.
   let oldLeft = 0;
   let newLeft = 0;
@@ -680,36 +719,51 @@ export function commentableLines(diff: string): Map<string, Set<number>> {
       const removed = l.startsWith("-");
 
       if (!removed) {
-        file?.add(at++);
+        if (side === "RIGHT") file?.add(at);
+        at++;
         newLeft--;
       }
 
-      if (!added) oldLeft--;
+      if (!added) {
+        if (side === "LEFT") file?.add(oldAt);
+        oldAt++;
+        oldLeft--;
+      }
+
       continue;
     }
 
-    const hunk = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(l);
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(l);
 
     if (l.startsWith("diff --git ")) {
       file = null;
-    } else if (l.startsWith("+++ ")) {
+      oldName = null;
+    } else if (l.startsWith("--- ")) {
       const v = l.slice(4).replace(/\t$/, "");
       const p = v === "/dev/null" ? null : (unquotePath(v) ?? v);
 
-      file = p?.startsWith("b/") ? new Set() : null;
+      oldName = p?.startsWith("a/") ? p.slice(2) : null;
+    } else if (l.startsWith("+++ ")) {
+      const v = l.slice(4).replace(/\t$/, "");
+      const p = v === "/dev/null" ? null : (unquotePath(v) ?? v);
+      // A review comment names the file as the PR leaves it; a deleted file keeps its old name.
+      const name = p?.startsWith("b/") ? p.slice(2) : side === "LEFT" ? oldName : null;
 
-      if (file) lines.set(p!.slice(2), file);
+      file = name ? new Set() : null;
+
+      if (file) lines.set(name!, file);
     } else if (hunk) {
-      at = Number(hunk[2]);
-      oldLeft = Number(hunk[1] ?? 1);
-      newLeft = Number(hunk[3] ?? 1);
+      oldAt = Number(hunk[1]);
+      at = Number(hunk[3]);
+      oldLeft = Number(hunk[2] ?? 1);
+      newLeft = Number(hunk[4] ?? 1);
     }
   }
 
   return lines;
 }
 
-export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>, commentable?: Map<string, Set<number>>) {
+export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>, commentable?: Map<string, Set<number>>, removable?: Map<string, Set<number>>) {
   const s = checkedRound(raw, threads, read);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
 
@@ -717,13 +771,18 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
   // the whole review over one such comment. The finding stays in the summary comment.
   const fits = (f: (typeof s.findings)[number]) => {
     const [start = 0, end = start] = String(f.line).split("-").map(Number);
+    const left = f.side === "LEFT";
 
-    if (commentable) {
-      const inDiff = commentable.get(f.file);
+    // A removed line can only be checked against the diff, so without one it stays in the summary.
+    if (left && !removable) return false;
+
+    if (commentable || left) {
+      const inDiff = (left ? removable : commentable)?.get(f.file);
 
       for (let n = start; n <= end; n++) if (!inDiff?.has(n)) return false;
     }
 
+    if (left) return true;
     const text = insideRepo(f.file) ? read(f.file) : null;
 
     return text === null || end <= text.replace(/\n$/, "").split("\n").length;
@@ -732,7 +791,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
   const anchored = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f)));
   // One comment per place, the most severe finding's. Others on the same lines are named under it and appear in full
   // in the summary.
-  const at = (f: (typeof s.findings)[number]) => `${f.file}:${f.line}`;
+  const at = (f: (typeof s.findings)[number]) => `${f.file}:${f.side}:${f.line}`;
   const posted = anchored.filter((f, i) => anchored.findIndex((g) => at(g) === at(f)) === i).slice(0, PER_REVIEW);
 
   const alsoHere = (f: (typeof s.findings)[number]) => {
@@ -778,11 +837,11 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
       "</details>",
     ].join("\n");
 
-    const comment: InlineComment = { path: f.file, line: end ?? start, side: "RIGHT", body };
+    const comment: InlineComment = { path: f.file, line: end ?? start, side: f.side, body };
 
     if (end !== undefined && end !== start) {
       comment.start_line = start;
-      comment.start_side = "RIGHT";
+      comment.start_side = f.side;
     }
 
     return comment;

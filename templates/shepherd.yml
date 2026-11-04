@@ -498,6 +498,11 @@ jobs:
           print(desc[:139])
           PY
           state=$(sed -n 1p status.out); sed -n 2p status.out > description.txt
+          # A person's "changes requested" reaches no thread, and it holds until they approve or it is dismissed.
+          if [ "$state" = success ]; then
+            blocked=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews?per_page=100" --paginate | jq -s 'add // [] | map(select(.user != null and .user.type != "Bot" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED"))) | group_by(.user.login) | map(last | select(.state == "CHANGES_REQUESTED") | .user.login)' | jq -r 'join(", ")')
+            if [ -n "$blocked" ]; then state=failure; echo "changes requested by $blocked" | cut -c1-139 > description.txt; fi
+          fi
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
           echo "state=$state" >> "$GITHUB_OUTPUT"
       # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
@@ -539,7 +544,9 @@ jobs:
               if [ -n "$marker" ] && gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate --jq '.[] | select(.user.login == "github-actions[bot]") | .body' | grep -F -- "$marker" >/dev/null; then
                 echo "this round's inline review is already on the PR"
               else
-                gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --method POST --input review.json >/dev/null || echo "::warning::could not post the rendered inline review"
+                # A 5xx or a 422 "internal error" clears in seconds, so it gets one more try.
+                post_review() { gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --method POST --input review.json >/dev/null 2>post.err; }
+                post_review || { grep -qiE 'internal error occurred|HTTP 5[0-9]{2}' post.err && { sleep 5; post_review; }; } || { cat post.err; echo "::warning::could not post the rendered inline review"; }
               fi
             fi
             fanout=(); [ -f handoff/fanout.json ] && fanout=(--fanout ../handoff/fanout.json)

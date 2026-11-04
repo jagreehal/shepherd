@@ -116,9 +116,9 @@ gh api graphql -f query='
           pageInfo { hasNextPage endCursor }
           nodes {
             id isResolved isOutdated
-            comments(first:20) {
-              nodes { databaseId author { login __typename } body path line
-                reactions(content: THUMBS_UP, first: 20) { nodes { user { login } } } }
+            comments(first:50) {
+              totalCount
+              nodes { id databaseId author { login __typename } body path line }
             }
           }
         }
@@ -132,7 +132,8 @@ gh api graphql -f query='
          author: .comments.nodes[0].author.login,
          body_head: (.comments.nodes[0].body[:1500]),
          body_truncated: ((.comments.nodes[0].body | length) > 1500),
-         thumbs_up: [.comments.nodes[0].reactions.nodes[].user.login],
+         first_comment: .comments.nodes[0].id,
+         comments_truncated: (.comments.totalCount > 50),
          participants: ([.comments.nodes[] | {login: .author.login, type: .author.__typename,
            automated: (.body[:300] | contains("🤖 Automated comment by"))}] | unique)}]}'
 ```
@@ -141,15 +142,33 @@ Follow `endCursor` while `hasNextPage` is true. Do not re-classify ids already
 in `deferred_threads`, but keep their path, line, and concern: they fence code
 in Step 5.
 
+A thread with `comments_truncated` true has comments this query did not read,
+and any of them may be a person's: treat it as human.
+
+Read 👍s separately, in one query per 100 `first_comment` ids of all-automated
+threads. Nesting reactions under every comment above would make each page cost
+dozens of API points:
+
+```bash
+gh api graphql -f query='
+  query($ids:[ID!]!) { nodes(ids:$ids) { ... on PullRequestReviewComment {
+    id reactions(content: THUMBS_UP, first: 100) { nodes { user { login } } } } } }' \
+  -f 'ids[]=<first_comment>' --jq '.data.nodes[] | {id, thumbs_up: [.reactions.nodes[].user.login]}'
+```
+
 ## Step 4: Classify each thread
 
 **Who is in it.** A comment is automated when its author is a bot account
 (`__typename == "Bot"`, a login ending `[bot]`, or a known review bot:
 greptile, coderabbit, cursor, copilot, sonarcloud, codescene, sourcery,
 ellipsis, claude, chatgpt-codex-connector, github-actions, dependabot,
-renovate), **or** its body carries `🤖 Automated comment by`. The header is the
-check that matters for Shepherd's own comments, which post through the author's
-account typed `User`.
+renovate), **or** its body carries `🤖 Automated comment by` and an account that
+can already push wrote it: the logged-in user, or a login where `gh api
+repos/<owner>/<repo>/collaborators/<login>/permission --jq .permission` says
+`admin` or `write` (ask once per login). The header is the check that matters
+for Shepherd's own comments, which post through the author's account typed
+`User`, but anyone can paste it: from an account without write access, or one
+whose access you could not read, the comment is human, however it is labelled.
 
 If any comment in the thread is not automated, the whole thread is **human**:
 defer it untouched. A person who replied to a bot has joined the conversation.
@@ -168,7 +187,8 @@ A 👍 is the same instruction without the typing. When the logged-in user is in
 `thumbs_up` on an all-automated thread's first comment, they accepted that
 finding: treat it as their instruction to apply it, in place of the pair
 ladder. Every other rule still holds (policy, `escalate.paths`, fences, a
-second model's `accept` for a risky change). A 👍 from anyone else is not an
+second model's `accept` for a risky change). Logins compare case-insensitively.
+A 👍 from anyone else is not an
 instruction and changes nothing: reactions are not participants.
 
 **Team policy.** Load it once (`../shepherd/references/policy.md`). Its
@@ -217,14 +237,18 @@ unless the PR's own change depends on the broken code.
   needs proof from the code or the repository. A claim about outside behaviour
   (an API's rules, a service's limits) that you cannot check is not wrong:
   fix it when the fix is cheap and harmless, otherwise defer it with the claim
-  stated. Never resolve it as wrong.
+  stated. Never resolve it as wrong. A fix that would only add ceremony (a
+  check for a case the code shows cannot happen, an abstraction used once, a
+  comment restating the code, a tautological test) is wrong in this sense:
+  resolve it with the code that proves it, rather than apply it because a
+  reviewer asked.
 - **Ambiguous**: architecture, broad scope, or a design choice.
 
 **Repeat threads.** An all-automated thread whose concern matches one a
 `Shepherd:` commit on this PR already claimed to fix (a resolved thread naming
 the commit, or the commit's message) is proof the fix did not hold. Before
 fixing again, say why it did not (it fixed a sibling path, the wrong root cause,
-or was reverted), and never resolve it as already fixed on the same evidence.
+or was reverted; `../git-archaeology/SKILL.md` finds what removed it), and never resolve it as already fixed on the same evidence.
 When two `Shepherd:` commits have already tried to fix the same concern, both
 rested on a premise that is wrong: write the premise down, test it directly
 (one command, one read of the code it names), and fix only what that shows. If
@@ -244,7 +268,10 @@ dismiss them. Never change code only to quiet a bot.
 **Outdated threads.** GitHub marks a thread outdated when its line changed, not
 when its concern was met, so an outdated thread is never skipped. Read its
 concern against the head: gone, resolve it ("addressed in <sha>"); still true,
-classify it like any other thread, at the line where the code now lives.
+classify it like any other thread, at the line where the code now lives. Code
+reformatted, renamed or moved elsewhere has not met a concern, and a thread
+with several concerns needs all of them met. When unsure, leave it open: a wrong
+resolve costs more trust than a thread left standing.
 
 **Stale bot comments.** For top-level bot comments, look for a commit reference (`/commit/<sha>`,
 "reviewing `<sha>`"). A reference to anything but HEAD is stale; skip it. When
@@ -346,6 +373,23 @@ unsure and the comment predates the last push, skip rather than act.
   through `AskUserQuestion`; even then push it, leave the thread open, and
   report "fixed in <sha>, thread left open for your reply".
 
+**Look again before you resolve.** The fetch in Step 3 is minutes old by now, and
+a person may have joined the thread, or told you to stop, while you worked. Read
+the thread's comments first:
+
+```bash
+gh api graphql -f query='query($id:ID!){node(id:$id){... on PullRequestReviewThread{isResolved
+  comments(first:100){totalCount nodes{author{login __typename} body}}}}}' -F id=<thread_id> \
+  --jq '.data.node | {isResolved, complete: (.comments.totalCount <= 100), comments: [.comments.nodes[] | {login: .author.login, type: .author.__typename, body: .body[:300]}]}'
+```
+
+A comment Step 3 did not see, by anyone Step 4 would call human, makes it a human
+thread: leave it open and defer it, with your commit named in the report. So
+does `complete` false, or a read that fails: you cannot show that no person
+joined. The
+fix stays pushed. Before the first push, do the same for every thread you are
+fixing, and hold back a fix a person has since asked you to change or stop.
+
 Resolve a thread with:
 
 ```bash
@@ -357,8 +401,10 @@ signal. A deferred line in the report is cheaper than a wrong push.
 
 ### stamp's verdict
 
-`stamp` posts its verdict as a top-level review, not a thread. Read the latest
-one on the current head:
+`stamp` posts its verdict as a top-level review listing every issue. On `REFUSED`
+and `ESCALATE` it also pins each issue whose line is in the diff as an inline
+thread, whose comment carries `<!-- stamp-run:`. Read the latest review on the
+current head:
 
 ```bash
 gh pr view <number> --json latestReviews \
@@ -367,8 +413,9 @@ gh pr view <number> --json latestReviews \
 
 - **REFUSED with issues:** treat each item in the **Issues** section (a
   `<details>` block titled `Issues: <n>`, numbered or bulleted) as a bot thread and classify it the
-  same way. Fixes push; stamp re-reviews on the push. There
-  is nothing to resolve.
+  same way. An inline stamp thread repeats one of these items: count the pair
+  once and resolve the thread with it. Fixes push; stamp re-reviews on the push
+  and resolves its older threads, keeping any a person replied in.
 - **REFUSED by a gate** (the **Gates** section shows a failed gate such as
   `deny-list`, `secrets`, or `size`): a gate decides whether stamp approves,
   not whether the code may be fixed. Keep fixing every thread as usual; a hard
@@ -377,7 +424,8 @@ gh pr view <number> --json latestReviews \
   anything: a placeholder in place of a flagged value, moved, split, or renamed
   files, an `AGENT_APPROVALS.md`. Report the gate's message for the author; a
   deny-listed area still needs the human review stamp asks for, fixed or not.
-- **ESCALATE:** defer; it names the human assurance it needs.
+- **ESCALATE:** defer, inline threads included; it names the human assurance it
+  needs.
 
 ## Step 6: Report
 

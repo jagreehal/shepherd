@@ -129,6 +129,8 @@ export type Interdiff = {
   files: string[];
   /** `git range-diff` of the two versions: a diff of the PR's diff, with base movement left out. */
   text: string;
+  /** A plain diff of the two versions on one merge base, `+`/`-` meaning changed since `since`: the round's focus. `text` when the old version conflicts on the new base. */
+  focus: string;
 };
 
 /**
@@ -165,7 +167,7 @@ export function interdiff(since: string, head: string, base: string, git: (...ar
   // rewritten one as a removed commit and an added one, and prints their subjects with no patch at all.
   const text = git("range-diff", "--no-color", "--creation-factor=1000", `${a.mb}..${a.sq}`, `${b.mb}..${b.sq}`);
 
-  return { since, head, unchanged: /^\d+:\s+\S+ = /.test(text), files: rangeDiffFiles(text), text };
+  return { since, head, unchanged: /^\d+:\s+\S+ = /.test(text), files: rangeDiffFiles(text), text, focus: a.mb === b.mb ? git("diff", "--no-color", "--no-ext-diff", a.sq, b.sq) : text };
 }
 
 /**

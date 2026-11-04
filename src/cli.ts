@@ -29,7 +29,9 @@
 // shepherd coverage <round.json> --diff <path>     (JSON: changed ranges no finished lens reached; non-zero when any)
 // shepherd reviewed <summary.md>                   (JSON: the head and base tip the previous round reviewed)
 // shepherd eval export <case-id> <dir> | eval import <case-id> <comments.json> --config <label> --login <reviewer> [--cost <usd>]
-// shepherd impact <diff>                            (JSON: changed exports, files naming them, each source's tests)
+// shepherd impact <diff>                            (JSON: changed exports, files naming them, each source's tests, stale references)
+// shepherd number <diff>                            (the diff with each line's old and new numbers, under a contents list)
+// shepherd ci-log <log>                             (JSON: a failed job log's error lines, and a window on the last error)
 // shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...  (review each case, keep each run)
 // shepherd eval score <runs-dir> [--cases <dir>] [--json]  (precision and recall per configuration, dev and held-out apart)
 // shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]  (copy the shepherd and incident workflows, and the audit one, into .github/workflows)
@@ -59,6 +61,8 @@ import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-
 import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
 import { exportCase, importRun, loadCases, PostedComments, loadRuns, pick, prepare, runCase, scoreRuns, treeHash } from "./eval.ts";
 import { buildDemo, captureChange, changedRanges, demoBugs, finish, receiptStatus } from "./local.ts";
+import { analyzeLog } from "./cilog.ts";
+import { numberDiff } from "./diff.ts";
 import { formatLeads, leadsAt } from "./leads.ts";
 import { prInterdiff, prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
@@ -99,6 +103,8 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd stack <pr>
        shepherd interdiff <since> <base> [--head <sha>] [--since-base <sha>]
        shepherd impact <diff>
+       shepherd number <diff>
+       shepherd ci-log <log>
        shepherd reviewed <summary.md>
        shepherd coverage <round.json> --diff <path>
        shepherd eval run <cases-dir> --config <label> [--repeat <n>] [--out <dir>] -- <agent command>...
@@ -426,9 +432,13 @@ if (command === "install") {
   // Where the change may reach beyond its diff: changed exports, the files naming them, each changed source's tests.
   const patch = readFileSync(sub, "utf8");
   const changed = [...new Set(changedRanges(patch).map((r) => r.file))];
-  const leads = leadsAt(repoRoot, patch, changed) ?? { symbols: [], sources: [] };
+  const leads = leadsAt(repoRoot, patch, changed) ?? { symbols: [], sources: [], references: [] };
 
   console.log(JSON.stringify({ ...leads, lines: formatLeads(leads, (n) => n.replace(/[\n\r\t]+/g, " ")) }, null, 2));
+} else if (command === "number" && sub) {
+  console.log(numberDiff(readFileSync(sub, "utf8")));
+} else if (command === "ci-log" && sub) {
+  console.log(JSON.stringify(analyzeLog(readFileSync(sub, "utf8")), null, 2));
 } else if (command === "interdiff" && sub && skillRef) {
   // A later round's focus: the PR's own change since the head swarm last reviewed, without the base's commits.
   console.log(JSON.stringify(orExit(() => prInterdiff(sub, opts.head ?? "HEAD", skillRef, repoRoot, opts["since-base"])), null, 2));
@@ -636,9 +646,10 @@ if (command === "install") {
   const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
 
   // With --diff, a finding off the diff's hunks stays out of the review, which GitHub would reject whole.
-  const commentable = opts.diff ? commentableLines(readFileSync(opts.diff, "utf8")) : undefined;
+  const diff = opts.diff ? readFileSync(opts.diff, "utf8") : undefined;
+  const [commentable, removable] = diff === undefined ? [] : [commentableLines(diff), commentableLines(diff, "LEFT")];
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads(), commentable)), null, 2));
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads(), commentable, removable)), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.

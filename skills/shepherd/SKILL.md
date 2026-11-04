@@ -399,11 +399,16 @@ summary comment carries a warning (all cheap to read: `gh pr checks`,
 runner at the second rung with `head_sha_in = H1`. Relay its narration.
 Record `new_head_sha` as `H2`. Check the result's shape: `ci` must carry
 `pass/pending/fail/failing` and `base_update.status` must be `updated`,
-`current`, or `conflict`. A malformed result means the runner skipped the real
+`resolved`, `current`, or `conflict`. A malformed result means the runner skipped the real
 steps; reissue it one rung up rather than accept it.
 
 A base conflict is surfaced in one line and Step 4 still runs: it blocks the
 merge, not the review.
+
+`resolved` means ci-repair merged the base and settled a conflict, which changed
+the PR's own diff. Nothing has reviewed that yet: this iteration ends `pending`,
+and the next one's swarm reviews it, whatever stamp says about `H2`. When the
+resolution changed behaviour, add it to Step 2d's section.
 
 ## Step 4: stamp
 
@@ -472,6 +477,20 @@ gh api "repos/<owner>/<repo>/statuses/<H2>" -f context=shepherd \
   -f state=<success|pending|failure> -f description="<one line, under 140 characters>"
 ```
 
+Before setting `success`, read the people's verdicts. Branch protection enforces
+a person's "changes requested" only where it requires reviews, and it arrives as
+a review body that no thread carries, so triage never sees it:
+
+```bash
+gh api "repos/<owner>/<repo>/pulls/<number>/reviews?per_page=100" --paginate | jq -s 'add // [] | map(select(.user != null and .user.type != "Bot" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED"))) | group_by(.user.login) | map(last | select(.state == "CHANGES_REQUESTED") | .user.login)'
+```
+
+It lists each person whose latest verdict is still "changes requested". A later
+approval or dismissal clears one; a comment does not. Only the account type
+excludes a review, never its body: anyone can paste a marker. A gate posting
+through a person's token counts like that person until its own later approval
+clears it.
+
 Then close the iteration's trace, naming how it ended (the summary's
 `stopped=`, or `waiting` or `needs-you`), the CI run the iteration read, and
 any traceparent another process exposed (stamp's review run, a CI run) so the
@@ -483,12 +502,12 @@ shepherd trace flush --pr <n> --repo <owner/repo> --head <H2> --base <base_sha> 
 ```
 
 - `success`: the second terminal condition holds and nothing is deferred:
-  stamp approved `H2` (or the repo has no stamp), CI is green, and no
-  unresolved thread is left.
+  stamp approved `H2` (or the repo has no stamp), CI is green, no unresolved
+  thread is left, and no person's latest review requests changes.
 - `failure`: the loop can do nothing more on its own (the "needs the author"
   terminal condition below). The description says what is needed, most
-  important first: `stamp refused: <reason>`, `stamp escalated`, `3 threads
-  need you`, `base conflict`.
+  important first: `stamp refused: <reason>`, `stamp escalated`, `changes
+  requested by <login>`, `3 threads need you`, `base conflict`.
 - `pending`: anything else: work remains, stamp has not judged `H2`, or bot
   reviews are on their way.
 
@@ -524,6 +543,8 @@ in the skill:
 - the same work happened twice (a file re-read, a diff re-fetched)
 - an instruction was ambiguous and the guess was wrong
 - a deferred thread the user settled in one line, or an auto-fix they reverted
+- a runner spent turns finding out how this repo works (a setup step, the right
+  test command, a gotcha) that one line in `AGENTS.md` would have told it
 
 None fired: say `[shepherd] reflect — nothing to change` and stop. Otherwise give
 the user what happened, which instruction allowed it, and the smallest edit to
@@ -541,7 +562,7 @@ Stop for good when:
   in `deferred_threads`, triage has acted on every fixable issue in stamp's
   latest refusal, ci-repair has exhausted its repairs, and the quality loop
   ended dry or at its cap), yet stamp refused or escalated `H2`, CI still
-  fails, or the base conflicts. Set the `failure` status naming what is
+  fails, the base conflicts, or a person's review requests changes. Set the `failure` status naming what is
   needed, list it for the user, and stop: another iteration would only repeat
   this one; or
 - the user interrupts.
