@@ -70,6 +70,16 @@ Fingerprint the failure: the error's type and first message line with numbers,
 ids and timestamps removed, plus the top stack frame inside this repository.
 Done when you can state the fingerprint and the live commit.
 
+**A security failure stays private.** When the evidence shows an exploitable
+vulnerability (auth bypass, injection, data exposure) and
+`gh repo view --json visibility --jq .visibility` says `PUBLIC`, stop here with
+`outcome=needs_decision`: open no issue, branch or PR and write no test, since a
+reproducing test is a working exploit. The narration says only that a possible
+security failure needs private handling, because CI logs are public too. In
+CI the workflow fails the run on that line, so the failure reaches a person. The
+author fixes it through a private advisory and publishes the details after the
+release.
+
 ## Step 2: Dedupe and open the issue
 
 ```bash

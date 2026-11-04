@@ -515,6 +515,11 @@ new side of the diff, or the old side for a `LEFT` finding.
   regression test for a bug belongs in that bug's finding (name the test to
   add), not in a finding of its own. Two or more independent lenses agreeing
   makes it **convergent**; note every lens that found it.
+- **Flag the class.** When a finding above NIT is a pattern that can repeat,
+  search the lines this PR added for it. A further hit joins the finding when
+  the worked example holds there too: list its `file:line` in the body and word the fix to cover them all, so one
+  round closes the class. Places that need different fixes stay separate
+  findings.
 - **Conflicts with open threads.** A finding whose fix would keep or bring
   back a problem an open thread names (from any reviewer) says so in its body
   and names that thread: the author sees both before choosing.

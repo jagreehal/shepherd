@@ -13,9 +13,9 @@ flowchart LR
     NX --> SC
 ```
 
-`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs from GitHub, with optional trace measurements. It counts reverted fixes, people replying in a thread, and loops that hit the round cap, stopped short or went quiet. It also finds the lens rules triage fixed on 3+ PRs, from its `Shepherd-Fixes` trailers on PRs by people who can push.
+`shepherd garden <owner/repo>...` scores what shepherd did on recent PRs from GitHub, with optional trace measurements. It counts reverted fixes, people replying in a thread, and loops that hit the round cap, stopped short or went quiet. It also finds the lens rules triage fixed on 3+ PRs, from its `Shepherd-Fixes` trailers on PRs by people who can push. It reports mean rounds, the share of PRs that finished in one, and how each rule's threads ended: fixed, dismissed, argued or open.
 
-The `garden` skill turns that into PRs: skill edits for the patterns behind low scores, and lint rules for recurring findings one file's syntax can decide, so swarm's checks catch them before any model reads the diff.
+The `garden` skill turns that into PRs: skill edits for the patterns behind low scores, and lint rules for recurring findings one file's syntax can decide, so swarm's checks catch them before any model reads the diff. An incident that got past review also becomes a held-out eval case, so the set you score the reviewer against grows with each escape.
 
 To run it weekly, copy [`.github/workflows/garden.yml`](https://github.com/jagreehal/shepherd/blob/main/.github/workflows/garden.yml) from the shepherd repository into the repository that holds your skills or policy pack; `shepherd workflows` does not install it. Set `GARDEN_REPOS`, a `GARDEN_TOKEN` that can open PRs on those repos, and a model key. The agent only proposes, and a separate job opens the PRs. Each garden PR carries the score table, so the next one shows whether a merged edit helped.
 

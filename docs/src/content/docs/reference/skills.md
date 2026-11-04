@@ -8,7 +8,7 @@ title: "Skills and human decisions"
 | `swarm` | Runs the repo's own checks, then the router, correctness and every matching team lens in parallel, with a second wave for risky hunks the router hands on. Verifies serious findings, and posts inline comments plus one summary comment. |
 | `triage` | Ends every review thread fixed, resolved, or deferred. Never replies, never touches a thread a human is in. |
 | `ci-repair` | Updates a stale branch, merges base conflicts it can settle, diagnoses failing checks to the leaf job, makes one verified fix, reruns flaky jobs once. |
-| `incident` | After merge: turns a red default-branch run or a production error into an `incident` issue, a reproducing test, the PR that caused it (by bisecting with that test), and a fix PR the loop then takes over. |
+| `incident` | After merge: turns a red default-branch run or a production error into an `incident` issue, a reproducing test, the PR that caused it (by bisecting with that test), and a fix PR the loop then takes over. On a public repository, a security failure stops before any issue or test. |
 | `git-archaeology` | Traces how code reached its current state: when a line, function or file changed or left, and what it looked like before. |
 | `pair` | The act / act-and-say / stop-and-ask ladder that decides when to ask you. |
 | `review-correctness` | Bugs: data, concurrency, performance, API contracts, frontend state, tests. |

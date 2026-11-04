@@ -106,7 +106,8 @@ One directory per case under `cases/`, holding `case.json`:
   bugs come from `examples/local-demo/expected.json`.
 
 Keep cases small and real: a bug that shipped and was fixed, the PR that
-introduced it as the pair. Grow held-out first; a handful of held-out cases
+introduced it as the pair. Garden proposes one for each incident review let
+through. Grow held-out first; a handful of held-out cases
 says little.
 
 ## Score another reviewer on the same change
