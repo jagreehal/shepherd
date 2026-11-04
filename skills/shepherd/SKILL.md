@@ -87,7 +87,8 @@ deferred finding with its options:
   PR") and run `/shepherd <pr>`.
 - **needs you:** findings were deferred, or checks still fail.
 - **review incomplete:** what was not reviewed, and why.
-- **stopped at the round cap:** what the last round still found.
+- **stopped at the round cap:** what the last round still found, and a request
+  to reconsider the approach before running again.
 
 ## Handoff mode
 
@@ -254,6 +255,17 @@ also wakes the repo's review bots, which take minutes; set
 with `../pr/SKILL.md`), or
 cancel.
 
+A body shepherd writes starts with
+`> 🤖 Written by an AI agent on behalf of @<login>, who has not reviewed it yet.`
+Only the author changes that line: a green `shepherd` status is no person's
+reading of the code. Its evidence holds to these rules:
+
+- "Before" comes from the base branch, never a reverted copy of the change.
+- Demo or sanitised data only.
+- One line says what was not tested or run.
+- A security fix on a public repository keeps its description short: no exploit
+  or reproduction until the fix is released.
+
 **Be on the PR branch.** Every runner commits to it from this tree. If the
 tree has uncommitted changes, stop and ask; never stash or discard them.
 Otherwise `gh pr checkout <number>`, `git pull --ff-only`, and confirm
@@ -345,7 +357,7 @@ description may not mention, and stamp refuses undisclosed behaviour in risky
 territory. When this round's commits changed what the code accepts, returns,
 throws, or writes, upsert one section at the end of the PR body, between
 `<!-- shepherd:review-changes -->` markers, headed "Changes made during review"
-with one line per behaviour change and its commit. Re-check the lines already
+with one line per behaviour change, its commit, and the test that covers it. Re-check the lines already
 there against the head: correct or drop one a later commit undid, so the
 section never claims a change the code no longer makes. Edit only that section;
 the rest of the body is the author's. `gh pr view --json body`, then
@@ -507,7 +519,8 @@ shepherd trace flush --pr <n> --repo <owner/repo> --head <H2> --base <base_sha> 
 - `failure`: the loop can do nothing more on its own (the "needs the author"
   terminal condition below). The description says what is needed, most
   important first: `stamp refused: <reason>`, `stamp escalated`, `changes
-  requested by <login>`, `3 threads need you`, `base conflict`.
+  requested by <login>`, `3 threads need you`, `base conflict`. A loop that
+  stopped at its cap adds `round cap: reconsider the approach`.
 - `pending`: anything else: work remains, stamp has not judged `H2`, or bot
   reviews are on their way.
 

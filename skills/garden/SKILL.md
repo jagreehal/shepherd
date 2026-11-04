@@ -46,7 +46,12 @@ rules **accepted** on at least 3 PRs: triage fixed them in a commit nobody
 reverted, named them in a `Shepherd-Fixes` trailer, on a PR by someone who can
 push, and no person argued in their threads. Triage resolves findings it judged
 wrong too, so a resolved thread alone counts for nothing. `escapes` lists the
-incidents whose culprit PR stamp approved (Step 5b).
+incidents whose culprit PR stamp approved (Step 5b). `rounds` gives the merged PRs
+with a swarm summary, their mean rounds, and the share that took one.
+`outcomes` sorts each lens rule's threads on PRs by someone who can push:
+`fixed` (an unreverted commit on that PR names the rule in `Shepherd-Fixes`; one trailer can cover several threads, so read this as an upper bound), `dismissed`
+(resolved with none: triage judged it wrong, or the author fixed it), `argued`
+(a person replied), `open`.
 
 When the collector read traces (`--traces`, `GARDEN_TRACE_FILES`, `GARDEN_TEMPO_URL` or `GARDEN_DATADOG_SITE`), it adds
 trace signals and a `telemetry` summary per PR. Read `references/telemetry.md`
@@ -74,6 +79,10 @@ comment's round history, the last iteration's status description. Then name
 the skill instruction that allowed it (`skills/<skill>/SKILL.md`, the
 sentence), or say that the skill is right and the PR was unusual.
 
+For `round_cap`, run `git blame` at `refs/pull/<n>/head` on the lines of each
+finding from round 2 onwards. A line older than round 1's head was there for round 1 to find: name
+the lens that missed it, since extra rounds hide a weak first pass.
+
 For a trace signal, identify the stage, PR head and trace ID from the summary.
 Check the related GitHub failure or thread before attributing a cause. Waiting
 on approval can reflect CI scheduling; high spend can reflect a difficult
@@ -89,7 +98,9 @@ the thread the author was left with was one triage should have fixed.
 ## Step 3: Score the window
 
 One table per repo: PRs shepherd touched, PRs with each signal, and the share
-of PRs with no signal, plus the escapes count. Read the previous garden PR's body
+of PRs with no signal, the mean rounds and one-round share, plus the escapes
+count. A rule with more `dismissed` and `argued` than `fixed` threads is noise:
+read those threads, and treat it as a cause in Step 2. Read the previous garden PR's body
 (`gh pr list -R jagreehal/shepherd --search "garden:" --state all --limit 1`)
 and give the change since then, so a merged edit shows whether it helped.
 
@@ -160,6 +171,14 @@ and stamp's review on it, and the fix PR with its reproducing test.
   the incident ("a function that now dereferences an argument its callers can
   pass as null needs a test with that input").
 
+**Each `coverage_gap` escape also becomes an eval case.** The culprit PR's base
+and head are the pair; the reproducing test gives the bug's `claim`, `checked`,
+`at` and `match` (`evals/README.md` in shepherd). Set `split` to `heldout`. A
+public repository's case joins `evals/cases/` in a shepherd PR titled
+`garden: eval cases <date>`, with the finding and decoys `src/eval.test.ts`
+wants for a new bug, and whoever merges it is the person confirming the bug. A private repository's case stays in that repository's own `evals/cases/`,
+in the same PR as its rule.
+
 Rules only tighten. Open one PR per repository titled `garden: escapes <date>`,
 with the trailer `Shepherd: garden`, and give each rule its incident, culprit
 PR, fix PR and the line in the culprit diff it flags. stamp sends a PR that
@@ -185,7 +204,7 @@ The workflow turns each directory into a patch and opens the PR itself.
 
 ## Step 6: Report
 
-End with the score tables, the escapes and the rule proposed for each, links to the PRs opened, the causes with no
+End with the score tables, the escapes with the rule and eval case proposed for each, links to the PRs opened, the causes with no
 proposal and why, and the judgment rules left to the lenses. Scheduled runs
 print it to the job log; the PR bodies carry everything a reviewer needs.
 

@@ -110,6 +110,33 @@ describe("skill pack", () => {
     }
   });
 
+  test("incident stops before any public record of a security failure on a public repository", () => {
+    const incident = readFileSync(path.join(SKILLS, "incident", "SKILL.md"), "utf8");
+    const stop = incident.indexOf("**A security failure stays private.**");
+    expect(stop).toBeGreaterThan(-1);
+    expect(stop).toBeLessThan(incident.indexOf("## Step 2:"));
+    expect(incident.slice(stop)).toContain("open no issue, branch or PR and write no test");
+    expect(readFileSync(path.join(ROOT, "templates", "shepherd-incident.yml"), "utf8")).toContain("::error::a possible security failure needs private handling");
+  });
+
+  test("garden turns an escape review let through into a held-out eval case", () => {
+    const garden = readFileSync(path.join(SKILLS, "garden", "SKILL.md"), "utf8");
+    expect(garden).toContain("**Each `coverage_gap` escape also becomes an eval case.**");
+    expect(garden).toContain("Set `split` to `heldout`");
+  });
+
+  test("swarm flags the class, and the cap asks the author to reconsider", () => {
+    expect(readFileSync(path.join(SKILLS, "swarm", "SKILL.md"), "utf8")).toContain("**Flag the class.**");
+    expect(readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8")).toContain("round cap: reconsider the approach");
+    expect(readFileSync(path.join(SKILLS, "review-maintainability", "SKILL.md"), "utf8")).toContain("REVIEW.md");
+  });
+
+  test("a PR body shepherd writes says an agent wrote it and the author has not reviewed it", () => {
+    const shepherd = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8");
+    expect(shepherd).toContain("Written by an AI agent on behalf of @<login>, who has not reviewed it yet.");
+    expect(shepherd).toContain("its commit, and the test that covers it");
+  });
+
   test("incident never puts signal text in a shell string: it goes through files", () => {
     const incident = readFileSync(path.join(SKILLS, "incident", "SKILL.md"), "utf8");
     expect(incident).toContain("**Never put signal-derived text inside a shell command**");
@@ -189,7 +216,7 @@ describe("skill pack", () => {
     });
 
     test.each(["triage/SKILL.md", "ci-repair/SKILL.md", "shepherd/references/dispatch.md"])("%s follows the default branch's house rules in the same words", (rel) => {
-      expect(read(rel)).toContain("Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do not count.");
+      expect(read(rel)).toContain("Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do not count.");
     });
   });
 
@@ -583,7 +610,7 @@ describe("garden", () => {
       { number: 6, title: "resolved, never fixed", state: "MERGED", threads: [thread(arch, "v.ts")], commits: [resolvedOnly], status: { state: "success", description: "", updatedAt: "2026-10-03T00:00:00Z" }, rounds: 1, trusted: true },
     ];
 
-    const { prs: scored, recurring } = score(prs, 3, now);
+    const { prs: scored, recurring, rounds, outcomes } = score(prs, 3, now);
 
     expect(scored.map((p) => p.number)).toEqual([1, 2, 3, 4, 7, 6]);
     expect(scored[0]!.signals).toEqual(["reverted_fix", "human_replied", "round_cap", "stopped_short"]);
@@ -593,6 +620,15 @@ describe("garden", () => {
     expect(scored[3]!.signals).toEqual([]);
     // #1 was argued with, #6 only resolved it, #7 is by someone who cannot push: accepted on #2, #3 and #4.
     expect(recurring).toEqual([{ rule: arch, prs: [2, 3, 4], paths: ["w.ts", "y.ts", "z.ts"] }]);
+    // Merged only: #3 and #6. An in-flight or stopped PR at round 1 has not passed in one.
+    expect(rounds).toEqual({ prs: 2, mean: 1, oneRound: 1 });
+    expect(score([{ ...prs[2]!, trusted: false }], 3, now).rounds.prs).toBe(0);
+    // #7 cannot push, `checks/secrets` comes from a tool, and a bare `correctness` tag names no rule.
+    expect(outcomes).toEqual([
+      { rule: arch, fixed: 3, dismissed: 1, argued: 1, open: 0 },
+      { rule: "slop/dead-code", fixed: 1, dismissed: 0, argued: 0, open: 0 },
+    ]);
+    expect(score([{ ...prs[1]!, threads: [{ ...thread(arch, "y.ts"), resolved: false }] }], 3, now).outcomes).toEqual([{ rule: arch, fixed: 0, dismissed: 0, argued: 0, open: 1 }]);
   });
 });
 

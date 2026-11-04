@@ -25,6 +25,8 @@ export type PrRecord = {
 
 const DAY = 864e5;
 
+type Outcome = "fixed" | "dismissed" | "argued" | "open";
+
 export type Signal = "reverted_fix" | "human_replied" | "round_cap" | "stopped_short" | "loop_stalled" | "churn";
 
 const TAG = /\*\*\[(?:convergent: )?([^\]]+)\]\*\*\s*\S+\s*(CRITICAL|HIGH|MEDIUM|LOW|NIT)/;
@@ -81,6 +83,14 @@ export function score(all: PrRecord[], minPrs = 3, now = Date.now()) {
     };
   });
 
+  const reviewed = prs.flatMap((p) => (p.trusted && p.state === "MERGED" && p.rounds ? [p.rounds] : []));
+
+  const rounds = {
+    prs: reviewed.length,
+    mean: reviewed.length ? reviewed.reduce((a, b) => a + b, 0) / reviewed.length : null,
+    oneRound: reviewed.length ? reviewed.filter((r) => r === 1).length / reviewed.length : null,
+  };
+
   const byRule = new Map<string, { prs: Set<number>; paths: Set<string> }>();
 
   // Accepted means triage fixed it and said so in a Shepherd-Fixes trailer. Triage also resolves findings it
@@ -104,7 +114,29 @@ export function score(all: PrRecord[], minPrs = 3, now = Date.now()) {
     .flatMap(([rule, e]) => (e.prs.size >= minPrs ? [{ rule, prs: [...e.prs].sort((a, b) => a - b), paths: [...e.paths].sort() }] : []))
     .sort((a, b) => b.prs.length - a.prs.length || a.rule.localeCompare(b.rule));
 
-  return { prs: scored, recurring };
+  return { prs: scored, recurring, rounds, outcomes: outcomesOf(prs.filter((p) => p.trusted)) };
+}
+
+/** Each lens rule's threads by how they ended, noisiest first. Only a rule can match a trailer, so a thread with a bare lens tag is left out. */
+function outcomesOf(prs: PrRecord[]) {
+  const byRule = new Map<string, Record<Outcome, number>>();
+
+  for (const pr of prs) {
+    const fixed = new Set(pr.commits.filter((c) => !isReverted(c, pr.commits)).flatMap((c) => c.fixes).flatMap(rulesOf));
+
+    for (const t of pr.threads) {
+      const rules = rulesOf(t.tag);
+      const outcome: Outcome = t.humanReplied ? "argued" : !t.resolved ? "open" : rules.some((r) => fixed.has(r)) ? "fixed" : "dismissed";
+
+      for (const rule of rules) {
+        const entry = byRule.get(rule) ?? { fixed: 0, dismissed: 0, argued: 0, open: 0 };
+        entry[outcome] += 1;
+        byRule.set(rule, entry);
+      }
+    }
+  }
+
+  return [...byRule].map(([rule, counts]) => ({ rule, ...counts })).sort((a, b) => b.dismissed + b.argued - a.dismissed - a.argued || a.rule.localeCompare(b.rule));
 }
 
 /** Parse one shepherd thread's first comment and its replies; null when the thread is not shepherd's. */
@@ -175,7 +207,7 @@ const Commits = z.array(z.object({ sha: z.string(), commit: z.object({ message: 
 
 const Statuses = z.object({ statuses: z.array(z.object({ context: z.string(), state: z.string(), description: z.string().nullable(), updated_at: z.string() })) });
 
-const Comments = z.array(z.object({ body: z.string() }));
+const Comments = z.array(z.object({ body: z.string(), user: z.object({ login: z.string(), type: z.string() }).nullable() }));
 
 const Issues = z.array(z.object({ number: z.number(), title: z.string(), url: z.string(), body: z.string() }));
 
@@ -208,16 +240,19 @@ export function collect(repo: string, since: string): PrRecord[] {
     return canPush.get(login) === true;
   };
 
+  // Anyone can paste the header on a public PR, so shepherd's marks count only from a bot or an account that can push.
+  const canPost = (login: string | undefined, bot: boolean) => bot || (login !== undefined && trusted(login));
+
   return prs.map((pr) => {
     const query = "query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved path comments(first:50){nodes{author{login __typename} body}}}}}}}";
 
     const threads = Threads.parse(JSON.parse(gh(["api", "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `n=${pr.number}`])))
-      .data.repository.pullRequest.reviewThreads.nodes.flatMap((t) => parseThread(t.path, t.isResolved, t.comments.nodes.map((c) => ({ author: c.author?.login ?? "ghost", bot: c.author?.__typename === "Bot", body: c.body }))) ?? []);
+      .data.repository.pullRequest.reviewThreads.nodes.filter((t) => canPost(t.comments.nodes[0]?.author?.login, t.comments.nodes[0]?.author?.__typename === "Bot")).flatMap((t) => parseThread(t.path, t.isResolved, t.comments.nodes.map((c) => ({ author: c.author?.login ?? "ghost", bot: c.author?.__typename === "Bot", body: c.body }))) ?? []);
 
     const commits = Commits.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${pr.number}/commits`])).flat()).map((c) => parseCommit(c.sha, c.commit.message, c.commit.committer?.date ?? ""));
 
     const status = Statuses.parse(JSON.parse(gh(["api", `repos/${repo}/commits/${pr.headRefOid}/status`]))).statuses.find((s) => s.context === "shepherd");
-    const summary = Comments.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${pr.number}/comments`])).flat()).find((c) => c.body.includes("<!-- shepherd-swarm-summary -->"));
+    const summary = Comments.parse(JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repo}/issues/${pr.number}/comments`])).flat()).find((c) => c.body.includes("<!-- shepherd-swarm-summary -->") && canPost(c.user?.login, c.user?.type === "Bot"));
 
     return { number: pr.number, headSha: pr.headRefOid, title: pr.title, state: pr.state, threads, commits, status: status ? { state: status.state, description: status.description ?? "", updatedAt: status.updated_at } : null, rounds: roundsOf(summary?.body), trusted: trusted(pr.author.login) };
   });

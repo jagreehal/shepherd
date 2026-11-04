@@ -126,11 +126,13 @@ jobs:
           You are running in GitHub Actions on the default branch, already checked out, with no push access.
           At Step 6 do not push or open the PR: commit on incident/<issue>, write the PR title to $HANDOFF/pr-title.txt
           and the body to $HANDOFF/pr-body.md; the next job pushes and opens it.
+          When the skill stops because a security failure stays private, create the empty file $HANDOFF/private.
           Nobody is watching this session: never wait for an answer. Anything you would ask is reported in the final JSON."
       - name: Bundle the fix branch
         env:
           DEFAULT: ${{ github.event.repository.default_branch }}
         run: |
+          [ ! -e "$RUNNER_TEMP/handoff/private" ] || { echo "::error::a possible security failure needs private handling"; exit 1; }
           branch=$(git branch --list 'incident/*' --format='%(refname:short)' | head -1)
           [ -n "$branch" ] || { echo "no fix branch: see the incident issue"; exit 0; }
           echo "$branch" > "$RUNNER_TEMP/handoff/branch"

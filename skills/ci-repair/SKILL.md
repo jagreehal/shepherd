@@ -67,7 +67,7 @@ commits people have reviewed.
 Before the merge, read what binds this edit, as Step 4 does for a repair: the
 team policy (`../shepherd/references/policy.md`) for `fixes.mode`,
 `escalate.paths` and `checks`, and the house rules, `AGENTS.md`, `CLAUDE.md`,
-`CONTRIBUTING.md` and `docs/adr/` as they stand on `origin/<default>`, for the
+`CONTRIBUTING.md`, `REVIEW.md` and `docs/adr/` as they stand on `origin/<default>`, for the
 required checks and commit rules. Standalone there is no `deferred_threads`:
 every unresolved review thread fences its code.
 
@@ -172,7 +172,7 @@ One repair cycle across all PR-caused root causes:
    result shows. If the premise cannot be tested here, classify the failure
    `unresolved` with both commits and the premise as evidence; a third guess
    is churn.
-3. Fix the root cause. Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and
+3. Fix the root cause. Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and
    `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
    not count.
    **Never** weaken an assertion, skip or delete a test,

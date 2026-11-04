@@ -56,7 +56,12 @@ to all of them.
   nothing risky, no choice of what the product does. A resolution changes the
   PR's diff, so it ends the iteration `pending` until swarm has read it.
 - **Behaviour changes made during review are disclosed** in one marked section
-  of the PR description; the rest of the body is the author's.
+  of the PR description; the rest of the body is the author's. A PR `/shepherd`
+  opens says in its first line that an agent wrote it and the author has not
+  reviewed it; only the author changes that line.
+- **A security failure on a public repository stays private.** Incident opens
+  no issue, branch or PR for one and writes no test: a reproducing test is a
+  working exploit.
 - **In CI the model holds no write credential.** Handoff mode commits and
   never pushes; a job with no model pushes the bundle after its fast-forward
   and path checks. Never name `SHEPHERD_TOKEN` anywhere in the model's job (a secret any
@@ -89,7 +94,7 @@ to all of them.
   style) report MEDIUM at most. Personal lenses (`~/.config/shepherd`) are a
   local preview: their findings never post, so they are never fixed.
 - **House rules bind fixers too.** Triage, simplify, and ci-repair read
-  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, and `docs/adr/` from the default
+  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and `docs/adr/` from the default
   branch before editing.
 - **CI repair never weakens a test** to go green: no loosened assertions, no
   skips, no wholesale snapshot updates, no casts to `any`.
@@ -110,6 +115,9 @@ to all of them.
   post under the author's account, and a run once read shepherd's own revert
   as the author's decision; only commits without the trailer, and threads the
   author wrote, say what the author decided.
+- A finding names every place its mistake repeats in the PR's added lines, so
+  one round closes the class. Each round costs a commit when an agent is the
+  author; garden tracks rounds to pass and how each rule's threads ended.
 - Reviewers (the router, every lens) start no agents and write no files; the
   loop checks the tree is clean after them.
 - GitHub is the record, not the session: swarm dedupes against open threads
