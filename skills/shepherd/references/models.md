@@ -32,10 +32,10 @@ already resolved there, so every value is a model id and every pin names one
 runner. A model id passes to the agent tool's
 model parameter exactly as written: `haiku` on Claude Code, `provider/model`
 on OpenCode. Never translate one id into another provider's yourself. The one
-translation is `shepherd opencode-agents`, which accepts stamp's canonical
+translation is `shepherd opencode-agents`, which accepts the gate's canonical
 `provider:model` ids and writes them the OpenCode way (`bedrock:` becomes
 `amazon-bedrock/`, `vertex:` becomes `google-vertex/`, any other provider keeps
-its name), so one ladder serves stamp and shepherd. `shepherd models` shows
+its name), so one ladder serves the gate and shepherd. `shepherd models` shows
 both spellings. Claude Code aliases pass through. A pin replaces
 the rung for that runner only; climbing for validation starts from the pin's
 position on the ladder, or the top rung when the pin is not on it. A pin that

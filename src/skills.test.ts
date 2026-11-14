@@ -7,7 +7,7 @@ import { parse } from "yaml";
 import { parseCommit, parseEscape, parseThread, roundsOf, score } from "./garden.ts";
 import { loadPolicy } from "./config.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
-import { addLens, keepsRule, providerKeyEnv, lensTemplates, lensProblems, newLens, opencodeAgents, opencodeModel, pinModel, readLenses, reviewRules, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
+import { addLens, keepsRule, providerKeyEnv, sharedModelProblem, lensTemplates, lensProblems, newLens, opencodeAgents, opencodeModel, pinModel, readLenses, reviewRules, repoLensFile, resolveSkill, setLadder, skillDescription } from "./lens.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
@@ -28,7 +28,28 @@ const frontmatter = (text: string) => /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] 
 
 describe("skill pack", () => {
   test("ships the loop, its runners, the ladder and every lens", () => {
-    expect(names).toEqual(["ci-repair", "code-review", "diagnosing-bugs", "garden", "git-archaeology", "incident", "lens-import", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
+    expect(names).toEqual(["branch-review", "ci-repair", "code-review", "diagnosing-bugs", "garden", "git-archaeology", "incident", "lens-import", "pair", "pr", "retro", "review-correctness", "review-maintainability", "review-security", "review-simplicity", "review-slop", "review-spec", "shepherd", "swarm", "triage", "writing-for-agents"]);
+  });
+
+  test("branch-review stands alone: code-review's process with GitHub as its tracker, and no setup command shepherd does not ship", () => {
+    const review = readFileSync(path.join(SKILLS, "branch-review", "SKILL.md"), "utf8");
+    const upstream = readFileSync(path.join(SKILLS, "code-review", "SKILL.md"), "utf8");
+
+    expect(review).not.toContain("setup-matt-pocock-skills");
+    expect(review).not.toContain("../");
+    expect(review).toContain("gh issue view");
+
+    // Standards come from the default branch, so a change cannot relax its own review; the diff includes work in progress.
+    expect(review).toContain('git fetch -q origin "$branch"');
+    expect(review).toContain('git show "$standards:<path>"');
+    expect(review.indexOf("git fetch -q origin")).toBeLessThan(review.indexOf('standards=$(git rev-parse'));
+    expect(review).toContain("Never let it read the standards from the working tree.");
+    expect(review).toContain('git diff "$base"');
+    expect(review).toContain("git ls-files --others --exclude-standard");
+    expect(review).not.toContain("git diff <fixed-point>...HEAD");
+
+    // The rest is the upstream text: every section and the whole smell baseline.
+    for (const line of upstream.split("\n").filter((l) => /^(#+ |- \*\*)/.test(l) && !l.startsWith("- **Spec**") && !l.startsWith("- **Standards**"))) expect(review).toContain(line);
   });
 
   test.each(names)("%s: frontmatter name matches its directory and has a description within the 1024-char limit", (name) => {
@@ -237,12 +258,12 @@ describe("skill pack", () => {
     expect(JSON.parse(block).lenses[0]).toMatchObject({ status: "ok", findings: 0, skill_blob: "" });
   });
 
-  // Stamp's heading follows its branding (name, emoji); the hidden marker on every review it posts does not.
-  test("triage and shepherd find stamp's review by its hidden marker, never by its brandable heading", () => {
+  // The gate's heading follows its branding (name, emoji); the hidden marker on every review it posts does not.
+  test("triage and shepherd find gate's review by its hidden marker, never by its brandable heading", () => {
     for (const name of ["triage", "shepherd", "swarm"]) {
       const text = readFileSync(path.join(SKILLS, name, "SKILL.md"), "utf8");
 
-      expect({ name, marker: text.includes("<!-- stamp-run:"), heading: text.includes("S+ stamp: ") }).toEqual({ name, marker: true, heading: false });
+      expect({ name, marker: text.includes("<!-- gate-run:"), heading: text.includes("S+ gate: ") }).toEqual({ name, marker: true, heading: false });
     }
   });
 });
@@ -427,7 +448,7 @@ describe("custom lenses", () => {
     expect(lensProblems({ skill: ".shepherd/lenses/react", only: ["client-*"], disable: ["client-fetch"] }, home, repo)).toEqual([`${file}: only and disable leave no rule`]);
   });
 
-  test("every bundled pack loads pinned, and every starter lens it names validates with ids under the cap stamp reads", () => {
+  test("every bundled pack loads pinned, and every starter lens it names validates with ids under the cap gate reads", () => {
     const { home, repo } = sandbox();
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const root = path.resolve(import.meta.dir, "..");
@@ -451,7 +472,17 @@ describe("custom lenses", () => {
     }
   });
 
-  test("SHEPHERD_API_KEY goes in the variable the session model's provider reads", () => {
+  test("one model id drives the loop and the gate: both spellings normalise, and a one-sided provider is refused", () => {
+    expect(opencodeModel("bedrock/eu.amazon.nova-pro-v1:0")).toBe("amazon-bedrock/eu.amazon.nova-pro-v1:0");
+    expect(providerKeyEnv("bedrock/eu.amazon.nova-pro-v1:0")).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(sharedModelProblem("opencode-go/beam-free")).toBeNull();
+    expect(sharedModelProblem("bedrock:eu.amazon.nova-pro-v1:0")).toBeNull();
+    expect(sharedModelProblem("smart")).toBeNull(); // a tier name
+    expect(sharedModelProblem("google/gemini-3")).toContain("google/ is not one both can");
+    expect(sharedModelProblem("openai-compatible/grok-5")).toContain("not one both can");
+  });
+
+  test("each provider's key variable is known by its model id", () => {
     expect(providerKeyEnv("amazon-bedrock/eu.amazon.nova-micro-v1:0")).toBe("AWS_BEARER_TOKEN_BEDROCK");
     expect(providerKeyEnv("opencode/deepseek-v4.1-flash-free")).toBe("OPENCODE_API_KEY");
     expect(providerKeyEnv("deepseek/deepseek-flash")).toBe("DEEPSEEK_API_KEY");
@@ -573,14 +604,14 @@ describe("garden", () => {
     expect(parseThread("a.ts", true, [{ author: "sam", bot: false, body: "plain human comment" }])).toBeNull();
   });
 
-  test("an incident whose culprit stamp approved is an escape; one stamp did not approve, or any other issue, is not", () => {
-    const body = (stamp: string, cause = "Coverage gap: fails on 1111111") => `<!-- shepherd-incident:36a33da48b93 -->\n\n## Root cause\n\n\`Regressed-by: #29 (6686734), stamp: ${stamp}\`\n\n${cause}`;
+  test("an incident whose culprit gate approved is an escape; one gate did not approve, or any other issue, is not", () => {
+    const body = (gate: string, cause = "Coverage gap: fails on 1111111") => `<!-- shepherd-incident:36a33da48b93 -->\n\n## Root cause\n\n\`Regressed-by: #29 (6686734), gate: ${gate}\`\n\n${cause}`;
     const issue = (b: string) => ({ number: 33, title: "TypeError: trim", url: "u", body: b });
 
     expect(parseEscape(issue(body("approved")))).toEqual({ incident: 33, title: "TypeError: trim", url: "u", pr: 29, sha: "6686734", cause: "coverage_gap" });
     expect(parseEscape(issue(body("approved", "Merge skew: passes on 2222222, fails merged")))?.cause).toBe("merge_skew");
     expect(parseEscape(issue(body("held for a human")))).toBeNull();
-    expect(parseEscape(issue("Regressed-by: #29 (6686734), stamp: approved"))).toBeNull();
+    expect(parseEscape(issue("Regressed-by: #29 (6686734), gate: approved"))).toBeNull();
   });
 
   test("reads shepherd's trailers from a commit message", () => {
@@ -651,8 +682,8 @@ describe("a person's verdict holds up the green status", () => {
 
   test("bots speak through their own gates, and no body text makes a person a bot", () => {
     expect(blocking([[review("coderabbit[bot]", "CHANGES_REQUESTED", "Bot")]])).toEqual([]);
-    expect(blocking([[review("github-actions[bot]", "CHANGES_REQUESTED", "Bot", "<!-- stamp-run: 1 -->")]])).toEqual([]);
-    expect(blocking([[review("ann", "CHANGES_REQUESTED", "User", "quoting <!-- stamp-run: 1 -->")]])).toEqual(["ann"]);
+    expect(blocking([[review("github-actions[bot]", "CHANGES_REQUESTED", "Bot", "<!-- gate-run: 1 -->")]])).toEqual([]);
+    expect(blocking([[review("ann", "CHANGES_REQUESTED", "User", "quoting <!-- gate-run: 1 -->")]])).toEqual(["ann"]);
     expect(blocking([[{ user: null, state: "CHANGES_REQUESTED", body: "" }]])).toEqual([]);
     expect(blocking([[]])).toEqual([]);
   });
@@ -693,6 +724,22 @@ describe("triage reads a thread for what it cannot see", () => {
   });
 });
 
+test("ci-repair checks out and verifies the PR's head, and reads the fix mode before it changes anything", () => {
+  const ci = readFileSync(path.join(SKILLS, "ci-repair", "SKILL.md"), "utf8");
+  const policy = ci.indexOf("## Step 2: Read the policy");
+
+  expect(ci).toContain("gh pr checkout <number>");
+  expect(ci).toContain("git status --porcelain");
+  expect(ci).toContain("`headRefOid`");
+
+  // Policy comes before the first remote change: the branch update, a merge, a push, a rerun.
+  for (const mutation of ["gh pr update-branch", "git merge --no-commit", "gh run rerun"]) expect(policy).toBeLessThan(ci.indexOf(mutation));
+
+  expect(ci).toContain("under `fixes.mode: push`: run `gh pr update-branch");
+  expect(ci).toContain("A risky fix needs a second model first.");
+  expect(ci).toContain('"validation_requests"');
+});
+
 test("ci-repair resolves a conflict by merge, and shepherd accepts the result", () => {
   const ci = readFileSync(path.join(SKILLS, "ci-repair", "SKILL.md"), "utf8");
   const loop = readFileSync(path.join(SKILLS, "shepherd", "SKILL.md"), "utf8");
@@ -701,8 +748,8 @@ test("ci-repair resolves a conflict by merge, and shepherd accepts the result", 
   expect(ci).toContain("git merge --abort");
   expect(ci.indexOf("house rules", ci.indexOf("### Resolving a conflict"))).toBeLessThan(ci.indexOf("git merge --no-commit"));
   expect(ci).not.toMatch(/git rebase/);
-  expect(ci).toContain('"status": "updated|resolved|current|conflict"');
-  expect(loop).toContain("`resolved`, `current`, or `conflict`");
+  expect(ci).toContain('"status": "updated|resolved|current|behind|conflict"');
+  expect(loop).toContain("`resolved`, `current`, `behind`, or `conflict`");
 });
 
 test("reviewers never reach the network for a claim", () => {

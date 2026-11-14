@@ -15,7 +15,7 @@ flowchart LR
 
 ## Plays
 
-The default set is `secrets-scan sca-audit iac-security-review code-review-security`. Set the `AUDIT_PLAYS` variable, or the manual run's `plays` input, to any play names in the playbook:
+The default set is `secrets-scan sca-audit iac-security-review code-review-security`. Set `ci.audit.plays` in `.shepherd/config.yml`, or the manual run's `plays` input, to any play names in the playbook:
 
 | Play | What it reads |
 | --- | --- |
@@ -33,7 +33,7 @@ The playbook is pinned to a commit (`PLAYBOOK_SHA`), because its plays are instr
 - The audit job holds the model key and `contents: read`. Its checkouts keep no token, and it writes one report file.
 - Before anything is uploaded, the audit job checks the report for credential shapes (an AWS key, a GitHub token, an API key, a Slack token, a private key block). A match deletes the report, names the kind of credential, never its value, and fails the run: rerun the `secrets-scan` play locally and rotate what it finds.
 - The report job runs no model. On a private repository it files one issue labelled `shepherd-audit` and comments on it each week.
-- On a public repository issues and artifacts are public, so the audit runs there only when the `AUDIT_PUBLIC` variable is `true`. The report then becomes a public artifact and no issue is filed.
+- On a public repository issues and artifacts are public, so the audit runs there only when `ci.audit.public` is `true`. The report then becomes a public artifact and no issue is filed.
 
 ## Per-PR review
 

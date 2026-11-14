@@ -1,0 +1,10 @@
+{
+  "case": "truncated-bug",
+  "label": "nova-micro",
+  "verdict": "ESCALATE",
+  "issues": [
+    "src/café.ts: rounding logic change"
+  ],
+  "costUsd": 0.011868,
+  "durationMs": 18837
+}

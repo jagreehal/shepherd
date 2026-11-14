@@ -6,7 +6,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { defaultBranchReader, defaultBranchRef, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, type Config } from "./config.ts";
 import { bundledSkills } from "./install.ts";
-import { lensProblems, pluginRoots, skillDirs } from "./lens.ts";
+import { lensProblems, pluginRoots, providerKeyEnv, skillDirs } from "./lens.ts";
 
 export type Check = { check: string; status: "ok" | "warn" | "fail"; detail: string; fix?: string };
 
@@ -24,20 +24,22 @@ const attempt = <T>(f: () => T): T | Error => {
 const SKILL_DIRS = (home: string, repo: string) => [...skillDirs(home, repo), path.join(home, ".config/opencode/skills")];
 
 /**
- * True when a workflow runs stamp on pull requests: a step that uses stamp's action, runs its package, or
- * checks out its repository and then runs from that checkout. The word "stamp" alone is not enough.
+ * True when a workflow runs the gate on pull requests: a step that runs `shepherd gate` from the package, or from a
+ * checkout of shepherd's repository. The word "gate" alone is not enough.
  */
-export function runsStamp(text: string): boolean {
+export function runsGate(text: string): boolean {
   const parsed = Workflow.safeParse(attempt(() => parse(text)));
 
   if (!parsed.success) return false;
 
   if (!parsed.data.on.some((t) => t === "pull_request" || t === "pull_request_target")) return false;
 
-  return Object.values(parsed.data.jobs).some(({ steps }) => {
-    const checkouts = steps.filter((st) => st.with?.repository === "jagreehal/stamp").map((st) => st.with?.path ?? ".");
+  const gateCall = /(@jagreehal\/shepherd\S*|\bshepherd|\/src\/bin\.ts)"?\s+gate\b/;
 
-    return steps.some((st) => st.uses?.startsWith("jagreehal/stamp") || st.run?.includes("@jagreehal/stamp") || checkouts.some((p) => p !== "." && st.run?.includes(`${p}/`)));
+  return Object.values(parsed.data.jobs).some(({ steps }) => {
+    const checkouts = steps.filter((st) => st.with?.repository === "jagreehal/shepherd").map((st) => st.with?.path ?? ".");
+
+    return steps.some((st) => gateCall.test(st.run ?? "") && (st.run?.includes("@jagreehal/shepherd") || /\bshepherd\s+gate\b/.test(st.run ?? "") || checkouts.some((p) => p !== "." && st.run?.includes(`${p}/`))));
   });
 }
 
@@ -128,28 +130,39 @@ export function doctor(bundleRoot: string, home: string, repo: string, personal:
   if (!models.length) add("models", "ok", "no ladder set: the harness's own (shepherd models)");
 
   const workflows = attempt(() => run("git", ["-C", repo, "ls-tree", "--name-only", "-r", defaultBranchRef(repo), ".github/workflows/"]));
-  const stamp = (workflows instanceof Error ? [] : workflows.split("\n").filter(Boolean)).find((f) => runsStamp(read(f) ?? ""));
+  const gate = (workflows instanceof Error ? [] : workflows.split("\n").filter(Boolean)).find((f) => runsGate(read(f) ?? ""));
 
-  if (!stamp) {
-    add("stamp workflow", "warn", "no default-branch workflow runs stamp on pull requests: shepherd can review and fix, but nothing gives the approval verdict", "bunx @jagreehal/stamp init, then add its backend secret");
+  if (!gate) {
+    add("gate workflow", "warn", "no default-branch workflow runs the gate on pull requests: shepherd can review and fix, but nothing gives the approval verdict", "shepherd workflows, then add the model key");
 
     return checks;
   }
 
-  add("stamp workflow", "ok", `${stamp} runs stamp on pull requests`);
-  const last = attempt(() => run("gh", ["run", "list", "--workflow", path.basename(stamp), "--limit", "30", "--json", "conclusion,status,url,databaseId", "--jq", "[.[] | select(.conclusion != \"skipped\")][0] // empty | [.status, .conclusion, .url, .databaseId] | @tsv"], repo).trim());
+  add("gate workflow", "ok", `${gate} runs the gate on pull requests`);
+  // The first review fails on a missing key, so check for it before anyone opens a PR. An environment's secrets are
+  // not listed here, hence a warning.
+  const loop = policy.models.loop?.value ?? "";
+  const key = loop ? providerKeyEnv(loop) : null;
+  const secrets = key ? attempt(() => run("gh", ["secret", "list", "--json", "name", "--jq", ".[].name"], repo)) : null;
 
-  if (last instanceof Error) add("stamp runs", "warn", "cannot read its runs through gh", "check gh can read this repository's Actions");
-  else if (!last) add("stamp runs", "warn", "configured, but no recent run did anything (all skipped, or none)", "open a PR, or comment /stamp on one, and check the run");
+  if (key && !(secrets instanceof Error) && secrets !== null) {
+    if (secrets.split("\n").includes(key)) add("model key", "ok", `${key} is set for ${loop}`);
+    else add("model key", "warn", `${key} is not a repository secret, so ${loop} cannot run (fine if a GitHub environment holds it)`, `gh secret set ${key}`);
+  }
+
+  const last = attempt(() => run("gh", ["run", "list", "--workflow", path.basename(gate), "--limit", "30", "--json", "conclusion,status,url,databaseId", "--jq", "[.[] | select(.conclusion != \"skipped\")][0] // empty | [.status, .conclusion, .url, .databaseId] | @tsv"], repo).trim());
+
+  if (last instanceof Error) add("gate runs", "warn", "cannot read its runs through gh", "check gh can read this repository's Actions");
+  else if (!last) add("gate runs", "warn", "configured, but no recent run did anything (all skipped, or none)", "open a PR, or comment /gate on one, and check the run");
   else {
     const [status, conclusion, url, id] = last.split("\t");
-    // stamp exits 1 on a refusal or an escalation: the run failed, but stamp worked and gave its verdict.
+    // gate exits 1 on a refusal or an escalation: the run failed, but gate worked and gave its verdict.
     const verdict = conclusion === "failure" ? /\b(REFUSED|ESCALATE): /.exec(String(attempt(() => run("gh", ["run", "view", id!, "--log-failed"], repo))))?.[1] : undefined;
 
-    if (conclusion === "success") add("stamp runs", "ok", "its latest run approved");
-    else if (verdict) add("stamp runs", "ok", `its latest run gave a verdict (${verdict}): ${url}`);
-    else if (conclusion === "action_required") add("stamp runs", "warn", `its latest run is waiting for a maintainer to approve it: ${url}`, "approve the run in the Actions tab (GitHub holds runs from first-time contributors and bots), or open a PR from a branch of this repository");
-    else add("stamp runs", "warn", `its latest run is ${conclusion || status}: ${url}`, "read the run log; a missing backend secret is the usual cause (stamp README, Backends)");
+    if (conclusion === "success") add("gate runs", "ok", "its latest run approved");
+    else if (verdict) add("gate runs", "ok", `its latest run gave a verdict (${verdict}): ${url}`);
+    else if (conclusion === "action_required") add("gate runs", "warn", `its latest run is waiting for a maintainer to approve it: ${url}`, "approve the run in the Actions tab (GitHub holds runs from first-time contributors and bots), or open a PR from a branch of this repository");
+    else add("gate runs", "warn", `its latest run is ${conclusion || status}: ${url}`, "read the run log; a missing backend secret is the usual cause (gate README, Backends)");
   }
 
   return checks;

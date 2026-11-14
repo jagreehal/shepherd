@@ -1,6 +1,6 @@
 ---
 name: pstack
-description: pstack's engineering principles as code review rules. Flags changes that work against the principles pstack-driven agents are told to follow. Covers a symptom patched where the fault surfaced, guards that hide a state that should never exist, validation scattered past the boundary, raw external data trusted without a parse, interchangeable primitives, domain rules spread across conditionals, one-caller layers and wider mutable state, old APIs kept beside their replacement, steps that break when run twice, shared write targets, tests that cannot fail or are pinned to internals, and numbers or claims the PR states without evidence. Use as a review lens or as a stamp rule pack.
+description: pstack's engineering principles as code review rules. Flags changes that work against the principles pstack-driven agents are told to follow. Covers a symptom patched where the fault surfaced, guards that hide a state that should never exist, validation scattered past the boundary, raw external data trusted without a parse, interchangeable primitives, domain rules spread across conditionals, one-caller layers and wider mutable state, old APIs kept beside their replacement, steps that break when run twice, shared write targets, tests that cannot fail or are pinned to internals, and numbers or claims the PR states without evidence. Use as a review lens or as a gate rule pack.
 ---
 
 # pstack

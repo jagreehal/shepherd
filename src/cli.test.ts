@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import Ajv from "ajv";
 import { ConfigSchema, configJsonSchema } from "./config.ts";
-import { runsStamp } from "./doctor.ts";
+import { runsGate } from "./doctor.ts";
 import { pinWorkflow } from "./install.ts";
 import path from "node:path";
 import { parse, stringify } from "yaml";
@@ -61,6 +61,28 @@ function write(dir: string, files: Record<string, string>) {
 }
 
 describe("adoption", () => {
+  test("help lists the everyday commands; --help on a command shows its forms and runs nothing", () => {
+    const { dir, run } = repo();
+
+    expect(run().out).toMatch(/commands:\n {2}init .*\n {2}doctor .*\n {2}review .*\n {2}status /);
+    expect(run("help", "--all").out).toContain("shepherd fanout");
+    expect(run("init", "--help").out).toContain("shepherd init [--preset");
+    expect(existsSync(path.join(dir, ".shepherd/config.yml"))).toBe(false);
+    expect(run("status")).toEqual({ code: 2, out: expect.stringContaining("shepherd status <pr>") });
+  });
+
+  test("init picks the model from team policy and the keys present, never from a personal pin CI cannot see", () => {
+    const { dir, home } = repo();
+
+    write(home, { ".config/shepherd/lenses.yml": "models:\n  loop: openai/gpt-5.5\n" });
+    const env = { ...process.env, ...ID, HOME: home, OPENCODE_API_KEY: "k", SHEPHERD_MODEL: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", OPENROUTER_API_KEY: "" };
+    const r = spawnSync("bun", [CLI, "init"], { cwd: dir, env, encoding: "utf8" });
+
+    expect(r.stdout).toContain("model     opencode-go/deepseek-v4.1-flash (OPENCODE_API_KEY is set)");
+    expect(r.stdout).toContain("gh secret set OPENCODE_API_KEY");
+    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("loop: opencode-go/deepseek-v4.1-flash");
+  });
+
   test("init -> validate -> explain -> preview: a new repository starts review-only and sees the whole plan", () => {
     const { dir, run, merge } = repo();
 
@@ -68,7 +90,8 @@ describe("adoption", () => {
 
     expect(init.code).toBe(0);
     expect(init.out).toContain("preset review-only");
-    expect(init.out).toContain("shepherd preview --working-tree");
+    expect(init.out).toContain("created .github/workflows/shepherd-gate.yml"); // one command writes the loop and the gate
+    expect(init.out).toContain("shepherd doctor");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("mode: suggest");
 
     expect(run("config", "validate").out).toContain("ok: .shepherd/config.yml");
@@ -183,7 +206,6 @@ describe("adoption", () => {
     const plan = JSON.parse(run("ci-models").out);
 
     expect(plan.model).toBe("amazon-bedrock/eu.amazon.nova-micro-v1:0");
-    expect(plan.key_env).toBe("AWS_BEARER_TOKEN_BEDROCK");
     expect(plan.key_envs).toEqual(["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"]);
     expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
     expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
@@ -346,7 +368,7 @@ describe("adoption", () => {
     expect(plan).toContain("recipe    fix: swarm > triage > simplify > swarm");
     expect(plan).toMatch(/writes\s+triage\s+edits your working tree/);
     expect(plan).toContain("fixes_uncommitted");
-    expect(local.run("preview", "--working-tree", "--recipe", "pr").out).toContain("stamp cannot see ci-repair's fixes");
+    expect(local.run("preview", "--working-tree", "--recipe", "pr").out).toContain("gate cannot see ci-repair's fixes");
 
     const push = repo();
 
@@ -416,17 +438,17 @@ describe("adoption", () => {
     const file = path.join(dir, ".github/workflows/shepherd.yml");
 
     expect(run("workflows", "--environment", "ai-review").out).toContain("add SHEPHERD_TOKEN as a repository secret");
-    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, stamp\]/m, "$1[build, stamp]").replace(/SHEPHERD_VERSION: \S+/g, "SHEPHERD_VERSION: 0.0.1"));
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, shepherd-gate\]/m, "$1[build, shepherd-gate]").replace(/SHEPHERD_VERSION: \S+/g, "SHEPHERD_VERSION: 0.0.1"));
     expect(run("workflows").out).toContain("(exists): run `shepherd workflows --upgrade` to update it");
 
     write(dir, { ".shepherd/config.yml": "fixes: { mode: suggest }\n" });
     const out = run("workflows", "--upgrade").out;
     const text = readFileSync(file, "utf8");
 
-    expect(out).toContain(`upgraded  .github/workflows/shepherd.yml to ${version} (kept environment ai-review, workflows [build, stamp])`);
+    expect(out).toContain(`upgraded  .github/workflows/shepherd.yml to ${version} (kept environment ai-review, workflows [build, shepherd-gate])`);
     expect(text).toContain(`SHEPHERD_VERSION: ${version} `);
     expect(text).toContain("    environment: ai-review #");
-    expect(text).toContain("workflows: [build, stamp]");
+    expect(text).toContain("workflows: [build, shepherd-gate]");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toBe("fixes: { mode: suggest }\n");
     expect(out).not.toContain("add SHEPHERD_TOKEN");
     expect(out).toContain("SHEPHERD_TOKEN is not needed until fixes.mode is push");
@@ -496,18 +518,18 @@ describe("adoption", () => {
     expect(by("skills")).toMatchObject({ status: "fail", fix: expect.stringContaining("shepherd install") });
     expect(by("model haiku")?.status).toBe("ok");
     expect(by("model mystery")?.status).toBe("warn");
-    expect(by("stamp workflow")?.status).toBe("warn");
+    expect(by("gate workflow")?.status).toBe("warn");
 
-    write(dir, { ".github/workflows/stamp.yml": "name: stamp\non: pull_request\njobs:\n  review:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bunx \"@jagreehal/stamp@1\" \"$PR\" --post\n" });
+    write(dir, { ".github/workflows/shepherd-gate.yml": "name: gate\non: pull_request\njobs:\n  review:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bunx \"@jagreehal/shepherd@1\" gate \"$PR\" --post\n" });
     run("install", "--project");
     spawnSync("git", ["add", "-A"], { cwd: dir });
-    spawnSync("git", ["commit", "-qm", "stamp"], { cwd: dir, env: { ...process.env, ...ID } });
+    spawnSync("git", ["commit", "-qm", "gate"], { cwd: dir, env: { ...process.env, ...ID } });
     spawnSync("git", ["push", "-q", "origin", "HEAD:main"], { cwd: dir });
     const after = JSON.parse(run("doctor", "--json").out);
 
     expect(after.find((c: { check: string }) => c.check === "skills")?.status).toBe("ok");
-    expect(after.find((c: { check: string }) => c.check === "stamp workflow")?.status).toBe("ok");
-    expect(after.find((c: { check: string }) => c.check === "stamp runs")?.status).toBe("warn"); // no GitHub here
+    expect(after.find((c: { check: string }) => c.check === "gate workflow")?.status).toBe("ok");
+    expect(after.find((c: { check: string }) => c.check === "gate runs")?.status).toBe("warn"); // no GitHub here
   }, 60_000);
 
   test("acceptance fails, apart from any violation, when the agent did not finish", () => {
@@ -547,14 +569,15 @@ describe("adoption", () => {
   });
 });
 
-test("only a workflow that invokes stamp on pull requests counts as running it", () => {
+test("only a workflow that invokes gate on pull requests counts as running it", () => {
   const steps = (s: string) => `on: [pull_request]\njobs:\n  r:\n    steps:\n${s}`;
 
-  expect(runsStamp("name: stamp\n")).toBe(false);
-  expect(runsStamp(steps("      - run: echo stamp\n"))).toBe(false);
-  expect(runsStamp(steps("      - uses: jagreehal/stamp@v1\n"))).toBe(true);
-  expect(runsStamp(steps("      - run: bunx @jagreehal/stamp 1 --post\n"))).toBe(true);
-  expect(runsStamp(steps("      - uses: actions/checkout@v4\n        with: { repository: jagreehal/stamp, path: .stamp-tool }\n      - run: bun .stamp-tool/src/cli.ts 1\n"))).toBe(true);
-  expect(runsStamp(steps("      - uses: actions/checkout@v4\n        with: { repository: jagreehal/stamp, path: .stamp-tool }\n"))).toBe(false);
-  expect(runsStamp("on: { push: {} }\njobs:\n  r:\n    steps:\n      - uses: jagreehal/stamp@v1\n")).toBe(false);
+  expect(runsGate("name: gate\n")).toBe(false);
+  expect(runsGate(steps("      - run: echo gate\n"))).toBe(false);
+  expect(runsGate(steps('      - run: bunx "@jagreehal/shepherd@$SHEPHERD_VERSION" gate "$PR" --post\n'))).toBe(true);
+  expect(runsGate(steps("      - run: shepherd gate 1 --post\n"))).toBe(true);
+  expect(runsGate(steps("      - uses: actions/checkout@v4\n        with: { repository: jagreehal/shepherd, path: .gate-tool }\n      - run: bun .gate-tool/src/bin.ts gate 1\n"))).toBe(true);
+  expect(runsGate(steps("      - uses: actions/checkout@v4\n        with: { repository: jagreehal/shepherd, path: .gate-tool }\n"))).toBe(false);
+  expect(runsGate(steps("      - run: bunx @jagreehal/shepherd install\n"))).toBe(false);
+  expect(runsGate("on: { push: {} }\njobs:\n  r:\n    steps:\n      - run: shepherd gate 1\n")).toBe(false);
 });

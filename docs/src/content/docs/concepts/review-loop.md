@@ -15,7 +15,7 @@ flowchart TD
         DRY -- no --> Q
     end
     DRY -- yes --> CI[ci-repair]
-    CI --> V[stamp verdict]
+    CI --> V[the gate verdict]
     V --> SUM[Summary and<br/>commit status]
 ```
 
@@ -31,10 +31,10 @@ When the base conflicts, ci-repair merges it and resolves the conflict if no dec
 
 Before it writes the round's diff, the loop runs `shepherd stack <pr>`:
 
-- **Stacked on an open PR** into the same base: swarm reviews only this PR's change over the parent's head and posts nothing on the parent's lines, so a stack of three PRs gets three focused reviews, never one change reviewed three times. stamp holds its approval until the parent is approved, so the loop finishes `pending`, waiting on the parent.
+- **Stacked on an open PR** into the same base: swarm reviews only this PR's change over the parent's head and posts nothing on the parent's lines, so a stack of three PRs gets three focused reviews, never one change reviewed three times. The gate holds its approval until the parent is approved, so the loop finishes `pending`, waiting on the parent.
 - **Wrong base**, most commits already on another long-lived branch (`main`, `master`, `develop`, `release`, `release/*`, `staging`): the loop reviews nothing, sets `failure` and names the retarget command, `gh pr edit <pr> --base <branch>`.
 
-stamp runs the same detection; see its [stacked PRs guide](https://jagreehal.github.io/stamp/guides/stacked-prs/).
+The gate runs the same detection; see its [stacked PRs guide](/shepherd/integrations/gate/).
 
 ## The review swarm
 

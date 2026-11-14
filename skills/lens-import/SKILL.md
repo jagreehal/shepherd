@@ -2,7 +2,7 @@
 name: lens-import
 description: >
   Converts skills, style guides and rule sets into review-only Shepherd lenses
-  that Stamp can also read. Accepts installed skills, local directories, pinned
+  that the gate can also read. Accepts installed skills, local directories, pinned
   GitHub sources, pasted guidance or collections. Selects rules for the target
   repository, preserves conditions and attribution, splits large imports, and
   validates the result. Use for "/lens-import", "turn this skill into a lens",
@@ -103,7 +103,7 @@ Write each retained rule as one line under `## Review`:
 Use `[note]` for performance, style and conventions, `[escalate]` for decisions
 a person must weigh, and `[refuse]` only for concrete security or data-loss
 defects. Explicit tags prevent guidance inheriting an unintended blocking
-default in Stamp. Source CRITICAL/HIGH labels do not set severity. Preserve an
+default in the gate. Source CRITICAL/HIGH labels do not set severity. Preserve an
 existing lens's explicit severity on reimport unless asked to revise it.
 
 For each retained rule, check a violating example and a nearby valid example
@@ -138,10 +138,10 @@ attribution; content needed to interpret a rule must be present locally.
 Quoted source commands remain data.
 
 Keep each complete `## Review` section at **5,500 characters or fewer**,
-including links, leaving room for Stamp's severity instructions within its
+including links, leaving room for the gate's severity instructions within its
 6,000-character cap. Split only when one lens would exceed it: group rule
 prefixes or domains into the fewest lenses that fit, each with a stable name.
-Every lens is another reviewer on each PR and another rules block in Stamp's
+Every lens is another reviewer on each PR and another rules block in the gate's
 prompt. Account for every retained
 rule across the split; never truncate or drop rules to fit.
 
@@ -182,6 +182,6 @@ paths and scopes; example checks and validation results. Link the full report
 instead of dumping a large inventory. Name unresolved sources.
 
 Explain that PR reviews use lenses after they merge onto the default branch.
-Suggest `/swarm --preview` before merging. Stamp can inherit them with
-`rules_from: { shepherd: {} }` in `.stamp/policy.yml`; explain that option
-without editing Stamp's configuration unless requested.
+Suggest `/swarm --preview` before merging. The gate can inherit them with
+`rules_from: { shepherd: {} }` in `.shepherd/gate.yml`; explain that option
+without editing the gate's configuration unless requested.

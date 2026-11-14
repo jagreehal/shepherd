@@ -1,6 +1,6 @@
 ---
 name: java
-description: Java and Spring rules for a code review. Flags code that leaks resources, breaks transactions, trusts input or falls over under load in ways the compiler and static analysers miss. Covers @Transactional pitfalls, N+1 queries and unbounded fetches, missing authorisation on endpoints, unvalidated request bodies, queries and commands built from input, unsafe deserialisation and XML parsing, resources not closed, swallowed exceptions, thread-unsafe shared state in singletons, blocking calls without timeouts, and entity or API contract changes. Use as a review lens or as a stamp rule pack.
+description: Java and Spring rules for a code review. Flags code that leaks resources, breaks transactions, trusts input or falls over under load in ways the compiler and static analysers miss. Covers @Transactional pitfalls, N+1 queries and unbounded fetches, missing authorisation on endpoints, unvalidated request bodies, queries and commands built from input, unsafe deserialisation and XML parsing, resources not closed, swallowed exceptions, thread-unsafe shared state in singletons, blocking calls without timeouts, and entity or API contract changes. Use as a review lens or as a gate rule pack.
 ---
 
 # java

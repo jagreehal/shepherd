@@ -1,5 +1,5 @@
-# shepherd in CI: one loop iteration each time CI or stamp finishes on a PR, on a `/shepherd` comment,
-# when a PR gets the SHEPHERD_LABEL, or from the sweep. Each iteration's fixes are pushed, CI and stamp run
+# shepherd in CI: one loop iteration each time CI or gate finishes on a PR, on a `/shepherd` comment,
+# when a PR gets the ci.label label, or from the sweep. Each iteration's fixes are pushed, CI and gate run
 # on the new head, and their completion starts the next one, until shepherd sets a final `shepherd` status
 # (success, or failure naming what the author must do). Installed by `shepherd workflows`.
 #
@@ -12,36 +12,29 @@
 # Secrets:
 #   SHEPHERD_TOKEN    fine-grained PAT: contents, pull requests and commit statuses (read/write). Only
 #                     `gate` and `publish` see it. Pushes made with github.token start no workflows, so the loop would stall.
-#   SHEPHERD_API_KEY  the model key, for whichever provider the session model names (Bedrock: a Bedrock API key).
-#                     Store model keys as an environment's secrets (`shepherd workflows --environment <name>`) so
-#                     only `iterate` reads them.
-#                     Or each provider's own secret (OPENCODE_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
-#                     DEEPSEEK_API_KEY, AWS_BEARER_TOKEN_BEDROCK...) when the ladder mixes providers.
+#   the model key, under the provider's own name (OPENCODE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY,
+#                     OPENROUTER_API_KEY, DEEPSEEK_API_KEY, AWS_BEARER_TOKEN_BEDROCK...). Store it as an environment's
+#                     secret (`shepherd workflows --environment <name>`) so only `iterate` reads it.
 #   SHEPHERD_NOTIFY_WEBHOOK  optional: Slack Incoming Webhook or any JSON endpoint, told when a PR needs
 #                     you, is ready to merge, or the iteration stopped on an error.
-# Settings: put them in .shepherd/config.yml (models.loop, and ci: label, aws_region, notify_on, max_commits,
-# push_deny), where they are reviewed and read from the default branch; `shepherd config explain` lists each with
-# its source. Each repository variable below is an optional override: when set, it wins over the config.
+# Settings live in .shepherd/config.yml (models.loop, and ci: label, aws_region, notify_on, max_commits,
+# push_deny), reviewed and read from the default branch; `shepherd config explain` lists each with its source.
 # Variables:
-#   SHEPHERD_MODEL    optional override. Name the session model in .shepherd/config.yml instead
-#                     (`shepherd models pin loop <model>`), where it is reviewed and versioned. Empty = the
-#                     team's models.loop, else the top of its ladder, else opencode-go/kimi-k3. Runners take
-#                     their own models from the team's tiers, ladder and pins (shepherd models shows them).
-#   AWS_REGION        ci.aws_region: the Bedrock region, for a bedrock: model.
-#   SHEPHERD_LABEL    ci.label: shepherd only PRs carrying this label. Whatever opens PRs (a person, Claude
-#                     Code, Codex, another agent) hands one over by adding it.
-#   SHEPHERD_NOTIFY_ON  ci.notify_on: states that notify, e.g. "failure"; empty = success,failure,error.
-#   SHEPHERD_MAX_COMMITS  ci.max_commits: shepherd commits on one PR before it stops for a person; empty = 20.
+#   SHEPHERD_MODEL    optional: provider/model for this repository (e.g. opencode-go/deepseek-v4.1-flash,
+#                     anthropic/claude-sonnet-5.5, amazon-bedrock/eu.amazon.nova-pro-v1:0), over models.loop.
+#   AWS_REGION        the Bedrock region, for a Bedrock model.
 #   SHEPHERD_PUSH_DENY  replaces the built-in deny list (an admin's escape hatch). ci.push_deny in config can only
 #                     ADD patterns to whichever list applies. Extended regex of paths a handed-off fix may not touch; empty = workflows,
 #                     git and editor hooks, package manager config, manifests and lockfiles.
 #
-# Edit `workflows: [ci, stamp]` to name your CI workflow. workflow_run, pull_request_target and schedule
+# Edit `workflows: [ci, shepherd-gate]` to name your CI workflow. workflow_run, pull_request_target and schedule
 # run this file from the default branch, so a PR cannot change how it is shepherded.
 name: shepherd
+# The PR in each run's title, so `shepherd review <pr>` finds its run among other PRs'.
+run-name: shepherd ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr || github.event_name }}
 on:
   workflow_run:
-    workflows: [ci, stamp]
+    workflows: [ci, shepherd-gate]
     types: [completed]
   issue_comment:
     types: [created]
@@ -100,10 +93,7 @@ jobs:
         id: settings
         env:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
-          SHEPHERD_LABEL: ${{ vars.SHEPHERD_LABEL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
-          SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
-          SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
@@ -133,8 +123,7 @@ jobs:
         && github.event.workflow_run.head_repository.full_name == github.repository)
       || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null
         && startsWith(github.event.comment.body, '/shepherd'))
-      || (github.event_name == 'pull_request_target'
-        && (vars.SHEPHERD_LABEL == '' || github.event.label.name == vars.SHEPHERD_LABEL))
+      || github.event_name == 'pull_request_target'
       || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -170,10 +159,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
-          SHEPHERD_LABEL: ${{ vars.SHEPHERD_LABEL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
-          SHEPHERD_NOTIFY_ON: ${{ vars.SHEPHERD_NOTIFY_ON }}
-          SHEPHERD_MAX_COMMITS: ${{ vars.SHEPHERD_MAX_COMMITS }}
         run: |
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
@@ -295,6 +281,13 @@ jobs:
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           mkdir -p "$RUNNER_TEMP/handoff"
+      # A note on the PR while the model works; the finalizer deletes it. Cosmetic, so it never fails the job.
+      - name: Show that shepherd is reviewing
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          H0: ${{ needs.gate.outputs.head }}
+        run: shepherd working --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$H0"
       - name: One shepherd iteration
         timeout-minutes: 30 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
@@ -302,7 +295,6 @@ jobs:
           SHEPHERD_HANDOFF: ${{ runner.temp }}/handoff
           SHEPHERD_FANOUT: ${{ runner.temp }}/fanout.json
           BASE: ${{ needs.gate.outputs.base }}
-          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -319,14 +311,11 @@ jobs:
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md are PR content
           OPENCODE_DISABLE_AUTOUPDATE: "1"
         run: |
-          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # The team's models, from the default branch: the session model and the
           # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
           plan=$(shepherd ci-models)
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
-          key_env=$(jq -r '.key_env // empty' <<<"$plan")
-          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
-          unset SHEPHERD_API_KEY
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
           # provider's other credentials.
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
@@ -347,7 +336,7 @@ jobs:
           yourself. You are running in GitHub Actions on the PR branch,
           already checked out, and you cannot push. Nobody is watching this session: never wait for an answer. Anything you
           would ask the user is deferred, listed in the iteration summary, and named in status.json. Do not schedule further
-          iterations; the next one starts when CI or stamp finishes on the head the workflow pushes."
+          iterations; the next one starts when CI or gate finishes on the head the workflow pushes."
           # The job checks the round itself. A round that does not render gets one short call with the exact errors.
           round="$SHEPHERD_HANDOFF/round.json"
           if [ -f "$round" ] && ! errors=$(shepherd summary "$round" --body 2>&1 >/dev/null); then
@@ -482,7 +471,7 @@ jobs:
           elif state == "pending":
               # Nothing pushed and no CI re-run asked for: findings above NIT leave work for the author, so the status
               # is failure and the sweep, which re-runs pending PRs every half hour, leaves the PR to them. Otherwise it
-              # stays pending: success needs stamp's approval, green CI and no open thread, which this step cannot see.
+              # stays pending: success needs gate's approval, green CI and no open thread, which this step cannot see.
               try:
                   reruns = open("handoff/rerun-jobs.txt").read().strip() not in ("", "[]")
               except OSError:
@@ -507,7 +496,7 @@ jobs:
           echo "state=$state" >> "$GITHUB_OUTPUT"
       # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
       # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
-      # stamp or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
+      # gate or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
       # The renderers, when the iteration handed off its round: the summary and inline review are then built in code.
       - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/round.json') != ''
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
@@ -550,16 +539,18 @@ jobs:
               fi
             fi
             fanout=(); [ -f handoff/fanout.json ] && fanout=(--fanout ../handoff/fanout.json)
+            # The CLI's render is code, not model output: it posts as rendered, keeping the reviewed-head marker the next
+            # round's interdiff reads, and links each finding to its thread (rendered after the inline review posts).
             # A round the CLI cannot render keeps whatever findings.md the model wrote; with neither, say so and stop.
-            if (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md --body "${fanout[@]}") > rendered.md; then
-              mv rendered.md handoff/findings.md
+            if (cd repo && shepherd summary ../handoff/round.json --previous ../summary.md "${fanout[@]}") > findings.out; then
+              rendered=1
             elif [ ! -f handoff/findings.md ]; then
               echo "::warning::could not render the round's summary, and the iteration left no findings.md"; exit 0
             fi
           else
             [ -n "$fresh" ] && grep -q "@ ${H0:0:7}" summary.md && { echo "the iteration posted its summary ($id)"; exit 0; }
           fi
-          python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
+          [ -n "${rendered:-}" ] || python3 - handoff/findings.md summary.md "${H0:0:7}" > findings.out <<'PY'
           import re, sys
           CAP = 60000
           def defuse(text):
@@ -613,6 +604,14 @@ jobs:
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ needs.gate.outputs.notify_on }} # ci.notify_on or the variable
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt
+      - name: Remove the reviewing note
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- shepherd-working -->"))) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" >/dev/null; done
       # Any step above failing (checkout, push, status) must not leave the gate's pending for the sweep to rerun.
       - name: Report a failed publish
         if: always() && failure()

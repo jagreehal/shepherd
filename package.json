@@ -1,12 +1,12 @@
 {
   "name": "@jagreehal/shepherd",
   "version": "0.15.0",
-  "description": "Agent skills that drive a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp.",
+  "description": "Agent skills that drive a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to the gate.",
   "license": "MIT",
   "repository": "github:jagreehal/shepherd",
   "type": "module",
   "bin": {
-    "shepherd": "./src/cli.ts"
+    "shepherd": "./src/bin.ts"
   },
   "files": [
     "src",
@@ -19,7 +19,11 @@
     "templates",
     "schema",
     "AGENTS.md",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "gate/src",
+    "!gate/src/*.test.ts",
+    "gate/.shepherd",
+    "gate/templates"
   ],
   "engines": {
     "bun": ">=1.2",
@@ -32,9 +36,9 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun run typecheck && bun test",
-    "lint": "oxlint src",
+    "lint": "oxlint src gate/src",
     "changeset": "changeset",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && bun tools/sync-gate-version.ts",
     "release": "changeset publish",
     "docs:dev": "bun run --cwd docs dev",
     "docs:build": "bun run docs:check && bun run --cwd docs build && bun docs/scripts/check-built.ts",
@@ -53,7 +57,17 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "5.0.118",
+    "@ai-sdk/anthropic": "4.0.82",
+    "@ai-sdk/groq": "4.0.63",
+    "@ai-sdk/mistral": "4.0.66",
+    "@ai-sdk/openai": "4.0.96",
+    "@ai-sdk/openai-compatible": "3.0.71",
+    "@aws-sdk/credential-provider-node": "^3.972.86",
+    "ai": "7.0.143",
     "autotel": "8.2.1",
+    "autotel-bedrock": "2.0.1",
+    "autotel-genai": "0.16.2",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   }

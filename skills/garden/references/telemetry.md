@@ -21,9 +21,9 @@ trace credentials. Never pass a trace credential into an agent session.
 The CLI deduplicates spans by trace and span ID, and matches root spans to the
 repository, PR and a commit present on that PR. The time window is `--since`
 through collection time. Roots on an unknown commit contribute no measurement.
-Model and tool spans do not add their costs again: only `stamp.cost_usd` on
-the review root counts. A root without `stamp.cost_complete=true` has an
-incomplete price, including older exports that omit that field. Cost comes from Stamp; Shepherd's
+Model and tool spans do not add their costs again: only `gate.cost_usd` on
+the review root counts. A root without `gate.cost_complete=true` has an
+incomplete price, including older exports that omit that field. Cost comes from the gate; Shepherd's
 orchestration spans leave out the coding-agent harness's token usage.
 
 ## Read the result
@@ -44,7 +44,7 @@ threshold. These signals select evidence to investigate; they cannot approve
 code, count a fix as accepted, loosen a gate or justify dropping verification.
 
 Check GitHub for the cause, and cite the trace ID in any proposal. A proposal
-about spend must name the measured backend: Stamp's reviewer cost cannot show
+about spend must name the measured backend: the gate's reviewer cost cannot show
 what Shepherd's orchestrating model spent. If no GitHub evidence supports a
 cause, report the observation without proposing an edit. Done when the score
 table separates observed failures and cost from unknown coverage.

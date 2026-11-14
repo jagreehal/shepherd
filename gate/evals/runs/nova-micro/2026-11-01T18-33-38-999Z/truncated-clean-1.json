@@ -1,0 +1,9 @@
+{
+  "case": "truncated-clean",
+  "label": "nova-micro",
+  "verdict": null,
+  "issues": [],
+  "costUsd": null,
+  "durationMs": 24560,
+  "error": "Failed after 3 attempts. Last error: AI_APICallError: Too many tokens, please wait before trying again."
+}

@@ -1,6 +1,6 @@
 ---
 name: nextjs
-description: Next.js rules for a code review, meant to be composed with the react lens. Flags App Router and Pages Router code that leaks data across the server/client boundary, skips authorisation, caches the wrong thing or ships too much to the browser. Covers route handlers and server actions without auth, middleware matchers that miss routes, server-only code reaching the client, props that serialise secrets, user data cached across users, dynamic APIs that break static rendering, redirects built from input, unvalidated action input, heavy client bundles, and metadata or image misuse. Use as a review lens or as a stamp rule pack.
+description: Next.js rules for a code review, meant to be composed with the react lens. Flags App Router and Pages Router code that leaks data across the server/client boundary, skips authorisation, caches the wrong thing or ships too much to the browser. Covers route handlers and server actions without auth, middleware matchers that miss routes, server-only code reaching the client, props that serialise secrets, user data cached across users, dynamic APIs that break static rendering, redirects built from input, unvalidated action input, heavy client bundles, and metadata or image misuse. Use as a review lens or as a gate rule pack.
 ---
 
 # nextjs

@@ -1,0 +1,8 @@
+{
+  "case": "weakened-test",
+  "label": "nova-micro",
+  "verdict": "APPROVE",
+  "issues": [],
+  "costUsd": 0.000473,
+  "durationMs": 5731
+}

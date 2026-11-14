@@ -2,7 +2,7 @@
 name: shepherd
 description: >
   Drives a PR to merge-ready in one iteration: review rounds (swarm, triage,
-  simplify) until they converge, CI repair, then the stamp verdict. Starts every
+  simplify) until they converge, CI repair, then the gate verdict. Starts every
   runner on the cheapest model the harness can dispatch and validates risky
   changes one rung up. Use for "/shepherd", "babysit this PR", "get this PR
   ready", or wrap in "/loop 5m /shepherd <pr>" for hands-off cadence. With
@@ -18,7 +18,7 @@ Owns the loop; the sub-skills own the work:
 - **simplify** tidies the diff: one runner applying the `review-simplicity`
   lens in fix mode.
 - **`ci-repair`** keeps the branch current and repairs CI.
-- **`stamp`**, if the repo runs it, gives the approval verdict.
+- **`gate`**, if the repo runs it, gives the approval verdict.
 
 Swarm, triage, and simplify run together in the **quality loop** so a fix from
 round 1 is reviewed again in round 2. Shepherd decides; it defers to the user
@@ -42,7 +42,7 @@ developer. Same lenses, same verification, same fix rules. It runs on this
 machine and stops there:
 
 - **No GitHub writes and no GitHub reads.** No push, no comment, no thread, no
-  commit status, no stamp. Steps 3 to 5 do not run.
+  commit status, no gate. Steps 3 to 5 do not run.
 - **No commits.** Fixes land in the working tree; the developer reviews and
   commits them. If the tree has a merge or rebase in progress, stop and say so.
 - **The fix mode decides the steps.** Under `fixes.mode: suggest`, run one
@@ -118,7 +118,7 @@ model pushes what you hand it. An iteration then differs in six places:
   these commits.
 - **No thread resolves on an unpushed fix.** The next iteration's triage sees
   the pushed fix and resolves the thread then.
-- **Step 4 runs only when HEAD is still `H0`.** Otherwise stamp has nothing to
+- **Step 4 runs only when HEAD is still `H0`.** Otherwise the gate has nothing to
   judge until the push; report `pending`.
 - **Step 5 writes the status for the workflow to set.** Never call the
   statuses API or run `shepherd notify`: the job's token cannot set a status,
@@ -179,7 +179,7 @@ This skill owns all of it; runners receive what they need and return updates.
 
 - `swarm_marker_sha`: HEAD when swarm last ran. `null` at first.
 - `simplify_marker_sha`: HEAD when simplify last ran. `null` at first.
-- `stamp_applied_for_sha`: HEAD when the stamp label was last applied. `null` at first.
+- `gate_applied_for_sha`: HEAD when the gate label was last applied. `null` at first.
 - `deferred_threads`: thread ids already surfaced to the user.
 - `last_updated_at`: the PR's `updatedAt` at the end of the last iteration.
 - `bot_reviews_pending`: set when this skill marks a draft ready.
@@ -195,7 +195,7 @@ author wrote. A thread an earlier run deferred is still open work for this run.
 
 ## HEAD threading
 
-Every round can move HEAD, and stamp keys off the final one:
+Every round can move HEAD, and the gate keys off the final one:
 
 ```
 H0 = Step 1 HEAD
@@ -205,7 +205,7 @@ Step 2  rounds r = 1..N (N <= 4, stop on a dry round)
           simplify when warranted, at H(r).1; commit + push if it changed files -> H(r).final
         H1 = last round's final HEAD
 Step 3  ci-repair(head_sha_in = H1)        -> H2
-Step 4  stamp at H2
+Step 4  gate at H2
 ```
 
 Passing `H0` to ci-repair would diagnose a stale tree. Thread it.
@@ -225,7 +225,7 @@ Run the CLI as swarm does: `shepherd`, or `bunx @jagreehal/shepherd` when it
 is not on PATH. Local mode has no PR, so it records no trace.
 
 Stages: `checks`, `swarm`, `verify`, `triage`, `simplify`, `ci-repair`, and
-`stamp` for the wait on stamp's verdict. Step 5 flushes the record. A failed
+`gate` for the wait on the gate's verdict. Step 5 flushes the record. A failed
 `trace` call never stops the loop; note it and go on. Without an
 `OTEL_EXPORTER_OTLP_ENDPOINT` the flush exports nothing and only clears the
 record, so recording costs nothing where nobody collects traces.
@@ -240,7 +240,7 @@ gh pr view --json number,url,baseRefName,headRefOid,state,isDraft,updatedAt,labe
 Take owner/repo from `url`. Merged or closed: stop with a final summary.
 
 **Fast path.** On a re-invocation where HEAD and `updatedAt` both match the
-carried state and stamp needs nothing, check
+carried state and the gate needs nothing, check
 `gh pr checks <number> --json name,state,bucket,workflow` (CI changes do not
 bump `updatedAt`; `bucket` is `pass`, `fail`, `pending`, `skipping` or `cancel`). Skip the iteration only if nothing fails. Narrate the skip,
 print the state line, and hand back.
@@ -285,7 +285,7 @@ own PR head. On a PR by someone other than the logged-in user, confirm with
   base. Review only this PR's change: write
   `git diff <range>` (the delta over the parent's head) as the round's patch and
   pass `stacked_on: <parent.number>` to swarm and triage. The parent's code is
-  reviewed in the parent's PR. stamp holds its approval until the parent is
+  reviewed in the parent's PR. The gate holds its approval until the parent is
   approved on its current head, so a stacked PR finishes `pending`, "waiting on
   #<parent>", until then.
 - Neither, or the command exits non-zero: `gh pr diff <number>`. On an error,
@@ -320,11 +320,11 @@ Skipping it despite qualifying changes needs an `AskUserQuestion` confirm, in
 round 1 only.
 
 **b. triage.** When the unresolved-thread query (triage's Step 3) returns
-nothing, stamp raised no issues on the head, and no validation request is
+nothing, the gate raised no issues on the head, and no validation request is
 pending, record triage as a no-op for the round without dispatching. An empty
 input is not a skipped step. Otherwise, one runner at the second rung (see dispatch). Relay its
 narration with the round number. Record `new_head_sha`, `deferred_threads`, the
-counts, `stamp`, and any `validation_requests`, which go through the validation
+counts, `gate`, and any `validation_requests`, which go through the validation
 flow in `references/dispatch.md` before the round can be dry.
 
 Check triage's result against GitHub before trusting it: re-run the thread
@@ -353,7 +353,7 @@ then `git add`, commit `refactor: simplify pass` with the trailer
 `Shepherd: simplify`, push. Set `simplify_marker_sha = HEAD`.
 
 **d. Keep the PR description true.** Review fixes change behaviour the
-description may not mention, and stamp refuses undisclosed behaviour in risky
+description may not mention, and the gate refuses undisclosed behaviour in risky
 territory. When this round's commits changed what the code accepts, returns,
 throws, or writes, upsert one section at the end of the PR body, between
 `<!-- shepherd:review-changes -->` markers, headed "Changes made during review"
@@ -411,7 +411,9 @@ summary comment carries a warning (all cheap to read: `gh pr checks`,
 runner at the second rung with `head_sha_in = H1`. Relay its narration.
 Record `new_head_sha` as `H2`. Check the result's shape: `ci` must carry
 `pass/pending/fail/failing` and `base_update.status` must be `updated`,
-`resolved`, `current`, or `conflict`. A malformed result means the runner skipped the real
+`resolved`, `current`, `behind`, or `conflict` (`behind`: the fix mode kept it
+from updating the branch). Any `validation_requests` go through the validation
+step, as triage's do. A malformed result means the runner skipped the real
 steps; reissue it one rung up rather than accept it.
 
 A base conflict is surfaced in one line and Step 4 still runs: it blocks the
@@ -419,15 +421,15 @@ merge, not the review.
 
 `resolved` means ci-repair merged the base and settled a conflict, which changed
 the PR's own diff. Nothing has reviewed that yet: this iteration ends `pending`,
-and the next one's swarm reviews it, whatever stamp says about `H2`. When the
+and the next one's swarm reviews it, whatever the gate says about `H2`. When the
 resolution changed behaviour, add it to Step 2d's section.
 
-## Step 4: stamp
+## Step 4: gate
 
-Skip this step with `stamp=absent` when the repo has no stamp workflow on the
+Skip this step with `gate=absent` when the repo has no gate workflow on the
 default branch. Check with `git cat-file -e
-origin/<default>:.github/workflows/stamp.yml`, never a glob or a file search:
-those can skip `.github/`, and a missed stamp reads as `absent`.
+origin/<default>:.github/workflows/shepherd-gate.yml`, never a glob or a file search:
+those can skip `.github/`, and a missed gate reads as `absent`.
 
 Guard first:
 
@@ -436,11 +438,11 @@ gh pr view <number> --json isDraft,headRefOid
 ```
 
 - `headRefOid != H2`: someone pushed under you. Skip; the next iteration re-baselines.
-- Draft: mark ready; stamp skips drafts silently.
+- Draft: mark ready; the gate skips drafts silently.
 
-**Label mode** (the workflow sets `STAMP_LABEL`): when
-`stamp_applied_for_sha != H2`, `gh pr edit <number> --add-label <label>` and set
-`stamp_applied_for_sha = H2`. **All-PRs mode:** stamp runs on every push; there
+**Label mode** (the gate policy sets `label:`): when
+`gate_applied_for_sha != H2`, `gh pr edit <number> --add-label <label>` and set
+`gate_applied_for_sha = H2`. **All-PRs mode:** the gate runs on every push; there
 is nothing to apply.
 
 Read the verdict every time, capped so full bodies never enter context. This
@@ -448,33 +450,33 @@ call also refreshes `updatedAt` for the state line:
 
 ```bash
 gh pr view <number> --json reviewDecision,latestReviews,updatedAt \
-  --jq '{reviewDecision, updatedAt, stamp: ([.latestReviews[] | select(.body | contains("<!-- stamp-run:"))
-    | {state, head: (.body | capture("stamp-reviewed:head=(?<h>[0-9a-f]+)").h // null), body: .body[:400]}][0])}'
+  --jq '{reviewDecision, updatedAt, gate: ([.latestReviews[] | select(.body | contains("<!-- gate-run:"))
+    | {state, head: (.body | capture("gate-reviewed:head=(?<h>[0-9a-f]+)").h // null), body: .body[:400]}][0])}'
 ```
 
-**Is the verdict for `H2`?** stamp marks each review with the head it covers.
-When the latest verdict's `head` is not `H2`, look for a stamp run on `H2`:
+**Is the verdict for `H2`?** the gate marks each review with the head it covers.
+When the latest verdict's `head` is not `H2`, look for a gate run on `H2`:
 
 ```bash
-gh run list --workflow stamp.yml --commit <H2> --json status,conclusion --jq '[.[] | {status, conclusion}]'
+gh run list --workflow shepherd-gate.yml --commit <H2> --json status,conclusion --jq '[.[] | {status, conclusion}]'
 ```
 
 - A run is queued or in progress: report `pending`.
-- A run succeeded without posting a new review: stamp kept its standing
+- A run succeeded without posting a new review: the gate kept its standing
   approval because the PR's diff did not change (retention). Report
   `approved` when `reviewDecision` is `APPROVED`, and say it was retained.
 - No run, or only cancelled or skipped ones: nothing will review `H2` on its
-  own. Ask once per head, when `stamp_applied_for_sha != H2`: in label mode
-  remove and re-add the label; in all-PRs mode comment `/stamp` followed by the
+  own. Ask once per head, when `gate_applied_for_sha != H2`: in label mode
+  remove and re-add the label; in all-PRs mode comment `/gate` followed by the
   header on its own lines (the workflow only reads the first line). Set
-  `stamp_applied_for_sha = H2` and report `pending`.
+  `gate_applied_for_sha = H2` and report `pending`.
 
 Never report an older head's verdict as current.
 
 Report approved, refused, escalate, or pending, with the one-line reason.
-stamp keeps its approval across a base merge that leaves the PR's diff
+The gate keeps its approval across a base merge that leaves the PR's diff
 unchanged, so a ci-repair base update does not cost a re-review. Never try to
-get around a stamp gate.
+get around the gate.
 
 ## Step 5: Status, summary and hand-back
 
@@ -505,7 +507,7 @@ clears it.
 
 Then close the iteration's trace, naming how it ended (the summary's
 `stopped=`, or `waiting` or `needs-you`), the CI run the iteration read, and
-any traceparent another process exposed (stamp's review run, a CI run) so the
+any traceparent another process exposed (the gate's review run, a CI run) so the
 traces join by span link:
 
 ```bash
@@ -514,14 +516,14 @@ shepherd trace flush --pr <n> --repo <owner/repo> --head <H2> --base <base_sha> 
 ```
 
 - `success`: the second terminal condition holds and nothing is deferred:
-  stamp approved `H2` (or the repo has no stamp), CI is green, no unresolved
+  the gate approved `H2` (or the repo has no gate), CI is green, no unresolved
   thread is left, and no person's latest review requests changes.
 - `failure`: the loop can do nothing more on its own (the "needs the author"
   terminal condition below). The description says what is needed, most
-  important first: `stamp refused: <reason>`, `stamp escalated`, `changes
+  important first: `gate refused: <reason>`, `gate escalated`, `changes
   requested by <login>`, `3 threads need you`, `base conflict`. A loop that
   stopped at its cap adds `round cap: reconsider the approach`.
-- `pending`: anything else: work remains, stamp has not judged `H2`, or bot
+- `pending`: anything else: work remains, the gate has not judged `H2`, or bot
   reviews are on their way.
 
 Then tell people, when the repo has opted in. Write the same description to a
@@ -568,13 +570,13 @@ this skill that would prevent it. Offer the edit; never apply it unasked.
 Stop for good when:
 
 - the PR is merged or closed;
-- stamp has approved the current head (or the repo has no stamp), CI has no
+- The gate has approved the current head (or the repo has no gate), CI has no
   failure needing autonomous work, no new bot threads arrived, and every
   unresolved thread is in `deferred_threads`;
 - **needs the author:** nothing autonomous is left (every unresolved thread is
-  in `deferred_threads`, triage has acted on every fixable issue in stamp's
+  in `deferred_threads`, triage has acted on every fixable issue in the gate's
   latest refusal, ci-repair has exhausted its repairs, and the quality loop
-  ended dry or at its cap), yet stamp refused or escalated `H2`, CI still
+  ended dry or at its cap), yet the gate refused or escalated `H2`, CI still
   fails, the base conflicts, or a person's review requests changes. Set the `failure` status naming what is
   needed, list it for the user, and stop: another iteration would only repeat
   this one; or

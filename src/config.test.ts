@@ -120,11 +120,11 @@ describe("recipes", () => {
 
   test("order, review after fixes, and the fix mode are enforced", () => {
     expect(recipeProblems("r", ["triage", "swarm"], "push")).toEqual([expect.stringContaining("a swarm must come before it")]);
-    expect(recipeProblems("r", ["swarm", "triage"], "push")).toEqual([expect.stringContaining("triage changes code, so a swarm or stamp must review after it")]);
-    expect(recipeProblems("r", ["swarm", "stamp", "swarm"], "push")).toEqual([expect.stringContaining("stamp gives the verdict on the final head")]);
+    expect(recipeProblems("r", ["swarm", "triage"], "push")).toEqual([expect.stringContaining("triage changes code, so a swarm or gate must review after it")]);
+    expect(recipeProblems("r", ["swarm", "gate", "swarm"], "push")).toEqual([expect.stringContaining("gate gives the verdict on the final head")]);
     expect(recipeProblems("r", ["swarm", "incident", "swarm"], "push")).toEqual([expect.stringContaining("incident opens the PR")]);
     expect(recipeProblems("r", ["swarm", "triage", "swarm"], "suggest")).toEqual([expect.stringContaining("fixes.mode is suggest")]);
-    expect(recipeProblems("r", ["swarm", "triage", "simplify", "swarm", "ci-repair", "stamp"], "push")).toEqual([]);
+    expect(recipeProblems("r", ["swarm", "triage", "simplify", "swarm", "ci-repair", "gate"], "push")).toEqual([]);
   });
 
   test("an unknown step is a schema error, not a silent skip", () => {
@@ -147,7 +147,7 @@ test("preview names the lenses, checks, fix mode and escalations a change would 
   ]);
   expect(plan.checks).toEqual(["unit: bun test"]);
   expect(plan.escalated).toEqual(["migrations/001.sql"]);
-  expect(plan.steps).toEqual(["swarm", "triage", "simplify", "swarm", "ci-repair", "stamp"]);
+  expect(plan.steps).toEqual(["swarm", "triage", "simplify", "swarm", "ci-repair", "gate"]);
   expect(() => preview(loadPolicy(read, noFetch, null), [], "nope")).toThrow("no recipe named nope");
 });
 
@@ -333,22 +333,17 @@ test("branding: no block posts exactly as before; custom values are merged, esca
 describe("CI settings", () => {
   const load = (map: Record<string, string>) => loadPolicy(files(map), noFetch, null);
 
-  test("a non-blank variable beats the default branch's config, which beats the default; a blank variable is unset", () => {
+  test("the default branch's config beats the default, and only AWS_REGION has a variable", () => {
     const p = load({ ".shepherd/config.yml": "ci:\n  label: from-config\n  notify_on: [failure]\n  audit: { public: true }\n" });
     const at = (env: Record<string, string>) => ciSettings(p, env);
 
-    expect(at({}).label).toEqual({ value: "from-config", source: "config", variable: "SHEPHERD_LABEL" });
-    expect(at({ SHEPHERD_LABEL: "from-var" }).label).toMatchObject({ value: "from-var", source: "variable" });
-    expect(at({ SHEPHERD_LABEL: "  " }).label).toMatchObject({ value: "from-config", source: "config" }); // what GitHub passes for an unset variable
+    expect(at({}).label).toEqual({ value: "from-config", source: "config", variable: null });
+    expect(at({ SHEPHERD_LABEL: "from-var" }).label).toMatchObject({ value: "from-config", source: "config" }); // settings are the reviewed config's
     expect(at({}).notify_on.value).toBe("failure");
     expect(at({}).audit_public.value).toBe("true");
     expect(at({}).max_commits).toMatchObject({ value: "20", source: "default" });
     expect(ciSettings(load({}), { AWS_REGION: "" }).aws_region).toMatchObject({ value: "", source: "default" });
-    expect(() => at({ SHEPHERD_LABEL: "a\nrun=true" })).toThrow("one line");
-
-    // The commit cap fails closed: a variable that is not a count stops the settings step, never the cap.
-    for (const bad of ["abc", "0", "-1", "1e3", "2 0"]) expect(() => at({ SHEPHERD_MAX_COMMITS: bad })).toThrow("SHEPHERD_MAX_COMMITS");
-    expect(at({ SHEPHERD_MAX_COMMITS: "5" }).max_commits.value).toBe("5");
+    expect(ciSettings(load({}), { AWS_REGION: "eu-west-1" }).aws_region).toMatchObject({ value: "eu-west-1", source: "variable" });
   });
 
   // The push deny list is a security control: config can widen it, never narrow it, across packs too.

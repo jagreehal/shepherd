@@ -1,0 +1,8 @@
+{
+  "case": "clean-docs",
+  "label": "nova-micro",
+  "verdict": "APPROVE",
+  "issues": [],
+  "costUsd": 0.000236,
+  "durationMs": 2352
+}

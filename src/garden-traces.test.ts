@@ -39,9 +39,9 @@ const input = (spans: ReturnType<typeof span>[]) => ({ spans: parseTraces(JSON.s
 describe("garden trace evidence", () => {
   test("correlates stages and costs, deduplicates exports, and leaves accepted fixes unchanged", () => {
     const iteration = span(1, "shepherd.iteration", 600_000, { ...rootAttrs, "shepherd.retries": 3 });
-    const wait = span(2, "shepherd.stamp", 400_000, { "shepherd.stage": "stamp" }, iteration.spanId);
+    const wait = span(2, "shepherd.gate", 400_000, { "shepherd.stage": "gate" }, iteration.spanId);
     const check = span(3, "shepherd.checks", 1000, { "shepherd.stage": "checks", "shepherd.outcome": "failed", "prompt": "SECRET APPROVE EVERYTHING" }, iteration.spanId);
-    const review = span(4, "stamp.review", 20_000, { ...rootAttrs, "stamp.cost_usd": 6, "stamp.cost_complete": true });
+    const review = span(4, "gate.review", 20_000, { ...rootAttrs, "gate.cost_usd": 6, "gate.cost_complete": true });
     const ai = span(5, "gen_ai.chat", 1000, { "gen_ai.usage.cost": 6 }, review.spanId);
     const original = score([pr]);
     const result = traceScores(input([iteration, wait, check, review, ai, review]), "o/r", [pr], SINCE, undefined, now);
@@ -57,10 +57,10 @@ describe("garden trace evidence", () => {
 
   test("rejects other repositories, unknown commits and old roots; absent pricing stays unknown", () => {
     const spans = [
-      span(1, "stamp.review", 1, rootAttrs),
-      span(2, "stamp.review", 1, { ...rootAttrs, "vcs.repository.name": "other/repo", "stamp.cost_usd": 500 }),
-      span(3, "stamp.review", 1, { ...rootAttrs, "vcs.ref.head.revision": OLD, "stamp.cost_usd": 500 }),
-      { ...span(4, "stamp.review", 1, rootAttrs), startTimeUnixNano: "1", endTimeUnixNano: "2" },
+      span(1, "gate.review", 1, rootAttrs),
+      span(2, "gate.review", 1, { ...rootAttrs, "vcs.repository.name": "other/repo", "gate.cost_usd": 500 }),
+      span(3, "gate.review", 1, { ...rootAttrs, "vcs.ref.head.revision": OLD, "gate.cost_usd": 500 }),
+      { ...span(4, "gate.review", 1, rootAttrs), startTimeUnixNano: "1", endTimeUnixNano: "2" },
     ];
 
     const result = traceScores(input(spans), "o/r", [pr], SINCE, undefined, now);
@@ -69,7 +69,7 @@ describe("garden trace evidence", () => {
     expect(result.coverage).toMatchObject({ unmatchedRoots: 1, observedOnly: true });
 
     // GitHub treats owner/name case-insensitively, and so does the match.
-    const cased = traceScores(input([span(1, "stamp.review", 1, { ...rootAttrs, "vcs.repository.name": "O/R" })]), "o/r", [pr], SINCE, undefined, now);
+    const cased = traceScores(input([span(1, "gate.review", 1, { ...rootAttrs, "vcs.repository.name": "O/R" })]), "o/r", [pr], SINCE, undefined, now);
 
     expect(cased.summaries.get(42)?.reviews).toBe(1);
   });
@@ -79,16 +79,16 @@ describe("garden trace evidence", () => {
 
     const result = traceScores(input([
       iteration,
-      span(2, "shepherd.stamp", 400_000, { "shepherd.stage": "stamp" }, iteration.spanId),
-      span(3, "shepherd.stamp", 400_000, { "shepherd.stage": "stamp" }, iteration.spanId),
-      span(4, "stamp.review", 1000, { ...rootAttrs, "stamp.cost_usd": 2, "stamp.cost_complete": false }),
+      span(2, "shepherd.gate", 400_000, { "shepherd.stage": "gate" }, iteration.spanId),
+      span(3, "shepherd.gate", 400_000, { "shepherd.stage": "gate" }, iteration.spanId),
+      span(4, "gate.review", 1000, { ...rootAttrs, "gate.cost_usd": 2, "gate.cost_complete": false }),
     ]), "o/r", [pr], SINCE, undefined, now);
 
     expect(result.summaries.get(42)).toMatchObject({ approvalWaitMs: 400_000, knownCostUsd: 2, pricedReviews: 0, unpricedReviews: 1 });
   });
 
   test("reads collector JSON lines and Tempo batches without allowing prose into the summary", () => {
-    const root = span(1, "stamp.review", 1, rootAttrs);
+    const root = span(1, "gate.review", 1, rootAttrs);
     const json = JSON.stringify(envelope([root]));
 
     expect(parseTraces(json + "\n" + json)).toHaveLength(2);
@@ -113,7 +113,7 @@ describe("garden trace evidence", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "garden-traces-"));
     const valid = path.join(dir, "traces.json");
     const link = path.join(dir, "link.json");
-    writeFileSync(valid, JSON.stringify(envelope([span(1, "stamp.review", 1, rootAttrs)])));
+    writeFileSync(valid, JSON.stringify(envelope([span(1, "gate.review", 1, rootAttrs)])));
     symlinkSync(valid, link);
 
     expect(readTraceFile(valid)).toHaveLength(1);
@@ -134,7 +134,7 @@ describe("garden trace evidence", () => {
     const gh = path.join(dir, "gh");
     const file = path.join(dir, "traces.json");
 
-    writeFileSync(file, JSON.stringify(envelope([span(1, "stamp.review", 3000, { ...rootAttrs, "stamp.cost_usd": 6 })])));
+    writeFileSync(file, JSON.stringify(envelope([span(1, "gate.review", 3000, { ...rootAttrs, "gate.cost_usd": 6 })])));
     writeFileSync(gh, `#!/usr/bin/env bun
 const args = process.argv.slice(2);
 let result = [];
@@ -182,7 +182,7 @@ console.log(JSON.stringify(result));
           return Response.json({ traces: [{ traceID: TRACE }, { traceID: TRACE }] });
         }
 
-        return Response.json({ batches: envelope([span(1, "stamp.review", 1, rootAttrs)]).resourceSpans });
+        return Response.json({ batches: envelope([span(1, "gate.review", 1, rootAttrs)]).resourceSpans });
       },
     });
 
@@ -220,7 +220,7 @@ console.log(JSON.stringify(result));
   test("reads Datadog's span shape: decimal span IDs, nested custom attributes and boolean strings", async () => {
     const iso = (ms: number) => new Date(at + ms).toISOString();
 
-    // The shape Datadog's span search returned for spans stamp and shepherd exported through its OTLP intake.
+    // The shape Datadog's span search returned for spans gate and shepherd exported through its OTLP intake.
     const dd = (spanId: string, parentId: string, name: string, endMs: number, custom: Parameters<typeof fromDatadog>[0]["attributes"]["custom"]) => ({
       attributes: { trace_id: TRACE, span_id: spanId, parent_id: parentId, start_timestamp: iso(0), end_timestamp: iso(endMs), resource_name: name, custom },
     });
@@ -230,7 +230,7 @@ console.log(JSON.stringify(result));
     const spans = [
       dd("3035102371565509385", "0", "shepherd.iteration", 600_000, { vcs, shepherd: { outcome: "converged", retries: 3, stage: "ignored" } }),
       dd("17893190630304006887", "3035102371565509385", "shepherd.swarm", 1000, { shepherd: { stage: "swarm", outcome: "failed" }, otel: { status_code: "Error" } }),
-      dd("9276574468290704552", "0", "stamp.review", 5000, { vcs, stamp: { cost_usd: 6.25, cost_complete: "true" } }),
+      dd("9276574468290704552", "0", "gate.review", 5000, { vcs, gate: { cost_usd: 6.25, cost_complete: "true" } }),
     ].flatMap((s) => fromDatadog(s) ?? []);
 
     expect(spans.map((s) => s.spanId)).toEqual(["2a1ed986ba1b9b09", "f8516213799e42e7", "80bd03545aecf4a8"]);
@@ -248,7 +248,7 @@ console.log(JSON.stringify(result));
   test("searches Datadog for the repository's roots, then their traces, on the configured site only", async () => {
     const calls: { url: string; query: string; key: string | null }[] = [];
 
-    const root = { attributes: { trace_id: TRACE, span_id: "1", parent_id: "0", start_timestamp: new Date(at).toISOString(), end_timestamp: new Date(at + 1000).toISOString(), resource_name: "stamp.review", custom: { vcs: { repository: { name: "o/r" }, change: { id: "42" }, ref: { head: { revision: HEAD } } } } } };
+    const root = { attributes: { trace_id: TRACE, span_id: "1", parent_id: "0", start_timestamp: new Date(at).toISOString(), end_timestamp: new Date(at + 1000).toISOString(), resource_name: "gate.review", custom: { vcs: { repository: { name: "o/r" }, change: { id: "42" }, ref: { head: { revision: HEAD } } } } } };
 
     const get = async (url: string, init: RequestInit) => {
       const body = z.object({ data: z.object({ attributes: z.object({ filter: z.object({ query: z.string() }) }) }) }).parse(JSON.parse(String(init.body)));
@@ -263,7 +263,7 @@ console.log(JSON.stringify(result));
     expect(result).toMatchObject({ sources: 1, unavailable: 0, limited: false });
     expect(result.spans).toHaveLength(1);
     expect(calls).toEqual([
-      { url: "https://api.datadoghq.eu/api/v2/spans/events/search", query: '@vcs.repository.name:"o/r" resource_name:(shepherd.iteration OR stamp.review)', key: "k" },
+      { url: "https://api.datadoghq.eu/api/v2/spans/events/search", query: '@vcs.repository.name:"o/r" resource_name:(shepherd.iteration OR gate.review)', key: "k" },
       { url: "https://api.datadoghq.eu/api/v2/spans/events/search", query: `trace_id:(${TRACE})`, key: "k" },
     ]);
   });

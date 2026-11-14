@@ -4,10 +4,10 @@ title: "Skills and human decisions"
 
 | Skill | Does |
 |---|---|
-| `shepherd` | Runs the loop: review rounds until dry, then CI, then the stamp verdict. Owns state, model choice, and when to ask you. |
+| `shepherd` | Runs the loop: review rounds until dry, then CI, then the gate verdict. Owns state, model choice, and when to ask you. |
 | `swarm` | Runs the repo's own checks, then the router, correctness and every matching team lens in parallel, with a second wave for risky hunks the router hands on. Verifies serious findings, and posts inline comments plus one summary comment. |
 | `triage` | Ends every review thread fixed, resolved, or deferred. Never replies, never touches a thread a human is in. |
-| `ci-repair` | Updates a stale branch, merges base conflicts it can settle, diagnoses failing checks to the leaf job, makes one verified fix, reruns flaky jobs once. |
+| `ci-repair` | Works on the PR's own head on a clean checkout. Diagnoses failing checks to the leaf job. Under `fixes.mode: push` it updates a stale branch, merges base conflicts it can settle, makes one verified fix and reruns flaky jobs once; under `local` and `suggest` it changes nothing on GitHub. A risky fix waits for a second model. |
 | `incident` | After merge: turns a red default-branch run or a production error into an `incident` issue, a reproducing test, the PR that caused it (by bisecting with that test), and a fix PR the loop then takes over. On a public repository, a security failure stops before any issue or test. |
 | `git-archaeology` | Traces how code reached its current state: when a line, function or file changed or left, and what it looked like before. |
 | `pair` | The act / act-and-say / stop-and-ask ladder that decides when to ask you. |
@@ -17,6 +17,7 @@ title: "Skills and human decisions"
 | `review-maintainability` | Coupling, rollout safety, observability, naming, and the repo's own written rules. |
 | `review-slop` | Low-signal code and prose: thrown-away types, defensive noise, tests that cannot fail, padded PR text. |
 | `review-spec` | The change against its issue or spec: requirements missing, built wrong, or not asked for. |
+| `branch-review` | A two-axis review (Standards and Spec) of work since a commit, branch or tag. It is Matt Pocock's `code-review` with this repository's GitHub issues as its tracker, so it needs no setup. |
 | `code-review`, `diagnosing-bugs`, `pr`, `retro`, `writing-for-agents` | [Matt Pocock's skills](https://github.com/mattpocock/skills), copied unchanged. `review-spec` runs code-review's Spec axis, `review-simplicity` adds its smell baseline, ci-repair diagnoses with diagnosing-bugs, shepherd writes PR bodies with pr when the repo has no PR skill, and garden sorts causes with retro and writes skill text by writing-for-agents. |
 | `lens-import` | Converts any skill, rule set or style guide into a lens with one id per rule, severity tags, Fix guidance and the source's licence, then registers and validates it. |
 | `garden` | The outer loop: scores shepherd's recent runs from GitHub and opens PRs with skill edits and lint rules for findings that keep recurring. |

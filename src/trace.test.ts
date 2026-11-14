@@ -19,7 +19,7 @@ describe("iteration trace", () => {
     recordEvent(f, { stage: "swarm", phase: "end", round: 1, outcome: "ok" }, at(30));
     recordEvent(f, { stage: "triage", phase: "start", round: 1 }, at(31));
     recordEvent(f, { stage: "triage", phase: "end", round: 1, outcome: "failed", retries: 2 }, at(50));
-    recordEvent(f, { stage: "stamp", phase: "start" }, at(51));
+    recordEvent(f, { stage: "gate", phase: "start" }, at(51));
 
     const { start, stages } = stagesFrom(readFileSync(f, "utf8"), at(90));
 
@@ -27,7 +27,7 @@ describe("iteration trace", () => {
     expect(stages).toEqual([
       { stage: "swarm", round: 1, start: at(0).toISOString(), end: at(30).toISOString(), outcome: "ok", retries: 0, head_sha: "abc1234" },
       { stage: "triage", round: 1, start: at(31).toISOString(), end: at(50).toISOString(), outcome: "failed", retries: 2, head_sha: undefined },
-      { stage: "stamp", round: undefined, start: at(51).toISOString(), end: at(90).toISOString(), outcome: "unfinished", retries: 0, head_sha: undefined },
+      { stage: "gate", round: undefined, start: at(51).toISOString(), end: at(90).toISOString(), outcome: "unfinished", retries: 0, head_sha: undefined },
     ]);
   });
 
@@ -47,7 +47,7 @@ describe("iteration trace", () => {
     expect(stagesFrom('not json\n{"at":"x","stage":"swarm","phase":"end"}\n', at(0)).stages).toEqual([]);
   });
 
-  test("attributes carry the keys that join shepherd's spans to stamp's and to CI", () => {
+  test("attributes carry the keys that join shepherd's spans to gate's and to CI", () => {
     const stages = stagesFrom([JSON.stringify({ at: at(0).toISOString(), stage: "triage", phase: "start", round: 2 }), JSON.stringify({ at: at(9).toISOString(), stage: "triage", phase: "end", round: 2, retries: 1 })].join("\n"), at(10)).stages;
 
     expect(iterationAttributes({ repo: "o/r", pr: 42, headSha: "abc1234", baseSha: "def5678", outcome: "converged", ciRun: 99, ciAttempt: 2, links: [] }, stages)).toEqual({
@@ -115,7 +115,7 @@ describe("iteration trace", () => {
 
     const { port } = z.object({ port: z.number() }).parse(server.address());
     const f = file();
-    const stampTrace = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const gateTrace = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
     recordEvent(f, { stage: "swarm", phase: "start", round: 1 }, at(0));
     recordEvent(f, { stage: "swarm", phase: "end", round: 1 }, at(20));
@@ -125,7 +125,7 @@ describe("iteration trace", () => {
     // A child process, so autotel's global tracer provider never touches the other tests.
     const script = `
       const { flush } = await import(${JSON.stringify(path.join(import.meta.dir, "trace.ts"))});
-      await flush(${JSON.stringify(f)}, { repo: "o/r", pr: 42, headSha: "abc1234", baseSha: undefined, outcome: "round-cap", ciRun: undefined, ciAttempt: undefined, links: [${JSON.stringify(stampTrace)}, "not-a-traceparent"] });`;
+      await flush(${JSON.stringify(f)}, { repo: "o/r", pr: 42, headSha: "abc1234", baseSha: undefined, outcome: "round-cap", ciRun: undefined, ciAttempt: undefined, links: [${JSON.stringify(gateTrace)}, "not-a-traceparent"] });`;
 
     const child = spawn("bun", ["-e", script], { cwd: path.join(import.meta.dir, ".."), env: { ...process.env, OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`, OTEL_EXPORTER_OTLP_PROTOCOL: "http/json" } });
 

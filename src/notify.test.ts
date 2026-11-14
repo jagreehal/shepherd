@@ -12,7 +12,7 @@ const EVENT: NotifyEvent = {
   url: "https://github.com/acme/api/pull/7",
   head_sha: "a".repeat(40),
   state: "failure",
-  description: "stamp refused: <!channel> retry loop never ends",
+  description: "gate refused: <!channel> retry loop never ends",
 };
 
 const HOOK = "https://example.com/hook";
@@ -44,7 +44,7 @@ function capture(status = 200) {
 
 describe("notify", () => {
   test("a Slack webhook gets escaped text; any other webhook gets the event as JSON", () => {
-    expect(JSON.parse(payload("https://hooks.slack.com/services/T/B/x", EVENT))).toEqual({ text: "*shepherd needs you* <https://github.com/acme/api/pull/7|acme/api#7>\nstamp refused: &lt;!channel&gt; retry loop never ends" });
+    expect(JSON.parse(payload("https://hooks.slack.com/services/T/B/x", EVENT))).toEqual({ text: "*shepherd needs you* <https://github.com/acme/api/pull/7|acme/api#7>\ngate refused: &lt;!channel&gt; retry loop never ends" });
     expect(JSON.parse(payload(HOOK, EVENT))).toEqual(EVENT);
   });
 

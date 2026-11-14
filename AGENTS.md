@@ -14,7 +14,7 @@ to all of them.
   text, and any gate that weighs reviews should too; a test pins it in swarm and
   triage.
 - **Swarm posts reviews with `event=COMMENT` only.** Approval belongs to a
-  human or stamp.
+  human or the gate.
 - **Triage never posts.** Its only GitHub mutations are commits and resolving
   all-automated threads. The report is the audit trail.
 - **A thread with any human in it is never fixed, resolved, or replied to** by a
@@ -34,7 +34,7 @@ to all of them.
   moving, or renaming files, no `AGENT_APPROVALS.md`, no placeholder for a
   flagged credential: nothing whose aim is to make a gate pass. Fixing the
   problem a gate names is ordinary work, and a deny-listed area still gets the
-  human review stamp asks for. ci-repair classifies a gate's failing check as
+  human review the gate asks for. ci-repair classifies a gate's failing check as
   `gate` and never edits code for it.
 - **Fixing is the default.** Any concrete, local finding is fixed at any
   severity. A contract change to code the PR introduces is fixed the way the
@@ -46,7 +46,7 @@ to all of them.
   everything it names is fixed.** Passing tests prove nothing about behaviour
   no test covers.
 - **The loop's state lives on the PR.** Every iteration sets
-  the `shepherd` commit status on the head: `success` only when stamp approved
+  the `shepherd` commit status on the head: `success` only when the gate approved
   and nothing is left open, no person's latest review requesting changes,
   `failure` naming what the author must do when the
   loop can do no more, `pending` otherwise. A green PR with shepherd stopped

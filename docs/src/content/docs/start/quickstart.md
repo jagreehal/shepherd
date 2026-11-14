@@ -38,7 +38,7 @@ shepherd config explain --working-tree
 shepherd preview --working-tree
 ```
 
-Add `--stacks` to give the policy a lens for each stack your repository uses (React, Next.js, Node APIs, Go, Rust, Java, .NET, Python). Expect `fixes.mode: suggest` in the generated policy and a plan with review steps. Under this mode, the agent posts findings and changes no code. A repository with no policy uses the built-in `push` mode; create and merge policy before you rely on review-only behaviour. If `.shepherd/config.yml` already exists, `init` refuses to overwrite it, so inspect the effective mode.
+Add `--stacks` to give the policy a lens for each stack your repository uses (React, Next.js, Node APIs, Go, Rust, Java, .NET, Python). Expect `fixes.mode: suggest` in the generated policy and a plan with review steps. Under this mode, the agent posts findings and changes no code. A repository with no policy uses the built-in `push` mode; create and merge policy before you rely on review-only behaviour. Rerunning `init` keeps an existing `.shepherd/config.yml`; `--preset` on it changes only `fixes.mode`. `shepherd config explain` shows the effective mode.
 
 Commit `.shepherd/config.yml` and merge it into the default branch. The PR workflow reads that trusted branch, not unmerged policy edits.
 
@@ -49,7 +49,7 @@ shepherd doctor
 shepherd config explain
 ```
 
-Fix lines marked `fail`. A missing Stamp workflow is a warning: you can review and fix without Stamp, but the PR loop cannot obtain its approval verdict. Other warnings include a CLI not on `PATH` and model IDs the harness cannot verify. Read each suggested action.
+Fix lines marked `fail`. A missing gate workflow is a warning: you can review and fix without the gate, but the PR loop cannot obtain its approval verdict. Other warnings include a CLI not on `PATH` and model IDs the harness cannot verify. Read each suggested action.
 
 ## 4. Review a PR
 
@@ -63,6 +63,13 @@ Replace `42` with your test PR number. Under review-only policy, expect a comple
 
 If your harness uses skill names without slash commands, ask it to load the `shepherd` skill and review PR 42. The skill's instructions remain the same.
 
+Once the workflows are merged, you can run the same review in GitHub Actions from the terminal instead:
+
+```bash
+shepherd review 42   # comments /shepherd on the PR and prints the run's URL
+shepherd status 42   # reviewing, fixing, waiting for CI, needs you or ready, and what to do next
+```
+
 ## 5. Choose the next mode
 
 | Mode | Agent may do | You do next |
@@ -75,4 +82,4 @@ Change `fixes.mode` in `.shepherd/config.yml`, validate and preview the change, 
 
 ## Next steps
 
-Add [team lenses and recipes](/shepherd/configuration/team-policy/), install [Stamp](/shepherd/integrations/stamp/), or enable [GitHub Actions](/shepherd/integrations/github-actions/). Use [troubleshooting](/shepherd/operations/troubleshooting/) if an expected step does not run.
+[Customize Shepherd for your team](/shepherd/start/customize/) with your own review rules, add [recipes](/shepherd/configuration/team-policy/), set up [the gate](/shepherd/integrations/gate/), or enable [GitHub Actions](/shepherd/integrations/github-actions/). Use [troubleshooting](/shepherd/operations/troubleshooting/) if an expected step does not run.

@@ -10,8 +10,11 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | --- | --- |
 | `shepherd install` | `--project`, `--target <dir>`, `--link`, `--force`; install the skill pack |
 | `shepherd uninstall` | `--project`, `--target <dir>`; remove files the installer owns |
-| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`, `--model <id>` (the session model, as `models.loop`); create repository policy, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
-| `shepherd doctor` | `--json`; diagnose local setup and repository policy |
+| `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`, `--model <id>` (the session model, as `models.loop`), `--yes`; create repository policy and the workflows, and set the model key and the approval setting on GitHub, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
+| `shepherd doctor` | `--json`; diagnose local setup and repository policy, and whether the model's key is a repository secret |
+| `shepherd review <pr>` | Comment `/shepherd` on the PR, which starts the loop in GitHub Actions, and print the run's URL |
+| `shepherd status <pr>` | Show the gate's verdict, the `shepherd` status and CI on the PR's head as one stage (reviewing, fixing, waiting for CI, needs you, ready) and the next step |
+| `shepherd help` | `--all`; the everyday commands, or every command including those the workflows call |
 | `shepherd config validate` | Validate working-tree policy and lens resolution |
 | `shepherd config schema` | Print the JSON Schema of `.shepherd/config.yml`, the one `schema/config.json` ships and `shepherd init` links to |
 | `shepherd config explain` | `--json`, `--working-tree`; show effective values and their sources. `--json` gives each lens's directory as `path`, a repository lens extracted from the default branch, and exits 1 naming any team lens that resolves nowhere |

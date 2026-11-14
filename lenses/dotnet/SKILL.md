@@ -1,6 +1,6 @@
 ---
 name: dotnet
-description: C# and ASP.NET Core rules for a code review. Flags code that deadlocks, leaks, trusts input or loses data in ways the compiler and Roslyn analysers miss. Covers sync-over-async and async void, cancellation tokens not passed, missing authorization on endpoints, unvalidated input and over-posting, raw SQL and commands built from input, unsafe deserialisation, EF Core N+1 and tracking pitfalls, DI lifetime mismatches, HttpClient misuse, disposables not disposed, swallowed exceptions, and API and entity contract changes. Use as a review lens or as a stamp rule pack.
+description: C# and ASP.NET Core rules for a code review. Flags code that deadlocks, leaks, trusts input or loses data in ways the compiler and Roslyn analysers miss. Covers sync-over-async and async void, cancellation tokens not passed, missing authorization on endpoints, unvalidated input and over-posting, raw SQL and commands built from input, unsafe deserialisation, EF Core N+1 and tracking pitfalls, DI lifetime mismatches, HttpClient misuse, disposables not disposed, swallowed exceptions, and API and entity contract changes. Use as a review lens or as a gate rule pack.
 ---
 
 # dotnet

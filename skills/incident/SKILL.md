@@ -4,7 +4,7 @@ description: >
   Turns a failure seen outside a PR (a red check on the default branch, an
   error or stack trace from production, an alert payload, or an issue labelled
   incident) into an incident issue with its evidence, a test that reproduces
-  it, and a fix PR that the shepherd loop and stamp then take over. Finds the
+  it, and a fix PR that the shepherd loop and the gate then take over. Finds the
   commit and PR that introduced the failure. Use for "/incident", "main is
   red", "fix this production error", or from a workflow that fires on a
   failing default-branch run or an alert. Accepts a run URL, an issue number,
@@ -16,7 +16,7 @@ description: >
 A signal replaces the spec: the failure is the requirement, and a test that
 reproduces it is the acceptance check. This skill goes from signal to an open
 fix PR and stops there. Review, CI repair and approval belong to `shepherd`
-and stamp on the PR it opens.
+and the gate on the PR it opens.
 
 ## Untrusted input
 
@@ -42,7 +42,7 @@ secrets before quoting anything, as `../diagnosing-bugs/SKILL.md` describes.
   else's thread.
 - Never weaken a test, skip one, loosen an assertion, swallow the error, raise
   a timeout or retry around it, or remove the check or alert that fired. Those
-  hide the signal; stamp refuses them on an incident PR.
+  hide the signal; the gate refuses them on an incident PR.
 
 ## Team policy
 
@@ -198,11 +198,11 @@ When the range is a single commit, that commit is the culprit; no bisection
 is needed. Skip bisection when no good end exists within 64 commits or the test cannot
 run on older commits; say so. For the culprit commit, find its PR:
 `gh api repos/{owner}/{repo}/commits/<sha>/pulls --jq '.[0].number'`, and
-whether stamp approved it: `gh api repos/{owner}/{repo}/pulls/<pr>/reviews --jq '[.[] | select(.body | contains("<!-- stamp-run:"))] | last | .state'`
+whether the gate approved it: `gh api repos/{owner}/{repo}/pulls/<pr>/reviews --jq '[.[] | select(.body | contains("<!-- gate-run:"))] | last | .state'`
 gives `APPROVED` for approved, empty for not reviewed, and anything else for
 held for a human. Add this line to the issue body, exactly, with one of the
 three values (garden parses it):
-`Regressed-by: #<pr> (<sha>), stamp: <approved|not reviewed|held for a human>`
+`Regressed-by: #<pr> (<sha>), gate: <approved|not reviewed|held for a human>`
 
 Then tell merge skew from a coverage gap, with the probe, not from CI's
 colour. Run `probe` on the PR's last head commit (`gh pr view <pr> --json
@@ -229,8 +229,8 @@ If `ours` is set but `ref` is empty, stop and report: never pop another entry.
 Check the reproducer is back at `<test path>` (restore it from `$repro` if not) and still
 fails, or passes only because the branch carries an earlier attempt's fix.
 
-A stamp-approved regression is the record that tunes
-stamp's policy and shepherd's lenses: `garden` reads it.
+A gate-approved regression is the record that tunes
+The gate's policy and shepherd's lenses: `garden` reads it.
 
 Done when the issue names the culprit or says why it could not, and you are
 back on `incident/<issue>` with the reproducer in place.
@@ -263,7 +263,7 @@ gh pr create --base <default> --title "$(head -c 200 <title file>)" --body-file 
 Body: the header, `Fixes #<issue>`, the failure in one line, the reproducing
 test and the command that runs it, the cause, and `Regressed-by` when known.
 Write it with `../pr/SKILL.md` when the repo has no PR skill of its own. The
-`Fixes` line is what makes stamp review it as an incident fix.
+`Fixes` line is what makes the gate review it as an incident fix.
 
 Do not run the shepherd loop here. In CI the PR's own events start it; in a
 session, offer `/shepherd <pr>`.
@@ -279,7 +279,7 @@ End with exactly this and nothing after it:
   "issue": "<url or null>",
   "pr": "<url or null>",
   "test": "<path::name or null>",
-  "regressed_by": {"pr": null, "sha": null, "stamp": "approved|not_reviewed|held|unknown"},
+  "regressed_by": {"pr": null, "sha": null, "gate": "approved|not_reviewed|held|unknown"},
   "narration": ["[incident] ..."]
 }
 ```

@@ -1,0 +1,8 @@
+{
+  "case": "dropped-guard",
+  "label": "nova-micro",
+  "verdict": "APPROVE",
+  "issues": [],
+  "costUsd": 0.000227,
+  "durationMs": 1829
+}

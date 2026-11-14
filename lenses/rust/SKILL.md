@@ -1,6 +1,6 @@
 ---
 name: rust
-description: Rust rules for a code review. Flags code that compiles and passes clippy but panics, blocks, leaks or breaks soundness in production. Covers unsafe blocks without a SAFETY argument, unwrap and expect on fallible input, panics across FFI, blocking calls in async code, locks held across await, unbounded channels and spawns, lost errors, integer overflow in release builds, untrusted deserialisation limits, SQL and commands built from input, and public API and serde changes. Use as a review lens or as a stamp rule pack.
+description: Rust rules for a code review. Flags code that compiles and passes clippy but panics, blocks, leaks or breaks soundness in production. Covers unsafe blocks without a SAFETY argument, unwrap and expect on fallible input, panics across FFI, blocking calls in async code, locks held across await, unbounded channels and spawns, lost errors, integer overflow in release builds, untrusted deserialisation limits, SQL and commands built from input, and public API and serde changes. Use as a review lens or as a gate rule pack.
 ---
 
 # rust

@@ -49,13 +49,13 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { parse as parseYaml, stringify } from "yaml";
+import { parse as parseYaml, parseDocument, stringify } from "yaml";
 import { z } from "zod";
-import { branding, CI_DEFAULT_MODEL, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
-import { commentableLines, renderReview, renderSummary, reviewedTips, roundCoverage } from "./summary.ts";
+import { branding, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
+import { commentableLines, type OpenThread, renderReview, renderSummary, reviewedTips, roundCoverage, swarmThreads } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
-import { fileLedger, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
+import { fileLedger, LEDGER_CONTEXT, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
 import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
@@ -66,12 +66,34 @@ import { numberDiff } from "./diff.ts";
 import { formatLeads, leadsAt } from "./leads.ts";
 import { prInterdiff, prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { addLens, BUILT_IN_LENSES, ciOpencodeConfig, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setCi, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
+import { compareDiff, latestVerdict, listReviews, openThreadCount } from "../gate/src/github.ts";
+import { approvedDiffUnchanged } from "../gate/src/retention.ts";
+import { githubSetup, KEY_MODELS, modelProblem, pickModel } from "./setup.ts";
+import { type PrFacts, prStatus } from "./status.ts";
+import { DEFAULT_LOOK, isWorkingNote, WORKING_IMAGE, workingNote } from "./working.ts";
+import { addLens, sharedModelProblem, BUILT_IN_LENSES, ciOpencodeConfig, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setCi, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
 
+
 /** This CLI's version: workflows and the policy's schema line pin to it. */
 const bundleVersion = () => z.object({ version: z.string() }).parse(JSON.parse(readFileSync(path.join(BUNDLE_ROOT, "package.json"), "utf8"))).version;
+
+const HELP = `usage: shepherd <command>
+
+commands:
+  init        set up this repository: config, workflows, secrets on GitHub
+  doctor      check the setup can run, and say what to fix
+  review      start a review of a PR in GitHub Actions and print the run's URL
+  status      where a PR is (reviewing, fixing, waiting for CI, needs you, ready) and what to do next
+  gate        the approval gate's verdict on a PR, here or posted to it
+  config      inspect the settings and where each comes from (explain, validate)
+  models      show or set the model for each tier
+  lens        list or add review lenses
+  workflows   write or upgrade the workflow files
+  local       whether a local review covered your branch
+
+  shepherd help --all lists every command, including those the workflows call.`;
 
 const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [--force]
        shepherd uninstall [--project | --target <dir>]
@@ -86,7 +108,10 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd local finish <record.json> [--base <ref>]
        shepherd local status [--base <ref>]
        shepherd local demo [<dir>]
-       shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks] [--model <id>]
+       shepherd init [--preset review-only|local-fix|push] [--from <pack>] [--stacks] [--model <id>] [--yes]
+       shepherd review <pr>
+       shepherd status <pr>
+       shepherd gate <pr> [--post] (shepherd gate --help for its options)
        shepherd config validate
        shepherd config schema
        shepherd config explain [--json] [--working-tree]
@@ -113,12 +138,15 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd eval import <case-id> <comments.json> --config <label> --login <reviewer> [--cost <usd>] [--duration-ms <n>]
        shepherd model-id <provider:model | provider/model>
        shepherd workflows [--audit] [--upgrade] [--model <id>] [--environment <name>] [--label <name>] [--aws-region <region>]
+       shepherd working --pr <n> --repo <owner/repo> [--head <sha>]
        shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state success|failure|pending|error --file <description.txt>`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     project: { type: "boolean", default: false },
+    all: { type: "boolean", default: false }, // help: every command, not only the everyday ones
+    help: { type: "boolean", short: "h", default: false },
     target: { type: "string" },
     link: { type: "boolean", default: false }, // symlink instead of copy: for a local clone you edit, never for bunx
     force: { type: "boolean", default: false },
@@ -151,6 +179,7 @@ const { values: opts, positionals } = parseArgs({
     label: { type: "string" }, // workflows: ci.label, the handoff label
     "aws-region": { type: "string" }, // workflows: ci.aws_region, for a bedrock: model
     stacks: { type: "boolean", default: false }, // init: add a lens for each stack the repository uses
+    yes: { type: "boolean", short: "y", default: false }, // init: set the secrets and the approval setting without asking
     pr: { type: "string" }, // acceptance: the PR whose threads must stay as they were; trace: the PR; summary, inline: the PR whose review threads a link may name
     round: { type: "string" }, // trace: the quality-loop round
     outcome: { type: "string" }, // trace: how a step or iteration ended
@@ -165,7 +194,7 @@ const { values: opts, positionals } = parseArgs({
     repo: { type: "string" }, // trace flush: owner/repo
     "ci-run": { type: "string" },
     "ci-attempt": { type: "string" },
-    related: { type: "string", multiple: true }, // trace flush: traceparent of a related trace, such as stamp's review
+    related: { type: "string", multiple: true }, // trace flush: traceparent of a related trace, such as gate's review
     config: { type: "string" }, // eval run: the label runs are grouped and compared under
     repeat: { type: "string", default: "1" }, // eval run: reviews per case; one run says little about a model
     out: { type: "string" }, // eval run: where run files go, default evals/runs
@@ -195,10 +224,37 @@ const report = (outcomes: Outcome[]) => {
 
 const [command, sub, skillRef, ...rest] = positionals;
 
+// Before any command runs: `shepherd init --help` must not set anything up.
+if (opts.help) {
+  const forms = USAGE.split("\n").filter((l) => command && l.trim().startsWith(`shepherd ${command} `));
+
+  console.log(forms.length ? `usage:\n${forms.join("\n")}` : HELP);
+  process.exit(0);
+}
+
 /**
  * The URLs of the review comments on the PR as GitHub gives them (`--pr`, or `$PR` in CI, with `$GITHUB_REPOSITORY`), so
  * a rendered thread link can only name a thread that exists on this PR. Unknown (no PR, gh failing): undefined, and links are kept as the round gave them.
  */
+/** The PR's open swarm threads (`swarmThreads`), so a finding swarm marked as a repeat joins its thread. */
+function openThreads(): OpenThread[] {
+  const pr = opts.pr ?? process.env.PR;
+  const [owner, name] = (process.env.GITHUB_REPOSITORY ?? "").split("/");
+
+  if (!pr || !/^\d+$/.test(pr) || !owner || !name) return [];
+  const query = "query($owner:String!,$name:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url body author{login __typename}}}}}}}}";
+  const Node = z.object({ isResolved: z.boolean(), comments: z.object({ nodes: z.array(z.object({ url: z.string(), body: z.string(), author: z.object({ login: z.string(), __typename: z.string() }).nullable() })) }) });
+  const Out = z.object({ viewer: z.object({ login: z.string() }).nullable(), repository: z.object({ pullRequest: z.object({ reviewThreads: z.object({ nodes: z.array(Node) }) }) }) });
+
+  try {
+    const out = Out.parse(JSON.parse(execFileSync("gh", ["api", "graphql", "-f", `query=${query}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${pr}`, "--jq", ".data"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 })));
+
+    return swarmThreads(out.repository.pullRequest.reviewThreads.nodes, out.viewer?.login ?? null);
+  } catch {
+    return [];
+  }
+}
+
 function reviewThreads(): Set<string> | undefined {
   const pr = opts.pr ?? process.env.PR;
 
@@ -224,7 +280,7 @@ const orExit = <T>(run: () => T): T => {
 };
 
 // Secrets config explain shows only as set or unset.
-const SECRETS = ["SHEPHERD_TOKEN", "SHEPHERD_API_KEY", "SHEPHERD_NOTIFY_WEBHOOK", ...new Set(PROVIDER_KEY_ENVS)];
+const SECRETS = ["SHEPHERD_TOKEN", "SHEPHERD_NOTIFY_WEBHOOK", ...new Set(PROVIDER_KEY_ENVS)];
 
 const MERGE_NOTE = "shepherd reads .shepherd/ from the default branch: commit and merge it before it takes effect.";
 
@@ -411,9 +467,9 @@ if (command === "install") {
   // Every key the plan's models read, so the workflow can drop the rest before the model runs.
   const keyEnvs = [...new Set([session, ...Object.values(opencode.agent).map((a) => a.model)].flatMap((m) => providerKeyEnv(m) ?? []))].sort();
 
-  console.log(JSON.stringify({ model: session, source, key_env: providerKeyEnv(session), key_envs: keyEnvs, opencode }));
+  console.log(JSON.stringify({ model: session, source, key_envs: keyEnvs, opencode }));
 } else if (command === "model-id" && sub) {
-  // A model id as OpenCode spells it, so stamp's provider:model spelling works in a local OpenCode run too.
+  // A model id as OpenCode spells it, so gate's provider:model spelling works in a local OpenCode run too.
   console.log(opencodeModel(sub));
 } else if (command === "stack" && sub) {
   // Which diff to review: the delta over an open stacked parent, or nothing at all when the base is wrong.
@@ -443,6 +499,13 @@ if (command === "install") {
   // A later round's focus: the PR's own change since the head swarm last reviewed, without the base's commits.
   console.log(JSON.stringify(orExit(() => prInterdiff(sub, opts.head ?? "HEAD", skillRef, repoRoot, opts["since-base"])), null, 2));
 } else if (command === "workflows") {
+  const problem = opts.model ? sharedModelProblem(opts.model) : null;
+
+  if (problem) {
+    console.error(problem);
+    process.exit(2);
+  }
+
   const dest = path.join(repoRoot, ".github", "workflows");
 
   mkdirSync(dest, { recursive: true });
@@ -482,6 +545,12 @@ if (command === "install") {
     console.log(`wrote     .github/workflows/${name}`);
   }
 
+  // The approval gate's workflows and policy too, so one command sets up the loop and the gate. No --model: the
+  // gate reads models.loop, pinned below, so a later --model moves both.
+  const gateArgs = ["init", ...(opts.upgrade ? ["--upgrade"] : []), ...(opts.environment ? ["--environment", opts.environment] : []), ...(opts["aws-region"] ? ["--region", opts["aws-region"]] : [])];
+
+  if (spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "gate", "src", "cli.ts"), ...gateArgs], { cwd: repoRoot, stdio: "inherit" }).status !== 0) process.exitCode = 1;
+
   // Settings go in the team policy, reviewed and versioned, rather than in repository variables.
   if (opts.model) {
     orExit(() => pinModel(repoLensFile(repoRoot), "loop", opts.model!));
@@ -514,7 +583,7 @@ if (command === "install") {
   const token = pushes ? "add SHEPHERD_TOKEN as a repository secret and " : "";
   const later = pushes ? "" : "SHEPHERD_TOKEN is not needed until fixes.mode is push.\n";
 
-  console.log(`\nNext: name your CI workflow in each file's \`workflows:\` list, ${token}add the model key (SHEPHERD_API_KEY, or the provider's own) ${keys}, then merge.\n${later}${model}Other settings (label, aws_region, notify_on, push_deny...) go under ci: in .shepherd/config.yml; shepherd config explain lists them. Optional secret: SHEPHERD_NOTIFY_WEBHOOK (Slack or any JSON endpoint).`);
+  console.log(`\nNext: name your CI workflow in each file's \`workflows:\` list, ${token}add the model key under the provider's own name ${keys}, then merge.\n${later}${model}Other settings (label, aws_region, notify_on, push_deny...) go under ci: in .shepherd/config.yml; shepherd config explain lists them. Optional secret: SHEPHERD_NOTIFY_WEBHOOK (Slack or any JSON endpoint).`);
 } else if (command === "notify") {
   const pr = Number(opts.pr);
   const state = STATES.find((s) => s === opts.state);
@@ -549,46 +618,162 @@ if (command === "install") {
     process.exit(process.exitCode ?? 0);
   }
 
-  if (existsSync(file)) orExit(() => { throw new Error(`${TEAM_FILES[0]} already exists; edit it, add stack lenses with shepherd init --stacks, then run shepherd config validate`); });
-  const legacy = workingTree(TEAM_FILES[1]!);
-  const seed = legacy ? orExit(() => ConfigSchema.parse(parseYaml(legacy) ?? {})) : { lenses: {} };
-  // Every repository starts review-only, a migration too: push needs SHEPHERD_TOKEN and lets the bot push, so it is
-  // opted into, never inherited. A pack or a legacy fixes: keeps its mode.
-  const preset = opts.preset ?? (opts.from || seed.fixes ? undefined : "review-only");
+  const presetMode = Object.entries(PRESETS).find(([name]) => name === opts.preset)?.[1];
 
-  const mode = Object.entries(PRESETS).find(([name]) => name === preset)?.[1];
+  if (opts.preset && !presetMode) orExit(() => { throw new Error(`--preset is one of ${Object.keys(PRESETS).join(", ")}`); });
 
-  if (preset && !mode) orExit(() => { throw new Error(`--preset is one of ${Object.keys(PRESETS).join(", ")}`); });
-  const config: Config = { ...seed };
+  // Rerunnable: an existing policy is kept, and the rest of setup still runs. --preset on it changes only fixes.mode.
+  const kept = existsSync(file);
 
-  if (opts.from) config.extends = [opts.from, ...(seed.extends ?? [])];
+  if (kept && presetMode) {
+    const doc = parseDocument(readFileSync(file, "utf8"));
 
-  if (mode) config.fixes = { mode };
-
-  if (opts.model) config.models = { ...config.models, loop: opts.model }; // the session model, in the reviewed policy
-  const stacks = detectStacks(trackedFiles(), workingTree);
-
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${schemaLine(bundleVersion())}\n# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.\n${stringify(config)}`);
-  console.log(`wrote ${TEAM_FILES[0]}${preset ? ` (preset ${preset})` : ""}${opts.model ? ` with models.loop ${opts.model}` : ""}${legacy ? ` from ${TEAM_FILES[1]} (delete it: ${TEAM_FILES[0]} now wins)` : ""}`);
-
-  if (legacy && !opts.preset && !seed.fixes) console.log(`${TEAM_FILES[1]} pushed fixes; this policy starts review-only. To keep pushing: rm ${TEAM_FILES[0]} && shepherd init --preset push`);
-
-  // After the file exists, so a pack named by --from counts as already providing its lenses.
-  if (opts.stacks) addStackLenses(file);
+    doc.setIn(["fixes", "mode"], presetMode);
+    writeFileSync(file, doc.toString());
+    console.log(`set       fixes.mode: ${doc.getIn(["fixes", "mode"])} in ${TEAM_FILES[0]}`);
+  } else if (kept) console.log(`kept      ${TEAM_FILES[0]}`);
   else {
-    if (stacks.length) console.log(`detected ${stacks.join(", ")}: run shepherd init --stacks to add their lenses, or extend github:jagreehal/shepherd/packs/<stack>.yml@<sha>`);
-    pstackHint("pstack" in policy(true).lenses);
-  }
+    const legacy = workingTree(TEAM_FILES[1]!);
+    const seed = legacy ? orExit(() => ConfigSchema.parse(parseYaml(legacy) ?? {})) : { lenses: {} };
+    // Every repository starts review-only, a migration too: push needs SHEPHERD_TOKEN and lets the bot push, so it is
+    // opted into, never inherited. A pack or a legacy fixes: keeps its mode.
+    const preset = opts.preset ?? (opts.from || seed.fixes ? undefined : "review-only");
 
-  const named = policy(true);
+    const mode = Object.entries(PRESETS).find(([name]) => name === preset)?.[1];
 
-  if (!Object.keys(named.tiers).length && !named.ladder && !Object.keys(named.models).length) {
-    console.log(`models: none named. Locally runners use your harness's models; in CI the session runs on ${CI_DEFAULT_MODEL}.\n  Name a cheap and a strong model, then give roles to them:\n    shepherd models tier fast <provider:model>\n    shepherd models tier smart <provider:model>\n    shepherd models ladder fast smart\n    shepherd models pin reviewers fast   (and: pin fixers smart, pin loop smart)`);
+    if (preset && !mode) orExit(() => { throw new Error(`--preset is one of ${Object.keys(PRESETS).join(", ")}`); });
+    const config: Config = { ...seed };
+
+    if (opts.from) config.extends = [opts.from, ...(seed.extends ?? [])];
+
+    if (mode) config.fixes = { mode };
+
+    if (opts.model) config.models = { ...config.models, loop: opts.model }; // the session model, in the reviewed policy
+    const stacks = detectStacks(trackedFiles(), workingTree);
+
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${schemaLine(bundleVersion())}\n# shepherd team policy. Presets: review-only (fixes.mode suggest), local-fix (local), push.\n${stringify(config)}`);
+    console.log(`wrote ${TEAM_FILES[0]}${preset ? ` (preset ${preset})` : ""}${opts.model ? ` with models.loop ${opts.model}` : ""}${legacy ? ` from ${TEAM_FILES[1]} (delete it: ${TEAM_FILES[0]} now wins)` : ""}`);
+
+    if (legacy && !opts.preset && !seed.fixes) console.log(`${TEAM_FILES[1]} pushed fixes; this policy starts review-only. To keep pushing: rm ${TEAM_FILES[0]} && shepherd init --preset push`);
+
+    // After the file exists, so a pack named by --from counts as already providing its lenses.
+    if (opts.stacks) addStackLenses(file);
+    else {
+      if (stacks.length) console.log(`detected ${stacks.join(", ")}: run shepherd init --stacks to add their lenses, or extend github:jagreehal/shepherd/packs/<stack>.yml@<sha>`);
+      pstackHint("pstack" in policy(true).lenses);
+    }
   }
 
   validate();
-  console.log(`\nBefore you merge it:\n  shepherd config explain --working-tree   every setting and where it came from\n  shepherd preview --working-tree          what would run on your change, and what it can write\n${MERGE_NOTE}`);
+
+  // The rest of a first run: one model for the loop and the gate, the workflows and the gate's files, then GitHub.
+  // Team policy only, packs included and no personal layer: what CI will read, so an inherited model or push mode
+  // counts as the repository's own and a personal pin never does.
+  const resolved = orExit(() => loadPolicy(workingTree, ghFetch, null));
+  const pick = pickModel(opts.model, resolved.models.loop, process.env);
+  const problem = pick && modelProblem(pick.model);
+
+  if (problem) {
+    console.error(problem);
+    process.exit(2);
+  }
+
+  // Only a new choice is written: a rerun keeps the model the policy names.
+  const wf = spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "src", "bin.ts"), "workflows", ...(pick?.chosen ? ["--model", pick.model] : [])], { cwd: repoRoot, encoding: "utf8" });
+
+  for (const line of `${wf.stdout}${wf.stderr}`.split("\n")) if (/^(wrote|created|upgraded|pinned|scoped)\b/.test(line)) console.log(line); // a rerun's kept files are not news
+
+  if (wf.status !== 0) orExit(() => { throw new Error(`writing the workflows failed:\n${wf.stderr}`); });
+  console.log(pick ? `model     ${pick.model} (${pick.why})` : `model     none found: set ${KEY_MODELS.map(([k]) => k).join(", ")} or pass --model provider/model`);
+
+  // Push mode publishes fixes with SHEPHERD_TOKEN: without it every fix bundle is refused, so it is part of setup.
+  const pushes = resolved.fixes.value.mode === "push";
+  const secrets = [...(pick?.key ? [pick.key] : []), ...(pushes ? ["SHEPHERD_TOKEN"] : [])].map((name) => ({ name, value: process.env[name]?.trim() || undefined }));
+
+  if (pushes) console.log("token     push mode needs SHEPHERD_TOKEN: a fine-grained PAT with contents, pull requests and commit statuses (read/write) on this repository");
+
+  const view = spawnSync("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], { cwd: repoRoot, encoding: "utf8" });
+  const repo = view.status === 0 ? view.stdout.trim() : "";
+  const ask = () => opts.yes || (process.stdin.isTTY === true && /^(y|yes|)$/i.test((prompt(`\nOn ${repo}: ${secrets.length ? `set ${secrets.map((x) => x.name).join(" and ")}, and ` : ""}let Actions approve PRs? [Y/n]`) ?? "n").trim()));
+  const todo: string[] = [];
+
+  if (repo && ask()) {
+    const gh = (args: string[], input?: string) => {
+      const r = spawnSync("gh", args, { cwd: repoRoot, encoding: "utf8", input });
+
+      return { ok: r.status === 0, out: r.stdout ?? "" };
+    };
+
+    const done = githubSetup(gh, { repo, secrets });
+
+    for (const line of done.lines) console.log(line);
+    todo.push(...done.todo);
+  } else todo.push(...secrets.map((x) => `gh secret set ${x.name}`), "allow Actions to approve PRs (Settings → Actions → General)");
+
+  // Committing is the user's, like any change: one command, on a branch of their choosing.
+  const fixMode = resolved.fixes.value.mode;
+  const changed = spawnSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ".shepherd", ".github/workflows"], { cwd: repoRoot, encoding: "utf8" }).stdout?.split("\n").filter(Boolean).map((l) => l.slice(3)) ?? [];
+  const MODES = { suggest: "reviews and suggests fixes, never pushes", local: "fixes stay in your working tree", push: "pushes fixes to the PR's branch" } as const;
+
+  console.log(`\nmode      ${fixMode}: ${MODES[fixMode]} (fixes.mode in ${TEAM_FILES[0]})`);
+  console.log(`commit    ${changed.length ? changed.join(", ") : "nothing new"}`);
+  console.log(`missing   ${todo.length ? todo.join("; ") : "nothing"}`);
+  console.log(["", "Next", ...(changed.length ? ["  git add .shepherd .github/workflows && git commit -m 'Set up shepherd', then open a PR and merge it"] : []), "  shepherd doctor        once merged: checks the workflows and the model key on GitHub", "  shepherd review <pr>   on any PR, then shepherd status <pr>"].join("\n"));
+
+} else if (command === "working" && opts.pr && opts.repo) {
+  // The workflow's "shepherd is reviewing" note: posted, or refreshed for a new run. The finalizer deletes it.
+  const api = (args: string[]) => spawnSync("gh", ["api", ...args], { encoding: "utf8" });
+  const listed = api([`repos/${opts.repo}/issues/${opts.pr}/comments`, "--paginate", "--jq", ".[] | {id, user: {login: .user.login}, body}"]);
+  const note = (listed.stdout ?? "").split("\n").filter(Boolean).map((l) => z.object({ id: z.number(), user: z.object({ login: z.string() }), body: z.string() }).parse(JSON.parse(l))).find(isWorkingNote);
+
+  // The default branch's branding, as every other comment uses; the defaults when it cannot be read.
+  const look = (() => {
+    try {
+      const b = branding(loadPolicy(defaultBranchReader(repoRoot), ghFetch, null));
+
+      return b.name === "Shepherd" && !b.avatarUrl ? DEFAULT_LOOK : { name: b.name, header: b.headers.swarm, image: b.avatarUrl || WORKING_IMAGE };
+    } catch {
+      return DEFAULT_LOOK;
+    }
+  })();
+
+  const body = workingNote(opts.head ?? "", `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${opts.repo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`, look);
+  const posted = api(note ? ["-X", "PATCH", `repos/${opts.repo}/issues/comments/${note.id}`, "-f", `body=${body}`] : [`repos/${opts.repo}/issues/${opts.pr}/comments`, "-f", `body=${body}`]);
+
+  if (posted.status !== 0) console.error(`could not post the note: ${posted.stderr.trim()}`);
+} else if (command === "status" && sub) {
+  const s = prStatus(orExit(() => prFacts(Number(sub))));
+
+  for (const line of s.lines) console.log(line);
+  console.log(`\nstage     ${s.stage}\nnext      ${s.next}`);
+} else if (command === "review" && sub) {
+  // The loop runs in GitHub Actions, not here: a `/shepherd` comment starts it, as one typed on the PR would.
+  const since = new Date(Date.now() - 5_000).toISOString();
+  const posted = spawnSync("gh", ["pr", "comment", sub, "--body", "/shepherd"], { cwd: repoRoot, encoding: "utf8" });
+
+  if (posted.status !== 0) orExit(() => { throw new Error(`could not comment on PR ${sub}: ${posted.stderr.trim()}`); });
+  console.error(`commented /shepherd on PR #${sub}; the review runs in GitHub Actions. Follow it with: shepherd status ${sub}`);
+  // The comment's run checks who asked, then dispatches the iteration for this PR; both carry the PR in their title.
+  // The iteration is the one to follow, so wait for it, and fall back to the comment's run, which says why it stopped.
+  const Runs = z.array(z.object({ url: z.string(), createdAt: z.string(), displayTitle: z.string(), event: z.string() }));
+  let url = "";
+  let fallback = "";
+
+  for (let i = 0; i < 20 && !url; i++) {
+    Bun.sleepSync(3_000);
+    const r = spawnSync("gh", ["run", "list", "--workflow", "shepherd.yml", "--limit", "30", "--json", "url,createdAt,displayTitle,event"], { cwd: repoRoot, encoding: "utf8" });
+    const mine = r.status === 0 ? Runs.parse(JSON.parse(r.stdout)).filter((x) => x.createdAt >= since && x.displayTitle === `shepherd ${sub}`) : [];
+
+    url = mine.find((x) => x.event === "workflow_dispatch")?.url ?? "";
+    fallback ||= mine.find((x) => x.event === "issue_comment")?.url ?? "";
+  }
+
+  url ||= fallback;
+
+  // Only the URL on stdout, so a script can open or pass it on.
+  if (url) console.log(url);
+  else console.error("no run for this PR yet: see the repository's Actions tab (workflows from before shepherd workflows --upgrade do not name the PR)");
 } else if (command === "config" && sub === "schema") {
   // The JSON Schema editors validate .shepherd/config.yml against; schema/config.json is this output.
   console.log(JSON.stringify(configJsonSchema(), null, 2));
@@ -636,7 +821,7 @@ if (command === "install") {
   // Read from the reviewed checkout, as inline does, so both place each suggestion on the same lines.
   const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : null);
 
-  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads(), read)));
+  process.stdout.write(orExit(() => renderSummary(input, b.emoji, opts.body ? null : b.headers.swarm, previous, fanout, reviewThreads(), read, openThreads())));
 } else if (command === "inline" && sub) {
   // Swarm's inline review, rendered from the same round JSON: the payload for POST /pulls/<n>/reviews.
   const input = orExit(() => JSON.parse(readFileSync(sub, "utf8")));
@@ -649,7 +834,7 @@ if (command === "install") {
   const diff = opts.diff ? readFileSync(opts.diff, "utf8") : undefined;
   const [commentable, removable] = diff === undefined ? [] : [commentableLines(diff), commentableLines(diff, "LEFT")];
 
-  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads(), commentable, removable)), null, 2));
+  console.log(JSON.stringify(orExit(() => renderReview(input, b.emoji, b.headers.swarm, read, reviewThreads(), commentable, removable, openThreads())), null, 2));
 } else if (command === "fanout") {
   // Swarm's first wave, dispatched in one message beside the router: correctness on the whole diff and every custom
   // lens whose applies_to matches a changed file, with its directory. The CLI lists them so no model skips one.
@@ -775,9 +960,66 @@ if (command === "install") {
   if (crashed) console.log(`error: ${crashed}`);
   console.log(problems.length ? `failed fixes.mode ${sub}` : crashed ? "inconclusive: the agent did not finish" : `ok: the run kept to fixes.mode ${sub}`);
   process.exitCode = problems.length ? 1 : crashed ? 2 : 0;
+} else if (command === "help" || !command) {
+  console.log(opts.all ? USAGE : HELP);
 } else {
-  console.error(USAGE);
+  const known = USAGE.split("\n").filter((l) => l.trim().startsWith(`shepherd ${command} `) || l.trim() === `shepherd ${command}`);
+
+  console.error(known.length ? `usage:\n${known.join("\n")}` : `unknown command: ${command}\n\n${HELP}`);
   process.exit(2);
+}
+
+/** What `shepherd status` folds into a stage: the PR, the gate's latest verdict, the `shepherd` status and CI on the head. */
+function prFacts(pr: number): PrFacts {
+  const run = (args: string[]) => {
+    const r = spawnSync("gh", args, { cwd: repoRoot, encoding: "utf8" });
+
+    if (r.status !== 0) throw new Error(`gh ${args.slice(0, 2).join(" ")} failed: ${r.stderr.trim()}`);
+
+    return JSON.parse(r.stdout || "null");
+  };
+
+  const view = z.object({ state: z.string(), headRefOid: z.string(), baseRefName: z.string(), url: z.string() }).parse(run(["pr", "view", String(pr), "--json", "state,headRefOid,baseRefName,url"]));
+  const head = view.headRefOid;
+  const repo = z.string().parse(run(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner | tojson"]));
+  const reviews = listReviews(repo, pr, repoRoot);
+  // A person's latest approving or blocking review stands until they review again; a comment changes nothing.
+  const latestByPerson = new Map(reviews.filter((r) => !r.user.login.endsWith("[bot]") && /^(APPROVED|CHANGES_REQUESTED|DISMISSED)$/.test(r.state)).map((r) => [r.user.login, r.state]));
+
+  // Commit statuses, latest per context: shepherd's own, and CI that reports outside Actions.
+  const statuses = z.array(z.object({ context: z.string(), state: z.string(), description: z.string().nullable(), target_url: z.string().nullable() })).parse(run(["api", `repos/${repo}/commits/${head}/status`, "--jq", ".statuses"]));
+  const own = statuses.find((s) => s.context === "shepherd");
+  const external = statuses.flatMap((s) => (s.context === "shepherd" || s.context === LEDGER_CONTEXT ? [] : [{ name: s.context, status: s.state === "pending" ? "in_progress" : "completed", conclusion: s.state === "error" ? "failure" : s.state, url: s.target_url ?? "" }]));
+
+  // Actions by workflow, newest run each; other apps' check runs (Actions' own are its jobs, already counted).
+  const runs = z.array(z.object({ workflowName: z.string(), status: z.string(), conclusion: z.string(), url: z.string() })).parse(run(["run", "list", "--commit", head, "--json", "workflowName,status,conclusion,url"]));
+  const workflows = runs.filter((r, i) => runs.findIndex((o) => o.workflowName === r.workflowName) === i);
+  const checks = z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable(), html_url: z.string().nullable(), app: z.object({ slug: z.string() }).nullable() })).parse(run(["api", `repos/${repo}/commits/${head}/check-runs?per_page=100`, "--jq", ".check_runs"]));
+  const otherApps = checks.flatMap((c) => (c.app?.slug === "github-actions" ? [] : [{ name: c.name, status: c.status, conclusion: c.conclusion ?? "", url: c.html_url ?? "" }]));
+
+  // The gate keeps an approval across a push that leaves the PR's diff byte-identical, without a new review: check
+  // the same thing it checks, so a kept approval reads as current and a stale one does not.
+  const verdict = latestVerdict(reviews);
+
+  const kept = verdict?.verdict === "APPROVED" && !head.startsWith(verdict.head) && verdict.base !== "" && !verdict.evidenceUnseen && (() => {
+    try {
+      return approvedDiffUnchanged(compareDiff(repo, verdict.base, verdict.head, repoRoot), compareDiff(repo, view.baseRefName, head, repoRoot));
+    } catch {
+      return false;
+    }
+  })();
+
+  return {
+    pr,
+    state: view.state,
+    head,
+    url: view.url,
+    gate: verdict && { verdict: verdict.verdict, head: verdict.head, kept },
+    shepherd: own && { state: own.state, description: own.description ?? "" },
+    changesRequested: [...latestByPerson].flatMap(([login, state]) => (state === "CHANGES_REQUESTED" ? [login] : [])),
+    openThreads: openThreadCount(repo, pr, repoRoot),
+    runs: [...workflows.map((r) => ({ name: r.workflowName, status: r.status, conclusion: r.conclusion, url: r.url })), ...otherApps, ...external],
+  };
 }
 
 function trackedFiles(): string[] {

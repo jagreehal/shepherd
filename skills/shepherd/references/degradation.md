@@ -3,8 +3,8 @@
 **Always say which degradation you took**, in the narration and the summary. A
 run missing two of its runners looks identical to a clean one otherwise.
 
-- **triage missing:** skip it; run ci-repair and stamp. Report thread counts as unknown.
-- **ci-repair missing:** skip the base update and CI repair; stamp runs against
+- **triage missing:** skip it; run ci-repair and the gate. Report thread counts as unknown.
+- **ci-repair missing:** skip the base update and CI repair; the gate runs against
   `H1`. Report CI as unknown.
 - **swarm missing:** skip review in every round. Triage still handles existing
   bot threads, and simplify still runs.
@@ -14,7 +14,7 @@ run missing two of its runners looks identical to a clean one otherwise.
   skill bodies. They then cost session-model rates, so on a budget prefer
   skipping a runner to running it inline.
 - **No cheaper model:** see `models.md`; cut the round cap to 2.
-- **stamp absent:** report `stamp=absent`; the terminal condition drops its
+- **The gate absent:** report `gate=absent`; the terminal condition drops its
   approval clause.
 - **Commits blocked** (a signing harness with no tool offered): run review and
   triage in report-only mode, push nothing, and say so.
