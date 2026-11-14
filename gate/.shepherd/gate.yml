@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@0.15.0/gate/.shepherd/gate.schema.json
+# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@0.16.0/gate/.shepherd/gate.schema.json
 # gate merge-gate policy.
 #
 # Read from the repository's DEFAULT BRANCH, never from the PR head, so a PR
