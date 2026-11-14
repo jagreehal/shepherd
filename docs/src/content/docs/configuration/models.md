@@ -67,11 +67,11 @@ Pick a ladder from eval scores. [`shepherd eval`](/shepherd/contributing/evaluat
 
 ## Model ids
 
-Write ids the way your harness takes them (`haiku` on Claude Code, `provider/model` on OpenCode), or stamp's `provider:model`, so one set of tiers serves both tools. Shepherd writes stamp's spelling the OpenCode way (`bedrock:` becomes `amazon-bedrock/`, `vertex:` becomes `google-vertex/`), and `shepherd models` shows both.
+Write ids the way your harness takes them (`haiku` on Claude Code, `provider/model` on OpenCode), or the gate's `provider:model`, so one set of tiers serves the loop and the gate. Shepherd writes the gate's spelling the OpenCode way (`bedrock:` becomes `amazon-bedrock/`, `vertex:` becomes `google-vertex/`), and `shepherd models` shows both.
 
-Stamp reads the same tiers from the default branch: `STAMP_MODEL=smart` reviews on your `smart` model, so one list of named models drives both tools.
+The gate reads the same tiers from the default branch: `SHEPHERD_MODEL=smart` reviews on your `smart` model, so one list of named models drives the loop and the gate.
 
-Shepherd runs models through its harness. In CI that harness is OpenCode, which reaches Bedrock (`amazon-bedrock/`), OpenAI (`openai/`), Anthropic, OpenRouter, Groq, DeepSeek, Mistral, Google, xAI and OpenCode Zen and Go by the model id alone. Stamp's `compatible:` provider (any OpenAI-compatible endpoint) is stamp's own: for shepherd, declare that endpoint as a custom provider in OpenCode's config.
+Shepherd runs models through its harness. In CI that harness is OpenCode, which reaches Bedrock (`amazon-bedrock/`), OpenAI (`openai/`), Anthropic, OpenRouter, Groq, DeepSeek, Mistral, Google, xAI and OpenCode Zen and Go by the model id alone. The gate's `compatible:` provider (any OpenAI-compatible endpoint) is the gate's own: for shepherd, declare that endpoint as a custom provider in OpenCode's config.
 
 ## In GitHub Actions
 
@@ -90,6 +90,6 @@ The workflows run `shepherd ci-models`, which reads the tiers, ladder and pins f
 
 OpenCode's own agents (`build`, `plan`, `general`, `explore`, `title`, `summary`, `compaction`) and its small model run on the session model unless you pin them, and only the providers your session model, ladder and pins name are enabled. Without that, OpenCode picks for itself: a free Zen model for a subagent, or on Bedrock a `global.` profile that can route outside your region.
 
-Set `SHEPHERD_API_KEY` to the key for the session model's provider; on Bedrock that is a Bedrock API key with `AWS_REGION` set. A ladder that mixes providers needs each provider's own secret as well: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK`. A provider's own secret wins over `SHEPHERD_API_KEY`.
+Add each provider's key as a secret under its usual name: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` (with `AWS_REGION`). A ladder that mixes providers needs each one it names.
 
 Shepherd's workflows take Bedrock through an API key, never OIDC: the model runs a shell, and a job that can mint an OIDC token can assume any AWS role that trusts the repository.

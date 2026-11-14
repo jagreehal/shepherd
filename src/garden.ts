@@ -161,12 +161,12 @@ export function parseCommit(sha: string, message: string, date = ""): Commit {
   return { sha, headline: message.split("\n")[0] ?? "", skill: trailer("Shepherd"), lens: trailer("Shepherd-Lens"), fixes, date };
 }
 
-/** An incident whose culprit PR stamp approved: the review let a regression through. */
+/** An incident whose culprit PR gate approved: the review let a regression through. */
 export type Escape = { incident: number; title: string; url: string; pr: number; sha: string; cause: "coverage_gap" | "merge_skew" | null };
 
-const REGRESSED = /Regressed-by: #(\d+) \(([0-9a-f]{7,40})\), stamp: approved\b/;
+const REGRESSED = /Regressed-by: #(\d+) \(([0-9a-f]{7,40})\), gate: approved\b/;
 
-/** The escape an incident issue records, from the lines the incident skill writes; null unless stamp approved the culprit. */
+/** The escape an incident issue records, from the lines the incident skill writes; null unless gate approved the culprit. */
 export function parseEscape(issue: { number: number; title: string; url: string; body: string }): Escape | null {
   if (!issue.body.includes("<!-- shepherd-incident:")) return null;
   const m = REGRESSED.exec(issue.body);
@@ -211,7 +211,7 @@ const Comments = z.array(z.object({ body: z.string(), user: z.object({ login: z.
 
 const Issues = z.array(z.object({ number: z.number(), title: z.string(), url: z.string(), body: z.string() }));
 
-/** Incidents updated since `since` whose culprit PR stamp approved. */
+/** Incidents updated since `since` whose culprit PR gate approved. */
 export function collectEscapes(repo: string, since: string): Escape[] {
   const issues = Issues.parse(JSON.parse(gh(["issue", "list", "-R", repo, "--label", "incident", "--state", "all", "--search", `updated:>=${since}`, "--limit", "100", "--json", "number,title,url,body"])));
 

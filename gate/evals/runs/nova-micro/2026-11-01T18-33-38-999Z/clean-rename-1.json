@@ -1,0 +1,8 @@
+{
+  "case": "clean-rename",
+  "label": "nova-micro",
+  "verdict": "APPROVE",
+  "issues": [],
+  "costUsd": 0.00065,
+  "durationMs": 3737
+}

@@ -1,6 +1,6 @@
 ---
 name: nx-monorepo
-description: Nx monorepo rules for a code review. Flags changes that break project boundaries or quietly switch off what keeps a monorepo honest. Covers deep imports past a project's public entry, circular project dependencies, shared contracts changed without their dependents, app code in shared libs, targets, inputs, outputs and cache settings that stop affected and caching from covering code, loosened tags and dependency constraints, path aliases that bypass boundaries, untagged projects, implicit dependency workarounds, environment and secrets in shared libs, and version drift between projects. Use as a review lens or as a stamp rule pack.
+description: Nx monorepo rules for a code review. Flags changes that break project boundaries or quietly switch off what keeps a monorepo honest. Covers deep imports past a project's public entry, circular project dependencies, shared contracts changed without their dependents, app code in shared libs, targets, inputs, outputs and cache settings that stop affected and caching from covering code, loosened tags and dependency constraints, path aliases that bypass boundaries, untagged projects, implicit dependency workarounds, environment and secrets in shared libs, and version drift between projects. Use as a review lens or as a gate rule pack.
 ---
 
 # nx-monorepo

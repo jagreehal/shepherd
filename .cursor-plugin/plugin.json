@@ -1,7 +1,7 @@
 {
   "name": "shepherd",
   "displayName": "shepherd",
-  "description": "Drives a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to stamp.",
+  "description": "Drives a PR to merge-ready: a review swarm, thread triage, CI repair, and a loop that hands the result to gate.",
   "author": { "name": "Jag Reehal" },
   "homepage": "https://github.com/jagreehal/shepherd",
   "repository": "https://github.com/jagreehal/shepherd",

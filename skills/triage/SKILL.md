@@ -4,7 +4,7 @@ description: >
   Works through every unresolved review thread on a PR (swarm, other review
   bots, humans) and ends each one fixed, resolved, or deferred. Applies clear
   local fixes, resolves nits silently, runs ambiguous bot threads through the
-  pair ladder before deferring, acts on a stamp refusal's issues, and always
+  pair ladder before deferring, acts on a gate refusal's issues, and always
   leaves threads with a human in them to the author. Never posts a reply. Use
   for "/triage", "deal with the review comments", or "address the bot feedback".
   Accepts an optional PR number or URL.
@@ -399,31 +399,31 @@ gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$
 When in doubt whether a fix is safe at all, that doubt is the stop-and-ask
 signal. A deferred line in the report is cheaper than a wrong push.
 
-### stamp's verdict
+### the gate's verdict
 
-`stamp` posts its verdict as a top-level review listing every issue. On `REFUSED`
+`gate` posts its verdict as a top-level review listing every issue. On `REFUSED`
 and `ESCALATE` it also pins each issue whose line is in the diff as an inline
-thread, whose comment carries `<!-- stamp-run:`. Read the latest review on the
+thread, whose comment carries `<!-- gate-run:`. Read the latest review on the
 current head:
 
 ```bash
 gh pr view <number> --json latestReviews \
-  --jq '[.latestReviews[] | select(.body | contains("<!-- stamp-run:"))][0] | {state, body: .body[:8000]}'
+  --jq '[.latestReviews[] | select(.body | contains("<!-- gate-run:"))][0] | {state, body: .body[:8000]}'
 ```
 
 - **REFUSED with issues:** treat each item in the **Issues** section (a
   `<details>` block titled `Issues: <n>`, numbered or bulleted) as a bot thread and classify it the
-  same way. An inline stamp thread repeats one of these items: count the pair
-  once and resolve the thread with it. Fixes push; stamp re-reviews on the push
+  same way. An inline the gate thread repeats one of these items: count the pair
+  once and resolve the thread with it. Fixes push; the gate re-reviews on the push
   and resolves its older threads, keeping any a person replied in.
 - **REFUSED by a gate** (the **Gates** section shows a failed gate such as
-  `deny-list`, `secrets`, or `size`): a gate decides whether stamp approves,
+  `deny-list`, `secrets`, or `size`): a gate decides whether the gate approves,
   not whether the code may be fixed. Keep fixing every thread as usual; a hard
   coded key in code this PR adds is fixed by reading it from configuration.
   What is forbidden is changing code *to get past the gate* without fixing
   anything: a placeholder in place of a flagged value, moved, split, or renamed
   files, an `AGENT_APPROVALS.md`. Report the gate's message for the author; a
-  deny-listed area still needs the human review stamp asks for, fixed or not.
+  deny-listed area still needs the human review the gate asks for, fixed or not.
 - **ESCALATE:** defer, inline threads included; it names the human assurance it
   needs.
 
@@ -451,7 +451,7 @@ As a sub-step, end with exactly this and nothing after it:
   "promoted": 0,
   "deferred_threads": ["<thread id>"],
   "validation_requests": [{"thread": "", "file": "", "change": "", "evidence": "", "risk": ""}],
-  "stamp": {"verdict": "approved|refused|escalate|none", "issues_actioned": 0},
+  "gate": {"verdict": "approved|refused|escalate|none", "issues_actioned": 0},
   "unresolved_actionable_remaining": false,
   "narration": ["[triage] ..."]
 }

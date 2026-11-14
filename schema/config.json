@@ -323,7 +323,7 @@
                 "triage",
                 "simplify",
                 "ci-repair",
-                "stamp",
+                "gate",
                 "incident"
               ]
             }

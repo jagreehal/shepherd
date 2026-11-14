@@ -1,5 +1,5 @@
 # shepherd incident in CI: a red run on main, or an error sent in by hand or by an alerting tool, becomes an
-# incident issue, a reproducing test and a fix PR. The PR then goes through CI, stamp and the shepherd
+# incident issue, a reproducing test and a fix PR. The PR then goes through CI, gate and the shepherd
 # workflow like any other. Installed by `shepherd workflows`.
 #
 # Triggers:
@@ -12,13 +12,13 @@
 # The signal is untrusted text (alert payloads carry user input), so the agent's job can read the repo and
 # file issues, nothing more: no contents write, no credential in its checkout. It hands its commit over as a
 # git bundle; the `open` job, which runs no model, pushes only an `incident/<n>` branch that builds on the
-# default branch and changes nothing outside INCIDENT_PATHS (no workflows, manifests, lockfiles or config:
+# default branch and changes nothing outside ci.incident_paths (no workflows, manifests, lockfiles or config:
 # CI on the PR installs and runs them), then opens the PR. The agent still holds the model key.
 #
-# Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and stamp;
-#            with github.token the PR opens but no workflow runs on it. SHEPHERD_API_KEY (or the provider's own key) for the model.
-# Variables: SHEPHERD_MODEL (optional override of the team's models.loop in .shepherd/config.yml, else its top rung), AWS_REGION (Bedrock),
-#            INCIDENT_PATHS (ci.incident_paths in .shepherd/config.yml; the variable overrides it; empty = ^src/).
+# Secrets:   SHEPHERD_TOKEN (contents, pull requests: write) for `open`, so the fix PR starts CI and gate;
+#            with github.token the PR opens but no workflow runs on it. the model key, under the provider's own name.
+# Variables: SHEPHERD_MODEL (optional provider/model, over models.loop), AWS_REGION (Bedrock).
+# Settings:  ci.incident_paths in .shepherd/config.yml (empty = ^src/).
 name: shepherd-incident
 on:
   workflow_run:
@@ -89,7 +89,6 @@ jobs:
         timeout-minutes: 20 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
-          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -107,15 +106,12 @@ jobs:
           OPENCODE_DISABLE_AUTOUPDATE: "1"
           HANDOFF: ${{ runner.temp }}/handoff
         run: |
-          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # The team's models, from the default branch: the session model and the
           # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
           plan=$(shepherd ci-models)
           AWS_REGION=$(shepherd ci-settings | jq -r .aws_region.value) && export AWS_REGION # ci.aws_region, or the variable
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
-          key_env=$(jq -r '.key_env // empty' <<<"$plan")
-          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
-          unset SHEPHERD_API_KEY
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
           # provider's other credentials.
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
@@ -166,7 +162,6 @@ jobs:
         env:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
           GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
-          INCIDENT_PATHS: ${{ vars.INCIDENT_PATHS }}
         run: |
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"

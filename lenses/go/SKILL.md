@@ -1,6 +1,6 @@
 ---
 name: go
-description: Go rules for a code review. Flags code that leaks goroutines, races, loses errors or hangs in production in ways go vet and staticcheck do not catch. Covers context not passed or ignored, goroutines with no way to stop, unsynchronised shared state, errors dropped or wrapped without %w, resources not closed, HTTP servers and clients with no timeouts, SQL and commands built from input, panics in library code, nil maps and interfaces holding typed nils, unbounded concurrency, and exported API changes. Use as a review lens or as a stamp rule pack.
+description: Go rules for a code review. Flags code that leaks goroutines, races, loses errors or hangs in production in ways go vet and staticcheck do not catch. Covers context not passed or ignored, goroutines with no way to stop, unsynchronised shared state, errors dropped or wrapped without %w, resources not closed, HTTP servers and clients with no timeouts, SQL and commands built from input, panics in library code, nil maps and interfaces holding typed nils, unbounded concurrency, and exported API changes. Use as a review lens or as a gate rule pack.
 ---
 
 # go

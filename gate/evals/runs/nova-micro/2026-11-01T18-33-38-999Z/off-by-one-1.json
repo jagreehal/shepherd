@@ -1,0 +1,8 @@
+{
+  "case": "off-by-one",
+  "label": "nova-micro",
+  "verdict": "APPROVE",
+  "issues": [],
+  "costUsd": 0.000468,
+  "durationMs": 3130
+}

@@ -1,6 +1,6 @@
 ---
 name: observability
-description: Observability rules for a code review. Flags new code that production cannot see, debug or alert on, or that leaks through telemetry. Covers entry points and outbound calls without a span, trace context lost across services, queues and background work, errors that lose their cause, logs that are unstructured or not tied to the trace, requests that carry no identifiers, secrets or personal data in telemetry, silent data drops, unbounded names and labels, metrics no alert can use, renamed telemetry, telemetry setup that can crash the app or lose data on exit, and user-facing changes with no signal. Use as a review lens or as a stamp rule pack.
+description: Observability rules for a code review. Flags new code that production cannot see, debug or alert on, or that leaks through telemetry. Covers entry points and outbound calls without a span, trace context lost across services, queues and background work, errors that lose their cause, logs that are unstructured or not tied to the trace, requests that carry no identifiers, secrets or personal data in telemetry, silent data drops, unbounded names and labels, metrics no alert can use, renamed telemetry, telemetry setup that can crash the app or lose data on exit, and user-facing changes with no signal. Use as a review lens or as a gate rule pack.
 ---
 
 # observability

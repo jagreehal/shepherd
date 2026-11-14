@@ -32,7 +32,7 @@ Anything short of that reports **review incomplete** with what is missing. It pr
 
 A complete review writes a receipt keyed to a fingerprint of the exact content. `shepherd local status` tells you whether the files on disk still match a reviewed change; any edit since makes it `changed`. Wire it into a pre-push hook if you want one.
 
-Local mode ends with **local checks passed**, **needs you**, **review incomplete**, or the round cap. Merge readiness still belongs to the PR loop and stamp.
+Local mode ends with **local checks passed**, **needs you**, **review incomplete**, or the round cap. Merge readiness still belongs to the PR loop and the gate.
 
 Try it on planted bugs:
 

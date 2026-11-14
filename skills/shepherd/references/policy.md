@@ -58,11 +58,11 @@ recipes.
 ## Recipes
 
 A recipe is an ordered list of shepherd's own steps: `swarm`, `triage`,
-`simplify`, `ci-repair`, `stamp`, `incident`. `shepherd config validate`
-rejects an order that cannot work (triage before any swarm, stamp anywhere
+`simplify`, `ci-repair`, `gate`, `incident`. `shepherd config validate`
+rejects an order that cannot work (triage before any swarm, the gate anywhere
 but last, a code change nothing reviews afterwards, a fixing step under
-`fixes.mode: suggest`, and under `local` a fix that only stamp reviews, since
-stamp sees the pushed head and local fixes never reach it). A built-in recipe
+`fixes.mode: suggest`, and under `local` a fix that only the gate reviews, since
+The gate sees the pushed head and local fixes never reach it). A built-in recipe
 the fix mode rules out is unavailable rather than an error; `shepherd preview
 --recipe <name>` says why. The built-in ones:
 
@@ -70,8 +70,8 @@ the fix mode rules out is unavailable rather than an error; `shepherd preview
 |---|---|---|
 | `review` | swarm | every mode |
 | `fix` | swarm, triage, simplify, swarm | local, push |
-| `pr` | swarm, triage, simplify, swarm, ci-repair, stamp | push |
-| `incident` | incident, swarm, triage, simplify, swarm, ci-repair, stamp | push |
+| `pr` | swarm, triage, simplify, swarm, ci-repair, the gate | push |
+| `incident` | incident, swarm, triage, simplify, swarm, ci-repair, the gate | push |
 
 Without `--recipe`, `/shepherd` runs the recipe its fix mode selects:
 `review` under `suggest`, `fix` under `local`, `pr` under `push`. `pr` is
@@ -82,7 +82,7 @@ Running one:
 1. Run the steps in the order listed, one at a time. Code-changing steps
    never overlap: they share one working tree and one branch.
 2. Each step keeps every rule of its own skill and of `AGENTS.md`.
-3. A review step (a swarm round that finds nothing new, or a stamp approval)
+3. A review step (a swarm round that finds nothing new, or a gate approval)
    must run **after the last change** this iteration made. Otherwise the
    result is `pending`, naming the step that still needs to review.
 
@@ -96,8 +96,8 @@ Finishing a recipe is not the same as a PR being ready. Report exactly one of:
 - **`fixes_uncommitted`**: under `fixes.mode: local`, the fixes sit in the
   working tree and the last swarm reviewed the tree, not the PR head. The PR
   is unchanged; the person commits, pushes and runs again.
-- **`ready`**: only when all three hold on the current head: stamp approved
-  it, CI is green, and no review thread is open. A recipe without stamp can
+- **`ready`**: only when all three hold on the current head: the gate approved
+  it, CI is green, and no review thread is open. A recipe without the gate can
   reach `reviewed`, never `ready`.
 - **`pending`**: anything short of those, naming what is missing.
 

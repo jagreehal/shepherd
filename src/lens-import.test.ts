@@ -62,7 +62,7 @@ test("a retained source rule cannot disappear from output, and an output rule ca
   expect(f.run().stderr).toContain("expected one inventory mapping, got 0");
 });
 
-test("the helper rejects a lens Stamp would truncate and accepts the same rules split into lenses", () => {
+test("the helper rejects a lens The gate would truncate and accepts the same rules split into lenses", () => {
   const f = fixture();
   const file = path.join(f.folder, "SKILL.md");
   const original = readFileSync(file, "utf8");

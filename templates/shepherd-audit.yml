@@ -6,14 +6,12 @@
 # The agent's job reads the repository and writes a report, nothing more: no write credential, no persisted
 # checkout token. A report carrying a credential shape is withheld before anything is uploaded. The report
 # job runs no model and files or updates one `shepherd-audit` issue on a private repository. On a public
-# repository issues and artifacts are public, so the audit runs there only when AUDIT_PUBLIC is `true`: the
+# repository issues and artifacts are public, so the audit runs there only when ci.audit.public is `true`: the
 # report then becomes a public artifact.
 #
-# Secrets:   SHEPHERD_API_KEY (or the provider's own key) for the model.
-# Variables: SHEPHERD_MODEL (optional override of the team's models.loop in .shepherd/config.yml, else its top rung), AWS_REGION (Bedrock),
-#            AUDIT_PLAYS (ci.audit.plays; space-separated play names; empty = the default),
-#            AUDIT_PUBLIC (ci.audit.public: `true` to run on a public repository, publishing the report).
-#            Each variable overrides its key in .shepherd/config.yml.
+# Secrets:   the model key, under the provider's own name.
+# Variables: SHEPHERD_MODEL (optional provider/model, over models.loop), AWS_REGION (Bedrock).
+# Settings:  ci.audit.plays and ci.audit.public in .shepherd/config.yml.
 name: shepherd-audit
 on:
   schedule:
@@ -21,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       plays:
-        description: Plays to run, space-separated (empty = ci.audit.plays, AUDIT_PLAYS, or the default)
+        description: Plays to run, space-separated (empty = ci.audit.plays, or the default)
         required: false
 
 permissions: {}
@@ -54,8 +52,6 @@ jobs:
           SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
           GH_TOKEN: ${{ github.token }} # gh api, for a github: pack the policy extends
           AWS_REGION: ${{ vars.AWS_REGION }}
-          AUDIT_PLAYS: ${{ vars.AUDIT_PLAYS }}
-          AUDIT_PUBLIC: ${{ vars.AUDIT_PUBLIC }}
         run: |
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           "$HOME/.bun/bin/shepherd" ci-settings --outputs >> "$GITHUB_OUTPUT"
@@ -112,7 +108,6 @@ jobs:
         timeout-minutes: 45 # opencode retries a provider error (an exhausted quota) silently; fail instead of holding the queue
         env:
           GH_TOKEN: ${{ github.token }}
-          SHEPHERD_API_KEY: ${{ secrets.SHEPHERD_API_KEY }} # one key, for the session model's provider
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -129,14 +124,11 @@ jobs:
           OPENCODE_DISABLE_PROJECT_CONFIG: "1" # the checkout's opencode.json, .opencode/ plugins and AGENTS.md stay out of the agent's config
           OPENCODE_DISABLE_AUTOUPDATE: "1"
         run: |
-          # The team's models, from the default branch: the session model, the variable its key goes in, and the
+          # The team's models, from the default branch: the session model and the
           # OpenCode agents that carry the ladder and pins, so each runner gets its own model.
           plan=$(shepherd ci-models)
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
-          key_env=$(jq -r '.key_env // empty' <<<"$plan")
-          if [ -n "${SHEPHERD_API_KEY:-}" ] && [ -n "$key_env" ] && [ -z "${!key_env:-}" ]; then export "$key_env=$SHEPHERD_API_KEY"; fi
-          unset SHEPHERD_API_KEY
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
           # provider's other credentials.
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
@@ -197,7 +189,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$PRIVATE" != "true" ]; then
-            echo "Public repository (AUDIT_PUBLIC): the report is in the run's shepherd-audit artifact ($RUN_URL)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Public repository (ci.audit.public): the report is in the run's shepherd-audit artifact ($RUN_URL)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # The header came out of a job a model ran in: one line with the automated prefix, or the default.

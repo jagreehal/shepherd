@@ -2,7 +2,7 @@
 title: "Score exported traces in garden"
 ---
 
-Stamp and Shepherd already export through autotel when
+The gate and Shepherd already export through autotel when
 `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Garden reads those traces from files,
 Grafana Tempo, Datadog, or any mix of them. No telemetry backend is required for GitHub-only
 scoring, and trace signals never change the accepted-fix rule.
@@ -62,7 +62,7 @@ shepherd garden acme/service --since 2026-10-01
 
 The reader calls Tempo's [search and trace-by-ID APIs](https://grafana.com/docs/tempo/latest/api_docs/).
 It searches only the selected repository and window for `shepherd.iteration`
-and `stamp.review`, then fetches at most 100 traces within a shared 30-second
+and `gate.review`, then fetches at most 100 traces within a shared 30-second
 budget. Responses have a 10 MB cap, the report has a 50,000-span cap, and the
 reader follows no redirects. Authentication headers never appear in the report.
 Set a read-only credential. Grafana Cloud tenants can supply their Basic
@@ -80,7 +80,7 @@ prevent duplicate counts.
 
 ## Datadog
 
-Garden reads spans that stamp and shepherd sent through Datadog's OTLP intake
+Garden reads spans that the gate and shepherd sent through Datadog's OTLP intake
 (`OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.<site>` with
 `OTEL_EXPORTER_OTLP_HEADERS=dd-api-key=<key>`). Set three variables:
 
@@ -94,7 +94,7 @@ shepherd garden acme/service --since 2026-10-01
 The reader calls the [span search API](https://docs.datadoghq.com/api/latest/spans/)
 on `api.<site>`, and only for the listed Datadog sites, so the keys never go
 anywhere else. It finds the repository's `shepherd.iteration` and
-`stamp.review` roots, then fetches their traces in batches of 50, since stage
+`gate.review` roots, then fetches their traces in batches of 50, since stage
 spans carry no repository. Datadog nests OTLP attributes under `custom` and
 stores span IDs in decimal; the reader maps both back. The span search API
 allows 300 requests an hour, which a weekly run stays well under.
@@ -115,18 +115,18 @@ The JSON adds a `telemetry` summary per PR and fixed inspection signals:
 | `trace_stage_failed` | A recorded stage failed or never finished |
 | `trace_retries` | At least 3 recorded retries on the PR |
 | `trace_approval_wait` | At least 5 minutes, and half the observed iteration time, waiting for approval |
-| `trace_review_cost` | At least $5 of known Stamp review cost on the PR |
+| `trace_review_cost` | At least $5 of known the gate review cost on the PR |
 
 Use `--trace-retries`, `--trace-wait-ms` and `--trace-cost-usd` to change the
 inspection thresholds. The report includes their effective values, coverage
 limits, unavailable reads and the trace IDs behind each PR's samples.
 `coverage.untouchedPrs` counts PRs with trace samples that shepherd did not
-work on, such as a PR stamp reviewed alone; the report scores shepherd's runs,
+work on, such as a PR the gate reviewed alone; the report scores shepherd's runs,
 so their samples stay out of the per-PR summaries. Sampling
 or retention can omit runs, so the report never claims a complete history.
 `unpricedReviews` distinguishes missing or incomplete prices from zero cost.
-Older spans without `stamp.cost_complete` remain incomplete even when their
-known subtotal is available. Stamp's root cost
+Older spans without `gate.cost_complete` remain incomplete even when their
+known subtotal is available. The gate's root cost
 already includes its reviewer calls; child model spans do not add it again.
 Shepherd's stage spans measure orchestration time, not the harness's model cost.
 

@@ -17,7 +17,7 @@ lenses:
     description: React and Next.js performance rules   # optional; defaults to the skill's own description
     only: ['rerender-*', 'client-*']       # optional rule id globs: review only these rules
     disable: ['client-swr-dedup']          # optional rule id globs: skip these rules
-    gate: escalate                         # optional; stamp's on_break for untagged rules, swarm ignores it
+    gate: escalate                         # optional; the gate's on_break for untagged rules, swarm ignores it
 ```
 
 A later layer merges into a lens of the same name field by field. A
@@ -82,7 +82,7 @@ Rules are list items, `- **<id>**: <rule>`, each id used once. A rule may
 carry a severity tag after its id: `- **<id>** [refuse|escalate|note]: <rule>`.
 A `[refuse]` rule names a correctness or security defect, so the guidance
 lens MEDIUM cap does not apply to it; swarm rates it with the swarm rubric.
-Stamp reads the tags to decide what a broken rule does to its verdict, and
+The gate reads the tags to decide what a broken rule does to its verdict, and
 falls back to the lens's `gate` for untagged rules.
 
 `shepherd lens list` checks the rules for lenses under `.shepherd/lenses/`,

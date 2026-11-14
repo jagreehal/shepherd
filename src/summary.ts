@@ -91,7 +91,7 @@ const Finding = z.object({
   // has no line on the new side.
   side: z.enum(["LEFT", "RIGHT"]).nullish().catch(undefined).transform((v) => v ?? "RIGHT"),
   severity: Severity,
-  lens: z.string(),
+  lens: z.string().transform((l) => l.replace(/^convergent:\s*/i, "")), // the tag's own "convergent:" prefix: the render adds it once
   body: z.string(),
   convergent: flag(false),
   // A reader triages by the title alone: a claim they can check, such as "`firstName` returns the second word".
@@ -255,7 +255,43 @@ const fromChecks = (f: { lens: string }) => f.lens.startsWith("checks/");
 /** Text a model escaped twice: two or more literal `\\n` and no real line break. One may be code the body quotes. */
 const unescaped = (t: string) => (!t.includes("\n") && t.split("\\n").length > 2 ? t.replaceAll("\\n", "\n").replaceAll("\\t", "\t").replaceAll('\\"', '"') : t);
 
-export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, read?: (path: string) => string | null) {
+/** An unresolved review thread shepherd opened: its URL and the ids of the findings its first comment carries. */
+export type OpenThread = { url: string; ids: string[] };
+
+/** A finding's id: its place, lens and title. A later round's identical finding has the same id; a reworded one does not. */
+export const findingId = (f: { file?: string; side?: string; line?: number | string; lens: string; title?: string }) =>
+  createHash("sha256").update(`${f.file ?? ""}:${f.side ?? "RIGHT"}:${f.line ?? ""}:${f.lens}:${f.title ?? ""}`).digest("hex").slice(0, 12);
+
+const FINDING_IDS = /<!-- shepherd-finding:([0-9a-f ]+) -->/;
+
+export type ThreadNode = { isResolved: boolean; comments: { nodes: { url: string; body: string; author: { login: string; __typename: string } | null }[] } };
+
+/**
+ * The PR's open swarm threads. One counts only when shepherd's own account opened it: GitHub Actions' bot in CI, or
+ * `viewer`, the signed-in operator whose account local runs post through. The header alone proves nothing: anyone
+ * can paste it.
+ */
+export function swarmThreads(nodes: readonly ThreadNode[], viewer: string | null): OpenThread[] {
+  const ours = (a: ThreadNode["comments"]["nodes"][number]["author"]) => a !== null && ((a.__typename === "Bot" && a.login === "github-actions") || a.login === viewer);
+
+  return nodes.flatMap((t) => {
+    const first = t.comments.nodes[0];
+
+    return !t.isResolved && first && ours(first.author) && /🤖 Automated comment by .*swarm\*\*/.test(first.body) ? [{ url: first.url, ids: FINDING_IDS.exec(first.body)?.[1]?.split(" ") ?? [] }] : [];
+  });
+}
+
+/**
+ * The open thread that carries this finding, matched explicitly, never by wording: the finding names the thread in its
+ * `url` (swarm does for a finding it judged a repeat), or the thread's comment carries this exact finding's id.
+ */
+export function openThreadFor(f: Parameters<typeof findingId>[0] & { url?: string }, open: readonly OpenThread[] = []): OpenThread | undefined {
+  const id = findingId(f);
+
+  return open.find((t) => t.url === f.url || t.ids.includes(id));
+}
+
+export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, read?: (path: string) => string | null, open?: readonly OpenThread[]) {
   const s = SummaryInput.parse(raw);
   const real = (url: string | undefined) => (url === undefined || threads === undefined || threads.has(url) ? url : undefined);
 
@@ -287,6 +323,9 @@ export function checkedRound(raw: SummaryInput, threads?: ReadonlySet<string>, r
   // With the reviewed files at hand, each suggestion is placed once, so the summary and the inline comment cite the
   // same lines.
   if (read) for (const f of s.findings) place(f, read);
+
+  // After placement: a finding's id names the lines its inline comment was posted on, which placement can move.
+  for (const f of s.findings) f.url ??= openThreadFor(f, open)?.url;
 
   return s;
 }
@@ -469,8 +508,8 @@ export function reviewedTips(previous: string): { head_sha: string; base_sha: st
  * The summary comment: the verdict heading, why, then one collapsed section per part of the round. With a null header
  * it is the body alone, for the handoff file the publish job wraps in its own marker and header.
  */
-export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>, threads?: ReadonlySet<string>, read?: (path: string) => string | null): string {
-  const s = checkedRound(raw, threads, read);
+export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | null, previous?: string, fanout?: z.input<typeof Fanout>, threads?: ReadonlySet<string>, read?: (path: string) => string | null, open?: readonly OpenThread[]): string {
+  const s = checkedRound(raw, threads, read, open);
   // A lens fanout listed for this head that the round does not report never ran as its own reviewer, so it shows
   // as could_not_run.
   const wave = fanout ? Fanout.parse(fanout) : null;
@@ -543,7 +582,7 @@ export function renderSummary(raw: SummaryInput, emoji: Emoji, header: string | 
   if (walk.length) out.push(...section("<strong>Walkthrough</strong>", walk.join("\n").trim().split("\n")));
 
   // Finishing touches: the commands this repository answers.
-  if (findings.length) out.push("✨ Comment `/shepherd` to have shepherd work through these findings, as far as `fixes.mode` allows, or `/stamp` for a fresh verdict.", "");
+  if (findings.length) out.push("✨ Comment `/shepherd` to have shepherd work through these findings, as far as `fixes.mode` allows, or `/gate` for a fresh verdict.", "");
 
   if (s.still_open.length) out.push(...section(`<strong>Still open:</strong> ${s.still_open.length}`, s.still_open.map((t) => (t.url ? `- [${defuse(t.title, true).replace(/[[\]]/g, "")}](${t.url})` : `- ${defuse(t.title, true)}`))));
 
@@ -763,7 +802,9 @@ export function commentableLines(diff: string, side: "LEFT" | "RIGHT" = "RIGHT")
   return lines;
 }
 
-export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>, commentable?: Map<string, Set<number>>, removable?: Map<string, Set<number>>) {
+export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, read: (path: string) => string | null = () => null, threads?: ReadonlySet<string>, commentable?: Map<string, Set<number>>, removable?: Map<string, Set<number>>, open?: readonly OpenThread[]) {
+  // A finding an open thread of ours already carries, matched explicitly, posts no second comment.
+  const fresh = (f: Parameters<typeof openThreadFor>[0]) => !openThreadFor(f, open);
   const s = checkedRound(raw, threads, read);
   const glyph = (sev: z.infer<typeof Severity>) => emoji[GLYPH[sev]];
 
@@ -788,7 +829,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
     return text === null || end <= text.replace(/\n$/, "").split("\n").length;
   };
 
-  const anchored = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f)));
+  const anchored = SEVERITIES.flatMap((sev) => s.findings.filter((f) => f.severity === sev && sev !== "NIT" && f.inline && f.file && f.line !== undefined && f.line !== "general" && fits(f) && fresh(f)));
   // One comment per place, the most severe finding's. Others on the same lines are named under it and appear in full
   // in the summary.
   const at = (f: (typeof s.findings)[number]) => `${f.file}:${f.side}:${f.line}`;
@@ -812,7 +853,7 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
       "> [!NOTE]",
       header,
       "",
-      `**[${defuse(f.lens, true)}]** ${glyph(f.severity)} ${f.severity}`,
+      `**[${f.convergent ? "convergent: " : ""}${defuse(f.lens, true)}]** ${glyph(f.severity)} ${f.severity}`,
       ...(f.title ? ["", `**${defuse(f.title, true)}**`] : []),
       ...reintroduced(f),
       "",
@@ -837,7 +878,9 @@ export function renderReview(raw: SummaryInput, emoji: Emoji, header: string, re
       "</details>",
     ].join("\n");
 
-    const comment: InlineComment = { path: f.file, line: end ?? start, side: f.side, body };
+    // Every finding this comment carries, by id, so the summary links each to it and a later round knows it.
+    const ids = [f, ...anchored.filter((g) => g !== f && at(g) === at(f))].map(findingId).join(" ");
+    const comment: InlineComment = { path: f.file, line: end ?? start, side: f.side, body: `${body}\n<!-- shepherd-finding:${ids} -->` };
 
     if (end !== undefined && end !== start) {
       comment.start_line = start;

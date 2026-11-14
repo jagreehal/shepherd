@@ -69,16 +69,17 @@ export function ciOpencodeConfig(session: string, choice: { ladder: string[] | n
   };
 }
 
-// stamp's `provider:model` names where OpenCode's provider id differs; every other provider keeps its name.
+// gate's `provider:model` names where OpenCode's provider id differs; every other provider keeps its name.
 const OPENCODE_PROVIDER = new Map([["bedrock", "amazon-bedrock"], ["vertex", "google-vertex"]]);
 
 /**
- * A model id as OpenCode spells it. stamp's canonical `provider:model` (`bedrock:eu.anthropic.claude-…-v1:0`)
+ * A model id as OpenCode spells it. gate's canonical `provider:model` (`bedrock:eu.anthropic.claude-…-v1:0`)
  * becomes `provider/model` (`amazon-bedrock/eu.anthropic.claude-…-v1:0`), so one ladder serves both tools.
  * An OpenCode id or a Claude Code alias passes through.
  */
 export function opencodeModel(id: string): string {
-  const m = /^([a-z][a-z0-9-]*):(.+)$/.exec(id);
+  // `provider:model` or `provider/model`, split at the first separator, so `bedrock/…` and `bedrock:…` both reach OpenCode as `amazon-bedrock/…`
+  const m = /^([a-z][a-z0-9-]*)[:/](.+)$/.exec(id);
 
   return m ? `${OPENCODE_PROVIDER.get(m[1]!) ?? m[1]}/${m[2]}` : id;
 }
@@ -106,8 +107,7 @@ export function setTier(file: string, tier: string, model: string): void {
   write(file, { ...current, tiers: { ...current.tiers, [tier]: ModelId.parse(model) } });
 }
 
-// The environment variable each OpenCode provider reads its key from. SHEPHERD_API_KEY fills the one the session
-// model's provider needs, so a single-provider team sets one secret.
+// The environment variable each OpenCode provider reads its key from.
 const PROVIDER_KEY_ENV = new Map([
   ["opencode", "OPENCODE_API_KEY"],
   ["opencode-go", "OPENCODE_API_KEY"],
@@ -124,8 +124,20 @@ const PROVIDER_KEY_ENV = new Map([
 
 export const PROVIDER_KEY_ENVS = [...PROVIDER_KEY_ENV.values()];
 
+// Providers both halves can run: the loop through OpenCode, the gate through the AI SDK. google/ and xai/ are loop-only.
+const SHARED_PROVIDERS = new Set(["anthropic", "openai", "opencode", "opencode-go", "openrouter", "deepseek", "groq", "mistral", "amazon-bedrock"]);
+
+/** Why one model id cannot drive the loop and the gate, or null when it can. A bare name (a tier or an alias) passes. */
+export function sharedModelProblem(id: string): string | null {
+  const provider = /[:/]/.test(id) ? opencodeModel(id).split("/")[0]! : null;
+
+  if (provider === null || SHARED_PROVIDERS.has(provider)) return null;
+
+  return `${id}: the loop and the gate both need to run it, and ${provider}/ is not one both can. Use ${[...SHARED_PROVIDERS].map((p) => `${p}/`).join(", ")}; or pin the loop with \`shepherd models pin loop\` and set \`model:\` in .shepherd/gate.yml separately.`;
+}
+
 /** The key variable for an OpenCode model id's provider, or null when shepherd does not know it. */
-export const providerKeyEnv = (opencodeId: string): string | null => PROVIDER_KEY_ENV.get(opencodeId.split("/")[0]!) ?? null;
+export const providerKeyEnv = (id: string): string | null => PROVIDER_KEY_ENV.get(opencodeModel(id).split("/")[0]!) ?? null;
 
 /** Replace the ladder, cheapest model first. */
 export function setLadder(file: string, ladder: string[]): void {
@@ -172,7 +184,7 @@ fixes by its own rules. Nothing here can loosen shepherd's rules.
 - Escalate: <changes that go to the author instead of being fixed>.
 `;
 
-// `- **<id>**: <rule>`, or `- **<id>** [refuse|escalate|note]: <rule>` to set that rule's severity for stamp.
+// `- **<id>**: <rule>`, or `- **<id>** [refuse|escalate|note]: <rule>` to set that rule's severity for gate.
 const RULE = /^- \*\*([a-z0-9][a-z0-9-]*)\*\*(?: \[(refuse|escalate|note)\])?:/gm;
 
 export type LensRule = { id: string; severity?: Severity };

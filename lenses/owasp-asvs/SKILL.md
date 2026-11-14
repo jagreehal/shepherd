@@ -9,7 +9,7 @@ description: >
   password storage, account enumeration, cryptography, secrets and transport,
   data exposure, error leakage and fail-open handling, and security event
   logging. Each finding cites the ASVS requirement and CWE. Use as a review lens
-  or as a stamp rule pack.
+  or as a gate rule pack.
 source: github:OWASP/secure-agent-playbook/plugins/code-security-skills/skills/security-guidance@65d4efd2cd0b081d52101e9708792b944e4ddebb
 license: CC-BY-4.0
 ---

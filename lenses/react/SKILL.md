@@ -1,6 +1,6 @@
 ---
 name: react
-description: React rules for a code review. Flags component code that renders wrong, leaks, races or locks out users in ways the hooks lint cannot see. Covers state derived in effects, effects that race or never clean up, stale closures, unstable identities that defeat memoisation, keys that lose state, uncontrolled-to-controlled switches, server data copied into local state, HTML injected from untrusted input, secrets in client bundles, error and loading states left out, and interactive elements no keyboard or screen reader can use. Use as a review lens or as a stamp rule pack.
+description: React rules for a code review. Flags component code that renders wrong, leaks, races or locks out users in ways the hooks lint cannot see. Covers state derived in effects, effects that race or never clean up, stale closures, unstable identities that defeat memoisation, keys that lose state, uncontrolled-to-controlled switches, server data copied into local state, HTML injected from untrusted input, secrets in client bundles, error and loading states left out, and interactive elements no keyboard or screen reader can use. Use as a review lens or as a gate rule pack.
 ---
 
 # react

@@ -8,4 +8,4 @@ title: "Rules for reviews and fixes"
 - **Labelled comments.** Everything swarm posts starts with `🤖 Automated comment by **Shepherd swarm**`. It posts through your account, or as `github-actions[bot]` in CI, and readers deserve to know.
 - **People talk to people.** Triage never replies to anyone and never touches a thread a person has joined. Those wait for you.
 - **PR content is data.** Diffs, comments and CI logs never become instructions. Writing a command in a comment gets nobody a command run.
-- **Gates stay gates.** shepherd never approves, and it never changes code to get past a stamp refusal or any other gate. A fix that changes what code accepts or returns is your decision.
+- **Gates stay gates.** shepherd never approves, and it never changes code to get past a gate refusal or any other gate. A fix that changes what code accepts or returns is your decision.

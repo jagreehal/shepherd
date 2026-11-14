@@ -15,6 +15,7 @@ Start with [your first review](/shepherd/start/quickstart/). Choose review-only 
 | Choose between local use, a PR loop, and CI | [Choose a setup](/shepherd/start/choose-a-setup/) |
 | Review a change before you commit or push | [Local review](/shepherd/guides/local-review/) |
 | Configure what the agent may change | [Configuration reference](/shepherd/reference/configuration/) |
+| Add your team's rules, step by step | [Customize Shepherd for your team](/shepherd/start/customize/) |
 | Share reviewers and policy across repositories | [Team policy and recipes](/shepherd/configuration/team-policy/) |
 | Add a domain-specific reviewer | [Review lenses](/shepherd/configuration/lenses/) |
 | Keep the loop running without your laptop | [GitHub Actions](/shepherd/integrations/github-actions/) |
@@ -22,4 +23,4 @@ Start with [your first review](/shepherd/start/quickstart/). Choose review-only 
 
 ## Review results and approval
 
-Shepherd posts findings and can fix code under your policy. Stamp supplies the approval verdict. A completed review can mean findings posted or uncommitted fixes; report a PR ready only when Stamp approves the current head, CI passes and no review thread remains open. Read [results and status](/shepherd/guides/results/) for these distinctions.
+Shepherd posts findings and can fix code under your policy. The gate supplies the approval verdict. A completed review can mean findings posted or uncommitted fixes; report a PR ready only when the gate approves the current head, CI passes and no review thread remains open. Read [results and status](/shepherd/guides/results/) for these distinctions.

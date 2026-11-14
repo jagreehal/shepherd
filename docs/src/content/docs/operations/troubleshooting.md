@@ -15,15 +15,15 @@ Run `shepherd doctor` from the repository clone first. Read the failed check's s
 | Configuration validation fails after migration | Both config files exist | Keep `.shepherd/config.yml` after reviewing the migration and remove the old `.shepherd/lenses.yml` |
 | Recipe is unavailable | Recipe steps and fix mode in `preview` | Choose a recipe allowed by the mode and review after its last fix |
 | Review is incomplete | Local record, failed lenses and changed fingerprint | Rerun the missing review stages on the current content |
-| PR never reaches ready | Stamp approval, CI and open threads on the current head | Complete the missing condition; a completed review alone is insufficient |
+| PR never reaches ready | The gate approval, CI and open threads on the current head | Complete the missing condition; a completed review alone is insufficient |
 | Thread remains open | Human participation or a deferred decision | Read and decide it yourself; Shepherd leaves those threads for you |
 | CI workflow does not start | Trigger workflow names, label and author access | Match `workflows:` to the CI names and inspect the gate step |
 | CI fixes push but no next run starts | Token used to push | Configure `SHEPHERD_TOKEN`; pushes through `GITHUB_TOKEN` do not start the next workflows |
 | Repeated CI loop stops | Shepherd commit cap and current status | Inspect the reason and take over the unresolved problem |
 | Status says `fixes not pushed, a person should look` | The `publish` job log: protected path, not a fast-forward, the PR's default or base branch, or no `SHEPHERD_TOKEN` secret | Apply the change yourself, or adjust `SHEPHERD_PUSH_DENY` after review |
 | An `incident/*` PR gets no iteration | Gate skip reason | Comment `/shepherd` or add the handoff label after you read the fix |
-| Incident fix never becomes a PR | The `open` job log | Paths outside `INCIDENT_PATHS` are refused; review the change or the pattern |
-| No notification | Webhook, state filter and result of `notify` | `off` means no webhook or a state outside `SHEPHERD_NOTIFY_ON`; `unchanged` means the last recorded state and description match; `failed` retries next iteration |
+| Incident fix never becomes a PR | The `open` job log | Paths outside `ci.incident_paths` are refused; review the change or the pattern |
+| No notification | Webhook, state filter and result of `notify` | `off` means no webhook or a state outside `ci.notify_on`; `unchanged` means the last recorded state and description match; `failed` retries next iteration |
 
 ## Share evidence in a bug report
 

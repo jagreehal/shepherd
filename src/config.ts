@@ -20,7 +20,7 @@ export const LensSchema = z
     skill: z.string().min(1),
     applies_to: z.array(z.string().min(1)).optional(),
     description: z.string().min(1).optional(),
-    gate: z.enum(SEVERITIES).optional(), // stamp's on_break for this lens's untagged rules; swarm reads the tags only
+    gate: z.enum(SEVERITIES).optional(), // gate's on_break for this lens's untagged rules; swarm reads the tags only
     only: z.array(z.string().min(1)).min(1).optional(), // rule id globs to keep
     disable: z.array(z.string().min(1)).min(1).optional(), // rule id globs to drop
   })
@@ -32,22 +32,22 @@ export type Lens = z.infer<typeof LensSchema>;
 const LensLayerSchema = LensSchema.partial({ skill: true });
 
 // A model id is whatever the harness's agent tool accepts: `haiku` on Claude Code, `provider/model` on OpenCode.
-// stamp's canonical `provider:model` also works: opencode-agents spells it the OpenCode way (lens.ts opencodeModel).
+// gate's canonical `provider:model` also works: opencode-agents spells it the OpenCode way (lens.ts opencodeModel).
 export const ModelId = z.string().min(1);
 
-/** The steps a recipe can run: shepherd's own runners and stamp's verdict. */
-export const STEPS = ["swarm", "triage", "simplify", "ci-repair", "stamp", "incident"] as const;
+/** The steps a recipe can run: shepherd's own runners and gate's verdict. */
+export const STEPS = ["swarm", "triage", "simplify", "ci-repair", "gate", "incident"] as const;
 
 type Step = (typeof STEPS)[number];
 
 // Steps that change code, and the steps that review it. Success needs a review after the last change.
 const FIXERS = new Set<Step>(["triage", "simplify", "ci-repair", "incident"]);
 
-const REVIEWS = new Set<Step>(["swarm", "stamp"]);
+const REVIEWS = new Set<Step>(["swarm", "gate"]);
 
 /**
  * The glyphs shepherd posts, by role, as they are today. Not here: the `🤖 Automated comment by` header prefix, which
- * triage, garden and stamp match to tell automated comments from people's, and the hidden `<!-- shepherd… -->` markers.
+ * triage, garden and gate match to tell automated comments from people's, and the hidden `<!-- shepherd… -->` markers.
  */
 export const BRANDING = {
   name: "Shepherd",
@@ -136,8 +136,8 @@ const BUILT_IN: Config = {
   recipes: {
     review: { steps: ["swarm"] },
     fix: { steps: ["swarm", "triage", "simplify", "swarm"] }, // runs under fixes.mode local: nothing it needs is pushed
-    pr: { steps: ["swarm", "triage", "simplify", "swarm", "ci-repair", "stamp"] },
-    incident: { steps: ["incident", "swarm", "triage", "simplify", "swarm", "ci-repair", "stamp"] }, // the fix PR gets the full loop
+    pr: { steps: ["swarm", "triage", "simplify", "swarm", "ci-repair", "gate"] },
+    incident: { steps: ["incident", "swarm", "triage", "simplify", "swarm", "ci-repair", "gate"] }, // the fix PR gets the full loop
   },
 };
 
@@ -389,15 +389,15 @@ export function recipeProblems(name: string, steps: Step[], mode: Mode): string[
 
   if (steps.includes("incident") && at("incident") !== 0) problems.push(`recipe ${name}: incident opens the PR, so it must come first`);
 
-  if (steps.includes("stamp") && steps.lastIndexOf("stamp") !== steps.length - 1) problems.push(`recipe ${name}: stamp gives the verdict on the final head, so it must come last`);
+  if (steps.includes("gate") && steps.lastIndexOf("gate") !== steps.length - 1) problems.push(`recipe ${name}: gate gives the verdict on the final head, so it must come last`);
 
   if (steps.includes("triage") && !steps.slice(0, at("triage")).includes("swarm")) problems.push(`recipe ${name}: triage works the threads swarm posts, so a swarm must come before it`);
 
   const lastFix = steps.map((s) => FIXERS.has(s)).lastIndexOf(true);
 
-  if (lastFix >= 0 && !steps.slice(lastFix + 1).some((s) => REVIEWS.has(s))) problems.push(`recipe ${name}: ${steps[lastFix]} changes code, so a swarm or stamp must review after it`);
-  // stamp reviews the pushed head; under local the fixes never reach it, so only a swarm of the working tree counts.
-  else if (mode === "local" && lastFix >= 0 && !steps.slice(lastFix + 1).includes("swarm")) problems.push(`recipe ${name}: fixes.mode is local, so stamp cannot see ${steps[lastFix]}'s fixes; a swarm must review after it`);
+  if (lastFix >= 0 && !steps.slice(lastFix + 1).some((s) => REVIEWS.has(s))) problems.push(`recipe ${name}: ${steps[lastFix]} changes code, so a swarm or gate must review after it`);
+  // gate reviews the pushed head; under local the fixes never reach it, so only a swarm of the working tree counts.
+  else if (mode === "local" && lastFix >= 0 && !steps.slice(lastFix + 1).includes("swarm")) problems.push(`recipe ${name}: fixes.mode is local, so gate cannot see ${steps[lastFix]}'s fixes; a swarm must review after it`);
 
   if (mode === "suggest") {
     const fixers = steps.filter((s) => FIXERS.has(s));
@@ -417,17 +417,17 @@ export const DEFAULT_RECIPE: Record<Mode, string> = { suggest: "review", local: 
 
 /** How a recipe finishes, which is not always "ready to merge". */
 export function completion(steps: Step[], mode: Mode): string {
-  if (!steps.some((s) => FIXERS.has(s))) return steps.at(-1) === "stamp" ? "ready when stamp approves this head, CI is green and no review thread is open" : "reviewed: findings posted for the author; says nothing about merge readiness";
+  if (!steps.some((s) => FIXERS.has(s))) return steps.at(-1) === "gate" ? "ready when gate approves this head, CI is green and no review thread is open" : "reviewed: findings posted for the author; says nothing about merge readiness";
 
   if (mode === "local") return "fixes_uncommitted: reviewed in your working tree; commit, push and run again before it can be ready";
 
-  return steps.at(-1) === "stamp" ? "ready when stamp approves the final head, CI is green and no review thread is open; else pending" : "reviewed after the last fix; not ready until stamp approves, CI is green and no review thread is open";
+  return steps.at(-1) === "gate" ? "ready when gate approves the final head, CI is green and no review thread is open; else pending" : "reviewed after the last fix; not ready until gate approves, CI is green and no review thread is open";
 }
 
-// What each step can write. Swarm and stamp only post; the fixers' reach is the fix mode.
+// What each step can write. Swarm and gate only post; the fixers' reach is the fix mode.
 const WRITES: Record<Step, Record<Mode, string>> = {
   swarm: { suggest: "posts review comments on the PR", local: "posts review comments on the PR", push: "posts review comments on the PR" },
-  stamp: { suggest: "posts a review (approve or request changes)", local: "posts a review (approve or request changes)", push: "posts a review (approve or request changes)" },
+  gate: { suggest: "posts a review (approve or request changes)", local: "posts a review (approve or request changes)", push: "posts a review (approve or request changes)" },
   triage: { suggest: "replies on threads, changes no code", local: "edits your working tree", push: "commits and pushes to the PR branch, resolves threads" },
   simplify: { suggest: "reports only", local: "edits your working tree", push: "commits and pushes to the PR branch" },
   "ci-repair": { suggest: "reports only", local: "edits your working tree", push: "commits and pushes to the PR branch" },
@@ -671,22 +671,23 @@ export function branding(p: Effective) {
   const avatar = b?.avatar ? `<img src="${html(b.avatar)}" alt="" width="16" height="16"> ` : "";
   const header = (runner: string) => `> 🤖 Automated comment by ${avatar}**${name} ${runner}**, not written by a human`;
 
-  return { name, avatar, emoji: { ...BRANDING.emoji, ...b?.emoji }, headers: { swarm: header("swarm"), incident: header("incident"), audit: header("audit") } };
+  return { name, avatar, avatarUrl: b?.avatar ? html(b.avatar) : "", emoji: { ...BRANDING.emoji, ...b?.emoji }, headers: { swarm: header("swarm"), incident: header("incident"), audit: header("audit") } };
 }
 
 /**
- * Every CI setting that is not a secret: its repository variable, its key under `ci:`, and the built-in default.
+ * Every CI setting that is not a secret: its key under `ci:` and the built-in default. Only AWS_REGION, the AWS
+ * standard name, has a variable; everything else is the reviewed config.
  * `push_deny` has no default here: the built-in deny list lives in the workflow, and config only adds to it.
  */
 export const CI_SETTINGS = {
-  label: { variable: "SHEPHERD_LABEL", default: "" },
+  label: { variable: null, default: "" },
   aws_region: { variable: "AWS_REGION", default: "" },
-  notify_on: { variable: "SHEPHERD_NOTIFY_ON", default: "success,failure,error" },
-  max_commits: { variable: "SHEPHERD_MAX_COMMITS", default: "20" },
+  notify_on: { variable: null, default: "success,failure,error" },
+  max_commits: { variable: null, default: "20" },
   push_deny: { variable: null, default: "" },
-  incident_paths: { variable: "INCIDENT_PATHS", default: "^src/" },
-  audit_plays: { variable: "AUDIT_PLAYS", default: "secrets-scan sca-audit iac-security-review code-review-security" },
-  audit_public: { variable: "AUDIT_PUBLIC", default: "false" },
+  incident_paths: { variable: null, default: "^src/" },
+  audit_plays: { variable: null, default: "secrets-scan sca-audit iac-security-review code-review-security" },
+  audit_public: { variable: null, default: "false" },
 } as const;
 
 export type CiSetting = { value: string; source: "variable" | "config" | "default"; variable: string | null };
@@ -703,7 +704,7 @@ export function ciSettings(p: Effective, env: Record<string, string | undefined>
     if (/[\n\r]/.test(setting.value)) throw new Error(`${variable ?? key}: one line only`);
 
     // A variable skips ConfigSchema, and a cap that does not parse would let the loop run unbounded.
-    if (key === "max_commits" && !/^[1-9]\d{0,2}$/.test(setting.value)) throw new Error(`${variable}: a whole number from 1 to 999`);
+    if (key === "max_commits" && !/^[1-9]\d{0,2}$/.test(setting.value)) throw new Error(`${variable ?? key}: a whole number from 1 to 999`);
 
     return setting;
   };

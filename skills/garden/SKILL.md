@@ -6,7 +6,7 @@ description: >
   that stopped short or went quiet), then opens PRs: skill edits to shepherd for
   the patterns behind low scores, and lint rules for lens findings triage keeps
   fixing, so lint catches them before any model reads the diff, and a rule for
-  each incident whose culprit PR stamp approved. Use for "/garden", "garden shepherd", "what should shepherd learn", or
+  each incident whose culprit PR the gate approved. Use for "/garden", "garden shepherd", "what should shepherd learn", or
   on a weekly schedule. Takes repos (owner/name) and an optional --since date.
 ---
 
@@ -46,7 +46,7 @@ rules **accepted** on at least 3 PRs: triage fixed them in a commit nobody
 reverted, named them in a `Shepherd-Fixes` trailer, on a PR by someone who can
 push, and no person argued in their threads. Triage resolves findings it judged
 wrong too, so a resolved thread alone counts for nothing. `escapes` lists the
-incidents whose culprit PR stamp approved (Step 5b). `rounds` gives the merged PRs
+incidents whose culprit PR the gate approved (Step 5b). `rounds` gives the merged PRs
 with a swarm summary, their mean rounds, and the share that took one.
 `outcomes` sorts each lens rule's threads on PRs by someone who can push:
 `fixed` (an unreverted commit on that PR names the rule in `Shepherd-Fixes`; one trailer can cover several threads, so read this as an upper bound), `dismissed`
@@ -69,7 +69,7 @@ accepted fixes still come only from its unreverted `Shepherd-Fixes` trailers.
 | `trace_stage_failed` | an observed stage failed or did not finish |
 | `trace_retries` | observed iterations used at least 3 retries |
 | `trace_approval_wait` | recorded approval waits took at least 5 minutes and half the observed iteration time |
-| `trace_review_cost` | observed Stamp reviews cost at least $5 in known prices |
+| `trace_review_cost` | observed gate reviews cost at least $5 in known prices |
 
 ## Step 2: Find the cause, only where a signal fired
 
@@ -157,15 +157,15 @@ lint rule has held.
 ## Step 5b: A rule for each escaped regression
 
 Each entry in `escapes` is an incident the `incident` skill traced to a PR
-stamp approved. Read the incident issue's root cause, the culprit PR's diff
-and stamp's review on it, and the fix PR with its reproducing test.
+The gate approved. Read the incident issue's root cause, the culprit PR's diff
+and the gate's review on it, and the fix PR with its reproducing test.
 
 - **`cause: merge_skew`:** the PR passed on its own head, so no review rule
   would have caught it. Put "require up-to-date branches, or a merge queue" in
   the report and propose nothing.
 - **Otherwise:** write the smallest rule that flags the culprit diff and passes
   the fix. A rule one file's syntax decides goes through Step 5 as a lint rule.
-  Any other rule joins the repository's own stamp rule pack (`.stamp/rules/`)
+  Any other rule joins the repository's own gate rule pack (`.shepherd/rules/`)
   or a team lens in `.shepherd/`, whichever already covers those paths; add to
   an existing file before creating one. The rule names what to check, never
   the incident ("a function that now dereferences an argument its callers can
@@ -181,8 +181,8 @@ in the same PR as its rule.
 
 Rules only tighten. Open one PR per repository titled `garden: escapes <date>`,
 with the trailer `Shepherd: garden`, and give each rule its incident, culprit
-PR, fix PR and the line in the culprit diff it flags. stamp sends a PR that
-edits `.stamp/` or `.shepherd/` to a person, which is the review a new rule
+PR, fix PR and the line in the culprit diff it flags. The gate sends a PR that
+edits `.shepherd/` to a person, which is the review a new rule
 needs.
 
 ## Outbox mode

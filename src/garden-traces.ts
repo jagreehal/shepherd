@@ -13,7 +13,7 @@ const MAX_SPANS = 50_000;
 
 const MAX_MEASUREMENTS = 50_000_000;
 
-const KEYS = new Set(["vcs.repository.name", "vcs.change.id", "vcs.ref.head.revision", "shepherd.retries", "shepherd.stage", "shepherd.outcome", "stamp.cost_usd", "stamp.cost_complete"]);
+const KEYS = new Set(["vcs.repository.name", "vcs.change.id", "vcs.ref.head.revision", "shepherd.retries", "shepherd.stage", "shepherd.outcome", "gate.cost_usd", "gate.cost_complete"]);
 
 const Id = z.string().transform((s) => /^[0-9a-f]{1,32}$/.test(s) ? s.padStart(32, "0") : /^[A-Za-z0-9+/]{22}==$/.test(s) ? Buffer.from(s, "base64").toString("hex") : s)
   .pipe(z.string().regex(/^[0-9a-f]{32}$/).refine((s) => /[1-9a-f]/.test(s)));
@@ -164,7 +164,7 @@ export async function readTempo(endpoint: string, headers: Record<string, string
   const signal = AbortSignal.timeout(30_000);
   const get = async (url: URL) => readResponse(await fetch(url, { headers: { ...headers, Accept: "application/json" }, redirect: "error", signal }));
   const search = new URL("api/search", base);
-  search.searchParams.set("q", `{ (name = "shepherd.iteration" || name = "stamp.review") && span.vcs.repository.name = ${JSON.stringify(repo)} }`);
+  search.searchParams.set("q", `{ (name = "shepherd.iteration" || name = "gate.review") && span.vcs.repository.name = ${JSON.stringify(repo)} }`);
   search.searchParams.set("start", String(Math.floor(Date.parse(since) / 1000)));
   search.searchParams.set("end", String(Math.floor(now / 1000)));
   search.searchParams.set("limit", String(MAX_TRACES));
@@ -197,7 +197,7 @@ const DatadogCustom = z.object({
   }).optional().catch(undefined),
   shepherd: z.object({ retries: num, stage: str, outcome: str }).optional().catch(undefined),
   // Datadog stores a boolean attribute as the string "true" or "false".
-  stamp: z.object({ cost_usd: num, cost_complete: z.enum(["true", "false"]).optional().catch(undefined) }).optional().catch(undefined),
+  gate: z.object({ cost_usd: num, cost_complete: z.enum(["true", "false"]).optional().catch(undefined) }).optional().catch(undefined),
   otel: z.object({ status_code: str }).optional().catch(undefined),
 }).catch({});
 
@@ -247,8 +247,8 @@ export function fromDatadog(span: DatadogSpan): Span | null {
     ...asDouble("shepherd.retries", c.shepherd?.retries),
     ...asText("shepherd.stage", c.shepherd?.stage),
     ...asText("shepherd.outcome", c.shepherd?.outcome),
-    ...asDouble("stamp.cost_usd", c.stamp?.cost_usd),
-    ...(c.stamp?.cost_complete === undefined ? [] : [{ key: "stamp.cost_complete", value: { boolValue: c.stamp.cost_complete === "true" } }]),
+    ...asDouble("gate.cost_usd", c.gate?.cost_usd),
+    ...(c.gate?.cost_complete === undefined ? [] : [{ key: "gate.cost_complete", value: { boolValue: c.gate.cost_complete === "true" } }]),
   ];
 
   const parsed = Span.safeParse({
@@ -261,7 +261,7 @@ export function fromDatadog(span: DatadogSpan): Span | null {
 }
 
 /**
- * Datadog's span search: the repository's `shepherd.iteration` and `stamp.review` roots, then every span in those
+ * Datadog's span search: the repository's `shepherd.iteration` and `gate.review` roots, then every span in those
  * traces, since stage spans carry no repository. The endpoint rate-limits at 300 requests an hour, so the reader
  * batches trace IDs and stops at the trace and span caps.
  */
@@ -279,7 +279,7 @@ export async function readDatadog(site: string, apiKey: string, appKey: string, 
       signal,
     }))));
 
-  const roots = await search(`@vcs.repository.name:${JSON.stringify(repo)} resource_name:(shepherd.iteration OR stamp.review)`);
+  const roots = await search(`@vcs.repository.name:${JSON.stringify(repo)} resource_name:(shepherd.iteration OR gate.review)`);
   const ids = [...new Set(roots.data.flatMap((s) => (s ? [s.attributes.trace_id] : [])).filter((id) => /^[0-9a-f]{32}$/.test(id)))].slice(0, MAX_TRACES);
   // Here `limited` tracks only the span budget, so a truncated root search still pages through every trace it found.
   const input: TraceInput = { spans: [], sources: 1, unavailable: 0, limited: false };
@@ -372,10 +372,10 @@ export type TraceSummary = {
   reviewMs: number; knownCostUsd: number; pricedReviews: number; unpricedReviews: number;
   stages: { stage: typeof STAGES[number]; durationMs: number; runs: number; failed: number }[];
   signals: TraceSignal[];
-  evidence: { traceId: string; spanId: string; headSha: string; kind: "shepherd.iteration" | "stamp.review" }[];
+  evidence: { traceId: string; spanId: string; headSha: string; kind: "shepherd.iteration" | "gate.review" }[];
 };
 
-const Kind = z.enum(["shepherd.iteration", "stamp.review"]);
+const Kind = z.enum(["shepherd.iteration", "gate.review"]);
 
 /** Deduplicate exports, then correlate only known PR commits inside the requested window. These are observed samples, not a complete history. */
 export function traceScores(input: TraceInput, repo: string, prs: PrRecord[], since: string, limits = traceLimits, now = Date.now()) {
@@ -409,14 +409,14 @@ export function traceScores(input: TraceInput, repo: string, prs: PrRecord[], si
 
     if (summary.evidence.length < 20) summary.evidence.push({ traceId: root.traceId, spanId: root.spanId, headSha: head, kind: kind.data });
 
-    if (kind.data === "stamp.review") {
+    if (kind.data === "gate.review") {
       summary.reviews++;
       summary.reviewMs += duration(root);
-      const cost = number(root, "stamp.cost_usd");
+      const cost = number(root, "gate.cost_usd");
 
       if (cost !== undefined) summary.knownCostUsd += cost;
 
-      if (cost !== undefined && value(root, "stamp.cost_complete")?.boolValue === true) summary.pricedReviews++;
+      if (cost !== undefined && value(root, "gate.cost_complete")?.boolValue === true) summary.pricedReviews++;
       else summary.unpricedReviews++;
     } else {
       summary.iterations++;
@@ -436,7 +436,7 @@ export function traceScores(input: TraceInput, repo: string, prs: PrRecord[], si
         record.failed += Number(failed);
         summary.failedStages += Number(failed);
 
-        if (stage.data === "stamp") waits.push([startMs(child), startMs(child) + elapsed]);
+        if (stage.data === "gate") waits.push([startMs(child), startMs(child) + elapsed]);
 
         if (!summary.stages.includes(record)) summary.stages.push(record);
       }

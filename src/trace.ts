@@ -8,8 +8,8 @@ import path from "node:path";
 import { z } from "zod";
 import { stateDir } from "./local.ts";
 
-// `stamp` is the wait for stamp's verdict.
-export const STAGES = ["checks", "swarm", "verify", "triage", "simplify", "ci-repair", "stamp"] as const;
+// `gate` is the wait for gate's verdict.
+export const STAGES = ["checks", "swarm", "verify", "triage", "simplify", "ci-repair", "gate"] as const;
 
 const Event = z.object({
   at: z.string(),
@@ -93,7 +93,7 @@ export function stagesFrom(text: string, now: Date): StageRecord {
   return { start: events[0]?.at ?? null, stages: stages.sort((a, b) => a.start.localeCompare(b.start)) };
 }
 
-/** What ties an iteration to the PR, the CI run and other traces: stamp's review, a CI run's trace. */
+/** What ties an iteration to the PR, the CI run and other traces: gate's review, a CI run's trace. */
 export type Iteration = {
   repo: string;
   pr: number;
@@ -108,7 +108,7 @@ export type Iteration = {
 
 const TRACEPARENT = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
 
-/** The iteration span's attributes, named like stamp's so one query finds both. An absent value stays undefined. */
+/** The iteration span's attributes, named like gate's so one query finds both. An absent value stays undefined. */
 export const iterationAttributes = (it: Iteration, stages: Stage[]) => ({
   "vcs.repository.name": it.repo,
   "vcs.change.id": String(it.pr),

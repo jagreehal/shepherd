@@ -1,0 +1,111 @@
+# shepherd gate: approve-first PR review. Installed by `bunx @jagreehal/shepherd gate init`.
+#
+# Pick a model with the SHEPHERD_MODEL variable (provider/model, e.g. anthropic/claude-opus-5,
+# bedrock/eu.amazon.nova-pro-v1:0, opencode-go/deepseek-v4.1-flash, openai/gpt-5.5) or `model:` in
+# .shepherd/gate.yml, and add that provider's key as a secret under its usual name. Bedrock without a key uses
+# OIDC: `shepherd gate init --aws-oidc` and the AWS_ROLE_ARN variable. Every other setting lives in the policy,
+# read from the default branch; `shepherd gate config` prints what is in effect.
+# Also: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests".
+name: shepherd-gate
+on:
+  # `/gate` in a PR comment re-runs the review: the fix loop otherwise needs an empty commit. So does ticking
+  # "Review again" on the gate card, which edits that comment.
+  issue_comment:
+    types: [created, edited]
+  pull_request:
+    # `converted_to_draft` and `unlabeled` withdraw a standing approval: the draft/label skip paths retract it.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
+  # Edits arrive through shepherd-gate-edited.yml, which calls this workflow for a base retarget or the author's
+  # review-changes disclosure. The job `if` below still names both, since a called run sees the `edited` event.
+  workflow_call:
+
+concurrency:
+  # Only runs that review share the PR's group, so a newer review supersedes an older one. A run the
+  # job's `if` skips (an ordinary comment, or a bot rewriting the PR description after every push)
+  # gets a group of its own: in the shared group it cancelled the review in flight after that review
+  # had retracted the approval, leaving no verdict coming. The condition below is the job's `if`,
+  # verbatim, except that a comment joins the group only from an OWNER, MEMBER or COLLABORATOR: anyone
+  # else's `/gate` runs in a group of its own, so it cannot cancel a review before gate has checked
+  # their permission. A tick of "Review again" also runs in a group of its own: the ticker's permission is not in
+  # the event, so gate checks it before anything changes. A test keeps them in step. Two runs that do overlap order themselves by run marker.
+  group: gate-${{ github.event.pull_request.number || github.event.issue.number }}-${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null || (github.event.changes.body != null && github.event.sender.login == github.event.pull_request.user.login && contains(github.event.pull_request.body, '<!-- shepherd:review-changes -->')))) || (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/gate') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))) && 'review' || github.run_id }}
+  cancel-in-progress: true # a newer head supersedes the review in flight
+
+permissions:
+  contents: read
+  pull-requests: write
+  # Reads the PR's reactions (the issues API serves them) to wait for reviewer bots still at work.
+  issues: read
+  # Reads the test-evidence artifact when policy sets `stories:`.
+  actions: read
+  # Reads reviewer check runs, such as Claude Code Review, to wait while one is running.
+  checks: read
+  #aws-oidc id-token: write # Bedrock through OIDC: the AWS step exchanges it for the role's credentials
+
+jobs:
+  review:
+    # No draft/bot/label filter here on purpose: gate itself decides whether to review, and it
+    # retracts its stale approval on every skip path. A job-level `if` would skip the retraction too.
+    # A comment never changes the head, so skipping one strands no approval. Only people who could
+    # merge anyway may spend a run this way: gate checks the commenter's permission first and exits
+    # without touching anything otherwise. That check is not here because author_association reads
+    # write access through a team, and a private org member, as CONTRIBUTOR.
+    if: >-
+      (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base != null || (github.event.changes.body != null && github.event.sender.login == github.event.pull_request.user.login && contains(github.event.pull_request.body, '<!-- shepherd:review-changes -->'))))
+      || (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.issue.pull_request != null
+          && startsWith(github.event.comment.body, '/gate'))
+      || (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.issue.pull_request != null
+          && endsWith(github.event.comment.user.login, '[bot]') && startsWith(github.event.comment.body, '<!-- gate-actions -->') && contains(github.event.comment.body, '- [x] <!-- gate-action:rereview -->')
+          && !contains(github.event.changes.body.from, '- [x] <!-- gate-action:rereview -->'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run is fail-closed (the approval is already retracted)
+    env:
+      SHEPHERD_VERSION: 0.15.0 # pinned: the engine decides what gets auto-approved, so bumps are deliberate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }} # on a comment event gate fetches the head itself
+          persist-credentials: false # no token in .git/config for a reviewer to read; gate's fetches authenticate through gh
+          fetch-depth: 1 # gate fetches the base ref and origin/<default> itself, and unshallows only when a run reaches the familiarity signal
+      # Bedrock through OIDC (`shepherd gate init --aws-oidc`). The provider reads the credentials this step exports.
+      # A failed exchange must not skip gate: gate retracts its standing approvals before anything else, and
+      # the review then ends in ERROR for want of credentials. A `pull_request` run from a fork gets no OIDC token; a `/gate` comment runs in this repository and gets one.
+      #aws-oidc - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+      #aws-oidc   continue-on-error: true
+      #aws-oidc   with:
+      #aws-oidc     role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+      #aws-oidc     aws-region: ${{ vars.AWS_REGION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds model keys
+      - run: bunx "@jagreehal/shepherd@$SHEPHERD_VERSION" gate "$PR" --post --json "$RUNNER_TEMP/gate.json"
+        env:
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          GH_TOKEN: ${{ github.token }}
+          SHEPHERD_BOT_LOGIN: github-actions[bot]
+          SHEPHERD_CLI_IMAGE: gate-reviewer:local
+          SHEPHERD_BUILD_CLI_IMAGE: '1' # The gate prepares the packaged image after approval handling and gates
+          # Set the key for your provider; the others stay empty.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }} # leave empty for OIDC (step above)
+          OPENAI_COMPATIBLE_API_KEY: ${{ secrets.OPENAI_COMPATIBLE_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }} # backends: [claude]
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}               # backends: [codex]
+          OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }} # Slack Incoming Webhook or any URL that takes JSON
+          SHEPHERD_MODEL: ${{ vars.SHEPHERD_MODEL }}
+          OPENAI_COMPATIBLE_BASE_URL: ${{ vars.OPENAI_COMPATIBLE_BASE_URL }}
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-evidence-${{ github.event.pull_request.number || github.event.issue.number }}
+          path: ${{ runner.temp }}/gate.json

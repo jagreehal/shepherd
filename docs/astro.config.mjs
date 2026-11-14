@@ -30,6 +30,10 @@ export default defineConfig({
         "slug": "start/quickstart"
       },
       {
+        "label": "Customize for your team",
+        "slug": "start/customize"
+      },
+      {
         "label": "Choose a setup",
         "slug": "start/choose-a-setup"
       }
@@ -89,8 +93,8 @@ export default defineConfig({
     "label": "Integrations",
     "items": [
       {
-        "label": "Use Shepherd with Stamp",
-        "slug": "integrations/stamp"
+        "label": "Approve PRs with the gate",
+        "slug": "integrations/gate"
       },
       {
         "label": "Use Shepherd with pstack",

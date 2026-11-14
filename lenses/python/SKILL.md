@@ -1,6 +1,6 @@
 ---
 name: python
-description: Python rules for a code review (services, workers, Django, FastAPI, Flask). Flags code that trusts input, loses errors, blocks or misbehaves under load in ways ruff and mypy miss. Covers queries and commands built from input, unsafe deserialisation, missing authorization on views, unvalidated input, swallowed exceptions, blocking calls in async code, outbound calls with no timeout, mutable defaults and module state shared across requests, ORM N+1 and unbounded queries, transactions that commit half the work, naive datetimes, and API and model contract changes. Use as a review lens or as a stamp rule pack.
+description: Python rules for a code review (services, workers, Django, FastAPI, Flask). Flags code that trusts input, loses errors, blocks or misbehaves under load in ways ruff and mypy miss. Covers queries and commands built from input, unsafe deserialisation, missing authorization on views, unvalidated input, swallowed exceptions, blocking calls in async code, outbound calls with no timeout, mutable defaults and module state shared across requests, ORM N+1 and unbounded queries, transactions that commit half the work, naive datetimes, and API and model contract changes. Use as a review lens or as a gate rule pack.
 ---
 
 # python

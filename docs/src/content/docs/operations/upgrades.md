@@ -12,16 +12,16 @@ Choose the release you want to run and substitute its version:
 bun add -g @jagreehal/shepherd@<version>
 ```
 
-If you use `bunx`, include `@<version>` when reproducibility matters. Update `SHEPHERD_VERSION` in your GitHub Actions workflows too: every job that installs the CLI pins it (`iterate` and `publish` in `shepherd.yml`, `investigate` in `shepherd-incident.yml`). An existing workflow continues to use its pinned version until you edit it.
+If you use `bunx`, include `@<version>` when reproducibility matters. Every workflow job that installs the CLI pins `SHEPHERD_VERSION`, and keeps its pinned version until you upgrade it (below).
 
 ## Update generated files
 
-`shepherd workflows` keeps existing files, and `shepherd init` refuses to overwrite a policy file. Rerunning setup does not upgrade a workflow you already have. Compare your files with the templates at the chosen release and carry over the changes you need, including permissions, triggers and credential handling.
+Run `shepherd workflows --upgrade` with the new version. It rewrites your workflow files from that release's templates and pins `SHEPHERD_VERSION`, keeping the model job's environment and your `workflows:` list; it stops with `update it by hand` on a file it cannot read. `shepherd init` keeps your `.shepherd/config.yml`. Review the diff, then run `shepherd doctor`.
 
-Review custom policy separately from engine changes. Both tools read repository policy from the default branch, so an unmerged policy edit does not govern a PR run.
+Review custom policy separately from engine changes. Shepherd and the gate read repository policy from the default branch, so an unmerged policy edit does not govern a PR run.
 
 ## Check an upgrade
 
 Run the first-run checks on a test PR. Confirm the expected verdict or mode, check the diff and GitHub writes, and verify notifications if you enabled them. Keep the previous version available so you can restore the workflow pin if the upgrade fails.
 
-Read the [changelog](https://github.com/jagreehal/shepherd/blob/main/CHANGELOG.md) for release changes and [Stamp integration](/shepherd/integrations/stamp/) for the other half of the review loop.
+Read the [changelog](https://github.com/jagreehal/shepherd/blob/main/CHANGELOG.md) for release changes and [the gate integration](/shepherd/integrations/gate/) for the other half of the review loop.

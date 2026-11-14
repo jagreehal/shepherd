@@ -310,11 +310,11 @@ describe("publish: the status the model asked for", () => {
   }
 
   test("a known state and one line of text pass through", () => {
-    const r = run(JSON.stringify({ state: "failure", description: "stamp refused: retry loop" }));
+    const r = run(JSON.stringify({ state: "failure", description: "gate refused: retry loop" }));
 
     expect(r.code).toBe(0);
     expect(r.args).toContain("state=failure");
-    expect(r.description).toBe("stamp refused: retry loop");
+    expect(r.description).toBe("gate refused: retry loop");
   });
 
   test("with nothing pushed and no re-run asked for, findings above NIT turn pending into failure; nothing turns it into success", () => {
@@ -323,7 +323,7 @@ describe("publish: the status the model asked for", () => {
 
     expect(run(pending, "", "", { "round.json": round("HIGH") }).args).toContain("state=failure");
     expect(run(pending, "", "", { "round.json": round("HIGH") }).description).toBe("1 finding(s) for the author; round 1 reviewed, 1 finding posted");
-    // Success needs stamp's approval, green CI and no open thread, none of which this step can see.
+    // Success needs gate's approval, green CI and no open thread, none of which this step can see.
     expect(run(pending, "", "", { "round.json": round("NIT") }).args).toContain("state=pending");
     expect(run(pending, "", "", { "round.json": JSON.stringify({ findings: [] }) }).args).toContain("state=pending");
     expect(run(pending, "", "", { "round.json": round("HIGH"), "rerun-jobs.txt": "[]" }).args).toContain("state=failure"); // an empty list asks for nothing
@@ -463,7 +463,7 @@ test("one run per PR from gate to publish: the workflow's group is keyed on the 
 
   // Comments and label events run in a group of their own, so one from someone who cannot push, or a label that is
   // not the handoff label, never takes a queued run's place. The gate dispatches the run that joins the queue.
-  expect(squash(wf.concurrency.group)).toContain(squash(wf.jobs.gate?.if ?? "unset").replace(/ \|\| \(github\.event_name == 'issue_comment'.*?'\/shepherd'\)\)/, "").replace(/ \|\| \(github\.event_name == 'pull_request_target'.*?vars\.SHEPHERD_LABEL\)\)/, ""));
+  expect(squash(wf.concurrency.group)).toContain(squash(wf.jobs.gate?.if ?? "unset").replace(/ \|\| \(github\.event_name == 'issue_comment'.*?'\/shepherd'\)\)/, "").replace(" || github.event_name == 'pull_request_target'", ""));
   expect(wf.concurrency.group).not.toContain("issue_comment");
   expect(wf.concurrency.group).not.toContain("pull_request_target");
   expect(wf.concurrency.group).toContain("shepherd-skip-");
@@ -575,11 +575,11 @@ describe("models in the model jobs", () => {
   const templates = ["shepherd.yml", "shepherd-incident.yml", "shepherd-audit.yml"].map((name) => ({ name, wf: Wf.parse(parse(readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8"))) }));
   const modelStep = (wf: z.infer<typeof Wf>) => Object.values(wf.jobs).flatMap((j) => j.steps ?? []).find((s) => s.run?.includes("opencode run"))!;
 
-  test("every model step takes one SHEPHERD_API_KEY or each provider's own, and the team's models from ci-models", () => {
+  test("every model step takes each provider's own key, and the team's models from ci-models", () => {
     for (const { name, wf } of templates) {
       const step = modelStep(wf);
 
-      expect({ name, key: step.env?.SHEPHERD_API_KEY, bedrock: step.env?.AWS_BEARER_TOKEN_BEDROCK, model: step.env?.SHEPHERD_MODEL }).toEqual({ name, key: "${{ secrets.SHEPHERD_API_KEY }}", bedrock: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}", model: "${{ vars.SHEPHERD_MODEL }}" });
+      expect({ name, opencode: step.env?.OPENCODE_API_KEY, bedrock: step.env?.AWS_BEARER_TOKEN_BEDROCK, model: step.env?.SHEPHERD_MODEL }).toEqual({ name, opencode: "${{ secrets.OPENCODE_API_KEY }}", bedrock: "${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}", model: "${{ vars.SHEPHERD_MODEL }}" });
       expect(step.run).toContain("plan=$(shepherd ci-models)");
       expect(step.run).toContain('opencode run --auto -m "$model"');
     }
@@ -604,28 +604,27 @@ describe("models in the model jobs", () => {
     }
   });
 
-  test("the step routes SHEPHERD_API_KEY to the provider's variable, drops blank keys, and hands OpenCode the ladder agents", () => {
+  test("the step drops blank keys and keys no model reads, and hands OpenCode the ladder agents", () => {
     const run = modelStep(templates[0]!.wf).run!;
     const dir = mkdtempSync(path.join(tmpdir(), "shepherd-models-"));
     const bin = path.join(dir, "bin");
 
     mkdirSync(bin);
-    const plan = JSON.stringify({ model: "amazon-bedrock/eu.amazon.nova-micro-v1:0", source: "models.loop", key_env: "AWS_BEARER_TOKEN_BEDROCK", key_envs: ["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"], opencode: { agent: { "shepherd-r0": { mode: "subagent", model: "opencode/deepseek-v4.1-flash-free" } } } });
+    const plan = JSON.stringify({ model: "amazon-bedrock/eu.amazon.nova-micro-v1:0", source: "models.loop", key_envs: ["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"], opencode: { agent: { "shepherd-r0": { mode: "subagent", model: "opencode/deepseek-v4.1-flash-free" } } } });
 
     // shepherd: `fanout` lists correctness for the head checked out; anything else prints the plan.
     writeFileSync(path.join(bin, "shepherd"), `#!/bin/sh\nif [ "$1" = fanout ]; then echo "{\\"head_sha\\": \\"$(git rev-parse HEAD)\\", \\"lenses\\": [{\\"lens\\": \\"correctness\\"}]}"; exit 0; fi\necho '${plan}'\n`);
     // opencode reports what it was given: its model, which keys it can see, and its config.
-    writeFileSync(path.join(bin, "opencode"), `#!/bin/sh\necho "model=$4"\nenv | grep -E '^(AWS_BEARER_TOKEN_BEDROCK|OPENCODE_API_KEY|OPENAI_API_KEY|SHEPHERD_API_KEY|OPENCODE_CONFIG_CONTENT)=' | sort\n`);
+    writeFileSync(path.join(bin, "opencode"), `#!/bin/sh\necho "model=$4"\nenv | grep -E '^(AWS_BEARER_TOKEN_BEDROCK|OPENCODE_API_KEY|OPENAI_API_KEY|OPENCODE_CONFIG_CONTENT)=' | sort\n`);
     chmodSync(path.join(bin, "shepherd"), 0o755);
     chmodSync(path.join(bin, "opencode"), 0o755);
 
     const go = (env: Record<string, string>) => spawnSync("bash", ["-eo", "pipefail", "-c", run], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, PR: "1", SHEPHERD_FANOUT: path.join(dir, "fanout.json"), ...env } }).stdout;
 
-    const one = go({ SHEPHERD_API_KEY: "k1", AWS_BEARER_TOKEN_BEDROCK: "", OPENCODE_API_KEY: "" });
+    const one = go({ AWS_BEARER_TOKEN_BEDROCK: "k1", OPENCODE_API_KEY: "" });
 
     expect(one).toContain("model=amazon-bedrock/eu.amazon.nova-micro-v1:0");
     expect(one).toContain("AWS_BEARER_TOKEN_BEDROCK=k1");
-    expect(one).not.toContain("SHEPHERD_API_KEY=");
     expect(one).not.toContain("OPENCODE_API_KEY="); // blank: unset
     expect(one).toContain('OPENCODE_CONFIG_CONTENT={"agent":{"shepherd-r0"');
     // A key no model in the plan reads never reaches the model.
@@ -633,8 +632,6 @@ describe("models in the model jobs", () => {
 
     expect(scoped).toContain("OPENCODE_API_KEY=oc");
     expect(scoped).not.toContain("OPENAI_API_KEY=");
-    // The provider's own secret wins over the shared one.
-    expect(go({ SHEPHERD_API_KEY: "k1", AWS_BEARER_TOKEN_BEDROCK: "own" })).toContain("AWS_BEARER_TOKEN_BEDROCK=own");
     rmSync(dir, { recursive: true, force: true });
   });
 });
@@ -712,13 +709,15 @@ describe("publish: posting findings the iteration did not", () => {
       put(dir, "handoff/fanout.json", "{}");
       mkdirSync(path.join(dir, "repo"));
       // A stand-in CLI that says what it was asked to render.
-      put(dir, "bin/shepherd", `#!/bin/sh\nif [ "$1" = inline ]; then echo '{"commit_id":"x","event":"COMMENT","body":"b","comments":[{"path":"a","line":1}]}'; else echo "## rendered $*"; fi\n`);
+      put(dir, "bin/shepherd", `#!/bin/sh\nif [ "$1" = inline ]; then echo '{"commit_id":"x","event":"COMMENT","body":"b","comments":[{"path":"a","line":1}]}'; else echo "## rendered $*"; echo "<!-- shepherd-reviewed:head=abcdef1;base=${"b".repeat(40)} -->"; fi\n`);
       chmodSync(path.join(dir, "bin/shepherd"), 0o755);
     });
 
     expect(JSON.parse(posted?.review ?? "{}").comments).toHaveLength(1);
-    expect(posted?.body).toContain("## rendered summary ../handoff/round.json --previous ../summary.md --body --fanout ../handoff/fanout.json");
+    expect(posted?.body).toContain("## rendered summary ../handoff/round.json --previous ../summary.md --fanout ../handoff/fanout.json");
     expect(posted?.body).not.toContain("hand-written");
+    // The CLI's render posts as it is: the reviewed-head marker the next round reads survives, unescaped.
+    expect(posted?.body).toContain(`<!-- shepherd-reviewed:head=abcdef1;base=${"b".repeat(40)} -->`);
   });
 
   test("posts nothing when the iteration's summary for this head is on the PR", () => {
@@ -750,14 +749,14 @@ describe("publish: posting findings the iteration did not", () => {
   });
 
   test("posts the findings defused: no forged markers, mentions, images or control characters, and capped", () => {
-    const posted = run("<!-- stamp-run:x --> ping @team ![x](https://evil/t.png) <img src=x> a\u0007b\n" + "z".repeat(70000));
+    const posted = run("<!-- gate-run:x --> ping @team ![x](https://evil/t.png) <img src=x> a\u0007b\n" + "z".repeat(70000));
     const body = posted?.body ?? "";
 
     expect(posted?.patched).toBeNull(); // no summary yet: a new comment
 
     expect(body.startsWith("<!-- shepherd-swarm-summary -->\n<!-- shepherd-handoff-findings -->\n> 🤖 Automated comment by")).toBe(true);
-    expect(body).not.toContain("<!-- stamp-run");
-    expect(body).toContain("&lt;!-- stamp-run:x -->");
+    expect(body).not.toContain("<!-- gate-run");
+    expect(body).toContain("&lt;!-- gate-run:x -->");
     expect(body).toContain("@​team");
     expect(body).toContain("[image removed: x]");
     expect(body).toContain("&lt;img src=x>");
@@ -770,14 +769,14 @@ describe("publish: posting findings the iteration did not", () => {
 // A kept workflow's settings are YAML, written however the team wrote them: an upgrade carries them over or refuses.
 describe("upgradeWorkflow", () => {
   const tpl = readFileSync(path.resolve(import.meta.dir, "../templates/shepherd.yml"), "utf8");
-  const old = (jobs: string, on = "  workflow_run:\n    workflows: [ci, stamp]\n") => `on:\n${on}jobs:\n${jobs}`;
+  const old = (jobs: string, on = "  workflow_run:\n    workflows: [ci, shepherd-gate]\n") => `on:\n${on}jobs:\n${jobs}`;
 
   test("keeps a quoted environment and a multiline, commented workflows list", () => {
-    const { text, kept } = upgradeWorkflow(tpl, old(`  iterate:\n    environment: "ai-review"\n`, `  workflow_run:\n    workflows:\n      - build # our CI\n      - "CI / test"\n      - stamp\n`), "9.9.9");
+    const { text, kept } = upgradeWorkflow(tpl, old(`  iterate:\n    environment: "ai-review"\n`, `  workflow_run:\n    workflows:\n      - build # our CI\n      - "CI / test"\n      - gate\n`), "9.9.9");
 
-    expect(kept).toEqual(["environment ai-review", 'workflows [build, "CI / test", stamp]']);
+    expect(kept).toEqual(["environment ai-review", 'workflows [build, "CI / test", gate]']);
     expect(text).toContain("    environment: ai-review #");
-    expect(parse(text).on.workflow_run.workflows).toEqual(["build", "CI / test", "stamp"]);
+    expect(parse(text).on.workflow_run.workflows).toEqual(["build", "CI / test", "gate"]);
   });
 
   test("keeps an environment written as a mapping", () => {

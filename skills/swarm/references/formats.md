@@ -106,7 +106,7 @@ link a review comment's `html_url` (`#discussion_r<id>`), and an issue comment's
 never.
 The summary shows `pre_merge` as a table (open when one fails), a finding's
 `docs` as links, `reintroduces` as a link to the earlier thread, and closes
-with the `/shepherd` and `/stamp` commands. An inline comment also carries
+with the `/shepherd` and `/gate` commands. An inline comment also carries
 `checked` as a collapsed list of commands and the result of each.
 
 The renderer leads with the verdict heading

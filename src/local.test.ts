@@ -74,11 +74,11 @@ describe("local change capture", () => {
   test("a same-size edit inside the index's timestamp window is still captured", () => {
     const app = demo();
     const file = path.join(app, "src", "db.ts");
-    const stamp = new Date("2026-01-01T00:00:00Z");
+    const gate = new Date("2026-01-01T00:00:00Z");
 
     // Same size, same mtime as the index entry, ctime ignored: only git's racy check can see the edit.
     git(app, "config", "core.trustctime", "false");
-    utimesSync(file, stamp, stamp);
+    utimesSync(file, gate, gate);
 
     // The demo's other edits make --refresh exit 1; it still refreshes db.ts's cached stat.
     try {
@@ -86,8 +86,8 @@ describe("local change capture", () => {
     } catch {}
 
     writeFileSync(file, readFileSync(file, "utf8").replace("Row", "Rox"));
-    utimesSync(file, stamp, stamp);
-    utimesSync(path.join(app, ".git", "index"), stamp, stamp);
+    utimesSync(file, gate, gate);
+    utimesSync(path.join(app, ".git", "index"), gate, gate);
 
     expect(git(app, "diff", "--name-only")).toContain("src/db.ts");
     expect(captureChange(app).files).toContain("src/db.ts");

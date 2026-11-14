@@ -75,7 +75,7 @@ Read the PR title and body, new docs, and commit messages in the diff. Flag:
   named behaviour belongs
 - em-dash chains and triplet lists used for rhythm
 - claims the diff does not back: a body that says "adds tests" on a diff with
-  none is a HIGH finding, because reviewers and `stamp` trust the body
+  none is a HIGH finding, because reviewers and `gate` trust the body
 
 ## Severity
 

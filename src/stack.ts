@@ -1,4 +1,4 @@
-// Stacked PRs and wrong bases, detected the way stamp detects them before it reviews. A PR's base...head
+// Stacked PRs and wrong bases, detected the way gate detects them before it reviews. A PR's base...head
 // diff is what lands when it merges, which is right for a lone PR and wrong for two common shapes: a PR stacked on another open PR into the same base (its diff
 // carries the parent's change), and a PR branched from one long-lived branch but opened against another
 // (its diff carries everything the two branches differ by). Everything here is git ancestry on immutable
@@ -67,7 +67,7 @@ export function stackedParent(pr: { number: number; headSha: string; baseSha: st
   return best && { parent: best.parent, parentHead: best.parentHead };
 }
 
-// The same default stamp's policy carries: branches a PR is opened from and merged into, never feature branches.
+// The same default gate's policy carries: branches a PR is opened from and merged into, never feature branches.
 export const LONG_LIVED = ["main", "master", "develop", "release", "release/*", "staging"];
 
 const View = z.object({ number: z.number(), headRefName: z.string(), headRefOid: z.string(), baseRefName: z.string() });

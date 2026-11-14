@@ -2,7 +2,7 @@
 title: "Compose reviews for your stack"
 ---
 
-Shepherd ships a starter lens for each common stack. Pick the ones your repository uses, trim the rules you don't want, and add your own on top. Stamp reads the same lenses as rule packs, so you declare them once.
+Shepherd ships a starter lens for each common stack. Pick the ones your repository uses, trim the rules you don't want, and add your own on top. The gate reads the same lenses as rule packs, so you declare them once.
 
 ## The catalogue
 
@@ -79,17 +79,17 @@ checks still run, and the importer checks semantic fidelity separately. An
 action-only skill can produce no lens. Existing imports keep local rule edits
 and configuration when updated.
 
-## Stamp reads the same lenses
+## The gate reads the same lenses
 
-Add one block to `.stamp/policy.yml` and stamp treats every shepherd lens as a rule pack, from the same default branch. Each lens's `gate` becomes its `on_break`, and each rule's tag overrides that for the one rule.
+Add one block to `.shepherd/gate.yml` and the gate treats every shepherd lens as a rule pack, from the same default branch. Each lens's `gate` becomes its `on_break`, and each rule's tag overrides that for the one rule.
 
 ```yaml
-# .stamp/policy.yml
+# .shepherd/gate.yml
 rules_from:
   shepherd: {}             # on_break defaults to escalate for lenses with no gate
 ```
 
-A `rules:` entry with the same name wins over the inherited lens. Stamp sends a PR that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how later PRs get judged.
+A `rules:` entry with the same name wins over the inherited lens. The gate sends a PR that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how later PRs get judged.
 
 ## OWASP lenses
 

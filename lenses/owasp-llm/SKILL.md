@@ -9,7 +9,7 @@ description: >
   poisoned retrieval and memory, unbounded tokens and loops, MCP servers without
   auth or scoped tools, unpinned models and tools, agent-to-agent trust, and
   answers presented as fact without grounding. Each finding cites the LLM or ASI
-  id. Use as a review lens or as a stamp rule pack.
+  id. Use as a review lens or as a gate rule pack.
 source: github:OWASP/secure-agent-playbook/plugins/ai-security-skills@65d4efd2cd0b081d52101e9708792b944e4ddebb
 license: CC-BY-4.0
 ---

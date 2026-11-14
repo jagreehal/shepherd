@@ -1,6 +1,6 @@
 ---
 name: node-api
-description: Node.js HTTP service rules for a code review (Express, Fastify, Hono, Koa, NestJS). Flags handlers that skip auth, trust input, leak errors, hang or lose work. Covers middleware mount order, per-resource authorisation, unvalidated bodies and params, queries and commands built from input, error responses that leak internals, async errors that escape the handler, missing timeouts on outbound calls, unbounded bodies and lists, idempotency on retried writes, blocking the event loop, untyped request augmentation and unsafe CORS. Use as a review lens or as a stamp rule pack.
+description: Node.js HTTP service rules for a code review (Express, Fastify, Hono, Koa, NestJS). Flags handlers that skip auth, trust input, leak errors, hang or lose work. Covers middleware mount order, per-resource authorisation, unvalidated bodies and params, queries and commands built from input, error responses that leak internals, async errors that escape the handler, missing timeouts on outbound calls, unbounded bodies and lists, idempotency on retried writes, blocking the event loop, untyped request augmentation and unsafe CORS. Use as a review lens or as a gate rule pack.
 ---
 
 # node-api

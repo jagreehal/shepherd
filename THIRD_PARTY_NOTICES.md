@@ -12,6 +12,8 @@ These skill directories are copied unchanged from [mattpocock/skills](https://gi
 | `skills/retro/` | `skills/engineering/retro/` |
 | `skills/writing-for-agents/` | `skills/productivity/writing-for-agents/` |
 
+`skills/branch-review/` adapts `skills/engineering/code-review/` at the same commit: it reads the issue tracker from GitHub with `gh` in place of the upstream setup step, reads the standards from a freshly fetched, pinned default-branch commit, and includes uncommitted work in the diff. The rest is the same text.
+
 To update, copy each upstream directory over its copy here and update the commit above. Never edit these files: shepherd's own skills point at them and adapt them. `skills/pr/CREDITS.md` carries the upstream attribution for its Summary section.
 
 They are used under the MIT License:
