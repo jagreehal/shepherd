@@ -11,7 +11,6 @@ import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createGateway, gateway, generateText, stepCountIs, tool, ToolChoiceViolationError, type LanguageModel, type ModelMessage, type StepResult, type ToolSet } from "ai";
 import type { runWithSpan, Span, SpanStatusCode } from "autotel";
-import { BEDROCK_PRICING } from "autotel-bedrock";
 import { estimateLLMCost, registerModelPricing } from "autotel-genai/cost";
 import { createGenAiGuard, parseGuardRules } from "autotel-genai/guard";
 import { execFileSync } from "node:child_process";
@@ -25,9 +24,45 @@ import { Effort, Pricing } from "./policy.ts";
 
 export { PROVIDER_ENV } from "./env.ts";
 
-registerModelPricing(BEDROCK_PRICING);
-
 let pricingLoadedFor: string | undefined;
+
+/** The current policy's prices. A review is priced from these alone, even after an earlier policy registered others. */
+let policyPricing: z.infer<typeof Pricing> = {};
+
+/**
+ * A vendor or region prefix peeled off a model id, as the cost library peels it: everything up to the last `/`
+ * (`moonshotai/kimi-k3`), else up to the first `.` unless that segment holds a digit (`gpt-4.1-mini` is no prefix).
+ */
+function withoutPrefix(id: string): string | undefined {
+  const slash = id.lastIndexOf("/");
+
+  if (slash !== -1) return id.slice(slash + 1);
+
+  const dot = id.indexOf(".");
+  const head = id.slice(0, dot);
+
+  return dot <= 0 || /\d/.test(head) ? undefined : id.slice(dot + 1);
+}
+
+/**
+ * The policy's price for a model id, resolved the way the cost library resolves ids: exact, then the longest key
+ * the id starts with, tried again after each vendor or region prefix is peeled (`eu.openai.gpt-oss-120b-1:0`
+ * reaches `openai.gpt-oss-120b`, `moonshotai/kimi-k3` reaches `kimi-k3`). Undefined when the policy has none, so a
+ * model nobody priced stays unpriced.
+ */
+export function policyPrice(model: string): z.infer<typeof Pricing>[string] | undefined {
+  for (let id: string | undefined = model; id !== undefined; id = withoutPrefix(id)) {
+    if (policyPricing[id]) return policyPricing[id];
+
+    const key = Object.keys(policyPricing)
+      .filter((k) => id?.startsWith(k))
+      .sort((a, b) => b.length - a.length)[0];
+
+    if (key) return policyPricing[key];
+  }
+
+  return undefined;
+}
 
 /**
  * Register the `pricing` setting (the policy's) at review time: a malformed value fails
@@ -37,6 +72,8 @@ function loadPricing(): void {
   const raw = setting("pricing");
 
   if (pricingLoadedFor === raw) return;
+
+  policyPricing = {};
 
   if (raw) {
     let json: unknown;
@@ -50,7 +87,9 @@ function loadPricing(): void {
     const parsed = Pricing.safeParse(json);
 
     if (!parsed.success) throw new Error(`pricing: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
-    registerModelPricing(parsed.data);
+    policyPricing = parsed.data;
+    // Telemetry prices spans from these too, and records each price's date as gen_ai.usage.cost.price_as_of.
+    registerModelPricing(Object.fromEntries(Object.entries(parsed.data).map(([model, { as_of, ...price }]) => [model, { ...price, asOf: as_of }])));
   }
 
   pricingLoadedFor = raw;
@@ -410,7 +449,8 @@ export async function reviewWithTools<T>(o: Options<T>): Promise<ToolReview<T>> 
   const { model: pricedAs } = parseModelId(o.modelId);
   const model = o.model ?? languageModel(o.modelId, o.session);
   const rules = o.guard ?? setting("guard");
-  const priced = estimateLLMCost(pricedAs, { inputTokens: 1, outputTokens: 1 }) !== undefined;
+  const price = policyPrice(pricedAs);
+  const priced = price !== undefined;
 
   if (!priced && (rule(rules, "budget") || rule(rules, "cost"))) console.error(`budget guard inactive: no price for ${o.modelId}; set pricing in the policy (the token ceiling still holds)`);
   const limits = guardRules(rules, priced);
@@ -451,7 +491,8 @@ export async function reviewWithTools<T>(o: Options<T>): Promise<ToolReview<T>> 
 
   const onStepFinish = (step: StepResult<typeof tools>) => {
     const usage = { inputTokens: step.usage.inputTokens ?? 0, outputTokens: step.usage.outputTokens ?? 0, cacheReadInputTokens: step.usage.inputTokenDetails.cacheReadTokens ?? 0 };
-    const cost = estimateLLMCost(pricedAs, usage);
+    // Under the exact id, so this policy's price applies rather than one an earlier policy registered.
+    const cost = price && estimateLLMCost(pricedAs, usage, { pricing: { [pricedAs]: price } });
     run.steps += 1;
     run.inputTokens += usage.inputTokens;
     run.outputTokens += usage.outputTokens;
@@ -541,7 +582,7 @@ export async function startTelemetry(): Promise<void> {
   telemetry ??= (async () => {
     const [{ init, shutdown }, { registerTelemetry }, { autotelTelemetry }, { bedrockProviderAttributes }] = await Promise.all([import("autotel"), import("ai"), import("autotel-genai/observer"), import("autotel-bedrock")]);
     init({ service: setting("telemetry_service") });
-    registerTelemetry(autotelTelemetry({ pricing: BEDROCK_PRICING, providerAttributes: bedrockProviderAttributes }));
+    registerTelemetry(autotelTelemetry({ providerAttributes: bedrockProviderAttributes }));
 
     return { shutdown };
   })();

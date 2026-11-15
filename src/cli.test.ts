@@ -454,11 +454,25 @@ describe("adoption", () => {
     expect(out).toContain("SHEPHERD_TOKEN is not needed until fixes.mode is push");
   });
 
+  test("setup names the key for the gate policy's own model before the loop's", () => {
+    const { run } = repo({ ".shepherd/gate.yml": 'version: 1\nmodel: "bedrock/openai.gpt-oss-120b-1:0"\n', ".shepherd/config.yml": "models:\n  loop: claude-opus-5\n" });
+
+    expect(run("workflows").out).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret");
+  });
+
+  test("setup names the key for a SHEPHERD_MODEL override before the gate policy's model", () => {
+    const { dir } = repo({ ".shepherd/gate.yml": 'version: 1\nmodel: "openai/gpt-5.5"\n' });
+    const r = spawnSync("bun", [CLI, "workflows"], { cwd: dir, env: { ...process.env, ...ID, HOME: path.join(dir, "..", "home"), SHEPHERD_MODEL: "bedrock/openai.gpt-oss-120b-1:0" }, encoding: "utf8" });
+
+    expect(r.stdout).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret");
+  });
+
   test("workflows --model names the session model in the team policy, and --environment scopes the model keys", () => {
     const { dir, run } = repo();
     const out = run("workflows", "--model", "bedrock:minimax.minimax-m2.5", "--environment", "ai-review", "--label", "shepherd", "--aws-region", "eu-west-1").out;
 
     expect(out).toContain("pinned    models.loop: bedrock:minimax.minimax-m2.5 in .shepherd/config.yml");
+    expect(out).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret"); // the gate's hint follows the new loop model
     expect(out).toContain("as secrets of the ai-review environment");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("loop: bedrock:minimax.minimax-m2.5");
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("    environment: ai-review #");

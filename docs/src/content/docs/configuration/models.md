@@ -73,6 +73,19 @@ The gate reads the same tiers from the default branch: `SHEPHERD_MODEL=smart` re
 
 Shepherd runs models through its harness. In CI that harness is OpenCode, which reaches Bedrock (`amazon-bedrock/`), OpenAI (`openai/`), Anthropic, OpenRouter, Groq, DeepSeek, Mistral, Google, xAI and OpenCode Zen and Go by the model id alone. The gate's `compatible:` provider (any OpenAI-compatible endpoint) is the gate's own: for shepherd, declare that endpoint as a custom provider in OpenCode's config.
 
+## Prices and the gate's budget
+
+The gate stops a review that passes its dollar budget (`guard.budget_usd`, $2 by default). It prices each model call from `pricing:` in `.shepherd/gate.yml`, and from nothing else:
+
+```yaml
+pricing:
+  openai.gpt-oss-120b-1:0: { inputPer1M: 0.18, outputPer1M: 0.70, as_of: 2026-11-14, source: aws bedrock eu-west-1 }
+```
+
+`shepherd init` and `shepherd workflows` write this entry for the model you choose when they create `gate.yml`, from the list price on [models.dev](https://models.dev), with today's date. Change it to your region's or contract's rate. Bedrock prices differ by region: models.dev lists the us-east-1 rate.
+
+A model without a price runs with only the token ceiling, and the review log says `budget guard inactive`. A key matches the model id exactly, by prefix, or after a vendor or region prefix: `openai.gpt-oss-120b` prices `eu.openai.gpt-oss-120b-1:0`, and `kimi-k3` prices `openrouter:moonshotai/kimi-k3`.
+
 ## In GitHub Actions
 
 Name the session model in `.shepherd/config.yml`, where a change to it is reviewed like any other policy change:

@@ -545,17 +545,18 @@ if (command === "install") {
     console.log(`wrote     .github/workflows/${name}`);
   }
 
-  // The approval gate's workflows and policy too, so one command sets up the loop and the gate. No --model: the
-  // gate reads models.loop, pinned below, so a later --model moves both.
-  const gateArgs = ["init", ...(opts.upgrade ? ["--upgrade"] : []), ...(opts.environment ? ["--environment", opts.environment] : []), ...(opts["aws-region"] ? ["--region", opts["aws-region"]] : [])];
-
-  if (spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "gate", "src", "cli.ts"), ...gateArgs], { cwd: repoRoot, stdio: "inherit" }).status !== 0) process.exitCode = 1;
-
-  // Settings go in the team policy, reviewed and versioned, rather than in repository variables.
+  // Settings go in the team policy, reviewed and versioned, rather than in repository variables. Pinned before the
+  // gate's init, which names the key for this model.
   if (opts.model) {
     orExit(() => pinModel(repoLensFile(repoRoot), "loop", opts.model!));
     console.log(`pinned    models.loop: ${opts.model} in ${path.relative(repoRoot, repoLensFile(repoRoot))}`);
   }
+
+  // The approval gate's workflows and policy too, so one command sets up the loop and the gate. No --model: the
+  // gate reads models.loop, so a later --model moves both.
+  const gateArgs = ["init", ...(opts.upgrade ? ["--upgrade"] : []), ...(opts.environment ? ["--environment", opts.environment] : []), ...(opts["aws-region"] ? ["--region", opts["aws-region"]] : [])];
+
+  if (spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "gate", "src", "cli.ts"), ...gateArgs], { cwd: repoRoot, stdio: "inherit" }).status !== 0) process.exitCode = 1;
 
   const ci: Record<string, string> = {};
 
@@ -682,7 +683,7 @@ if (command === "install") {
   // Only a new choice is written: a rerun keeps the model the policy names.
   const wf = spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "src", "bin.ts"), "workflows", ...(pick?.chosen ? ["--model", pick.model] : [])], { cwd: repoRoot, encoding: "utf8" });
 
-  for (const line of `${wf.stdout}${wf.stderr}`.split("\n")) if (/^(wrote|created|upgraded|pinned|scoped)\b/.test(line)) console.log(line); // a rerun's kept files are not news
+  for (const line of `${wf.stdout}${wf.stderr}`.split("\n")) if (/^(wrote|created|upgraded|pinned|scoped|Priced|No list price)\b/.test(line)) console.log(line); // a rerun's kept files are not news
 
   if (wf.status !== 0) orExit(() => { throw new Error(`writing the workflows failed:\n${wf.stderr}`); });
   console.log(pick ? `model     ${pick.model} (${pick.why})` : `model     none found: set ${KEY_MODELS.map(([k]) => k).join(", ")} or pass --model provider/model`);

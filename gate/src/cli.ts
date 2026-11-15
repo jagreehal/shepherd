@@ -12,6 +12,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readd
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
+import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
@@ -54,6 +55,7 @@ import { incrementalDiff } from "./delta.ts";
 import { anchoredIssues } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { explainFailure, failureText } from "./provider-errors.ts";
+import { catalogPrice } from "./prices.ts";
 import { beginReviewSpan, endReviewSpan, inReviewSpan, keyEnvFor, keySource, parseModelId, reviewMeasurements, summarizeRun, type ReviewAttributes } from "./llm.ts";
 import { configSummary, effectiveConfig, setting, useSettings, type Settings } from "./config.ts";
 import { egressRefusals } from "./isolated-cli.ts";
@@ -138,6 +140,9 @@ if (process.argv[2] === "config") {
   process.exit(process.exitCode ?? 0);
 }
 
+/** The one field setup reads from a gate policy already in the working tree. */
+const PolicyModel = z.object({ model: z.string().optional() }).loose();
+
 const { values: opts, positionals } = args({
   allowPositionals: true,
   options: {
@@ -161,6 +166,16 @@ const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encodin
 const git = (...args: string[]) => execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() }).trim();
 
 if (positionals[0] === "init") {
+  // Setup, not review: the working tree names the key, since the default branch has not seen it yet. Same order as a
+  // review, after --model: SHEPHERD_MODEL, then the gate policy's `model:`, then the loop's models.loop, then the default.
+  const local = (rel: string) => (existsSync(path.join(repoRoot, rel)) ? readFileSync(path.join(repoRoot, rel), "utf8") : null);
+  const policyModel = PolicyModel.safeParse(parseYaml(local(".shepherd/gate.yml") ?? "") ?? {}).data?.model;
+  // SAFETY: shepherdModel reads only `model` and `policyFiles` from the policy, and both are optional.
+  const model = opts.model ?? (process.env.SHEPHERD_MODEL?.trim() || undefined) ?? policyModel ?? shepherdModel({} as Policy, local).model ?? setting("model");
+  // A new policy gets today's list price for that model, dated, so the $ budget works from the first review.
+  const policyExists = existsSync(path.join(repoRoot, ".shepherd/gate.yml"));
+  const priced = policyExists ? null : await catalogPrice(model);
+
   // Existing files are kept: the repo's policy is the repo's. --upgrade rewrites the workflows only, from this
   // gate's templates, keeping the environment, OIDC and region each was written with unless a flag changes one.
   for (const rel of [".shepherd/gate.yml", ".shepherd/review-guidance.md", ".github/workflows/shepherd-gate.yml", ".github/workflows/shepherd-gate-edited.yml", ".github/workflows/shepherd-gate-actions.yml"]) {
@@ -187,14 +202,17 @@ if (positionals[0] === "init") {
     mkdirSync(path.dirname(dest), { recursive: true });
 
     if (rel.startsWith(".github")) writeFileSync(dest, installWorkflow(readFileSync(src, "utf8"), { awsOidc: opts["aws-oidc"], environment: ownJob ? opts.environment : undefined, region: opts.region }));
-    else if (rel === ".shepherd/gate.yml") writeFileSync(dest, policyWithSettings(readFileSync(opts.strict ? path.join(DEFAULTS_DIR, "templates/policy-strict.yml") : src, "utf8"), { model: opts.model, region: opts.region }));
+    else if (rel === ".shepherd/gate.yml") writeFileSync(dest, policyWithSettings(readFileSync(opts.strict ? path.join(DEFAULTS_DIR, "templates/policy-strict.yml") : src, "utf8"), { model: opts.model, region: opts.region, pricing: priced ? { [priced.key]: priced.price } : undefined }));
     else copyFileSync(src, dest);
     console.log(`created ${rel}`);
   }
 
-  const key = opts["aws-oidc"] ? "nothing: under OIDC set the AWS_ROLE_ARN variable instead, naming a role that can invoke Bedrock" : `your provider key as the ${keyEnvFor(opts.model ?? setting("model"))} secret`;
+  const key = opts["aws-oidc"] ? "nothing: under OIDC set the AWS_ROLE_ARN variable instead, naming a role that can invoke Bedrock" : `your provider key as the ${keyEnvFor(model)} secret`;
 
   console.log(`\nNext: add ${key}, enable 'Allow GitHub Actions to create and approve pull requests', and merge. The model is SHEPHERD_MODEL, else \`model:\` in .shepherd/gate.yml, else the loop's models.loop; every other setting lives in .shepherd/gate.yml. Run \`shepherd gate config\` to see what is in effect.`);
+
+  if (priced) console.log(`Priced ${priced.key} at $${priced.price.inputPer1M} in / $${priced.price.outputPer1M} out per 1M tokens (${priced.price.source}, ${priced.price.as_of}) in .shepherd/gate.yml: edit it to your region's or contract's rate.`);
+  else if (!policyExists) console.log(`No list price found for ${model}: add one under pricing: in .shepherd/gate.yml (with as_of and source), or the $ budget stays inactive and only the token ceiling applies.`);
 
   if (opts.environment) console.log(`The review job runs in the "${opts.environment}" environment: create it (no protection rules) and put the model key there as an environment secret, not repository secrets.`);
   console.log(`\nThe gate reads its policy from the default branch, so whoever can merge there decides what it approves. Suggested .github/CODEOWNERS entries (replace @your-team):\n\n/.shepherd/  @your-team\n/.github/   @your-team\n\nThen turn on "Require review from Code Owners" for the default branch.\n`);
