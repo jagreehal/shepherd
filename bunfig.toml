@@ -1,4 +1,4 @@
 [test]
-preload = ["executable-stories-bun/preload"]
+preload = ["executable-stories-bun/preload", "./test-env.ts"]
 # Replayed rounds keep the files they reviewed, test files included, as data.
 pathIgnorePatterns = ["fixtures/**"]

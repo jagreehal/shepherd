@@ -50,6 +50,10 @@ export const Run = z.object({
   issues: z.array(z.string()),
   costUsd: z.number().nullable(),
   durationMs: z.number(),
+  /** Tokens and tool calls, so a model without a price in the policy can be priced from its published rates. */
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  toolCalls: z.number().optional(),
   error: z.string().optional(),
 });
 
@@ -174,7 +178,7 @@ export async function runCase(name: string, c: Case, backend: Backend, label: st
     const llm = await review(backend, input, guidance, dir);
     const outcome = readAll(assured({ verdict: llm.verdict, llm }), diffCut(diff), [llm]);
 
-    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: outcome.llm.issues, costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started };
+    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: outcome.llm.issues, costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started, inputTokens: llm.run?.inputTokens, outputTokens: llm.run?.outputTokens, toolCalls: llm.run?.toolCalls };
   } catch (e) {
     return { case: name, label, verdict: null, issues: [], costUsd: null, durationMs: Date.now() - started, error: String(e instanceof Error ? e.message : e).split("\n")[0] };
   } finally {

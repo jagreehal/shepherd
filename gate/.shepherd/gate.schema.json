@@ -483,7 +483,7 @@
       }
     },
     "pricing": {
-      "description": "Prices per million tokens for models autotel's tables leave out.",
+      "description": "Prices per million tokens for each model you use. Shepherd ships no prices: without one, the $ budget is inactive and costs show as unpriced.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -499,6 +499,16 @@
           },
           "cachedInputPer1M": {
             "type": "number"
+          },
+          "as_of": {
+            "description": "The date you read these prices (YYYY-MM-DD), so a stale price is visible.",
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "source": {
+            "description": "Where the prices came from: a price page, a contract, a region.",
+            "type": "string"
           }
         },
         "required": [

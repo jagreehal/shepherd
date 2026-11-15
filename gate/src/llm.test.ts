@@ -5,8 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { useSettings } from "./config.ts";
+import { Pricing } from "./policy.ts";
 import { dropBlankProviderEnv } from "./env.ts";
-import { anthropicBaseURL, apiKeyFor, keySource, languageModel, maxOutputTokens, missingLines, DEFAULT_GUARD, guardRules, parseModelId, reasoningEffort, reviewWithTools, summarizeRun, timeoutMs } from "./llm.ts";
+import { anthropicBaseURL, apiKeyFor, keySource, languageModel, maxOutputTokens, missingLines, DEFAULT_GUARD, guardRules, parseModelId, policyPrice, reasoningEffort, reviewWithTools, summarizeRun, timeoutMs } from "./llm.ts";
 
 const Verdict = z.object({ verdict: z.enum(["APPROVE", "REFUSE", "ESCALATE"]), reasoning: z.string() });
 
@@ -228,6 +229,82 @@ describe("the review loop", () => {
     } finally {
       useSettings({});
     }
+  });
+
+  test("a price carries the date it was read and its source, and the date must be a real one", () => {
+    expect(Pricing.safeParse({ "gpt-oss-120b": { inputPer1M: 0.18, outputPer1M: 0.7, as_of: "2026-11-14", source: "aws eu-west-1" } }).success).toBe(true);
+    expect(Pricing.safeParse({ "gpt-oss-120b": { inputPer1M: 0.18, outputPer1M: 0.7, as_of: "last week" } }).success).toBe(false);
+  });
+
+  test("a review is priced only from the policy, whatever tables the cost library ships", async () => {
+    const submit = () => new MockLanguageModelV4({ doGenerate: [turn(call("submit_verdict", { verdict: "APPROVE", reasoning: "ok" }, "1"))] });
+    const review = (model: MockLanguageModelV4) => reviewWithTools({ modelId: "openai:gpt-4o", model, schema: Verdict, system: "Review.", prompt: "Diff here.", repoRoot: repo(), session: "gate-1-abc" });
+
+    expect((await review(submit())).run.costUsd).toBeNull(); // the library knows gpt-4o; the policy does not
+
+    useSettings(JSON.parse('{"pricing":{"gpt-4o":{"inputPer1M":1,"outputPer1M":1}}}'));
+
+    try {
+      expect((await review(submit())).run.costUsd).not.toBeNull();
+    } finally {
+      useSettings({});
+    }
+  });
+
+  test("telemetry prices spans from the policy alone: the cost library ships no prices", async () => {
+    const { estimateLLMCost } = await import("autotel-genai/cost");
+
+    expect(estimateLLMCost("gemini-2.0-flash", { inputTokens: 1000, outputTokens: 500 })).toBeUndefined();
+    expect(estimateLLMCost("claude-3-opus", { inputTokens: 1000 })).toBeUndefined();
+  });
+
+  test("a policy price's as_of reaches telemetry as the price date", async () => {
+    const { priceAsOf } = await import("autotel-genai/cost");
+    const submit = new MockLanguageModelV4({ doGenerate: [turn(call("submit_verdict", { verdict: "APPROVE", reasoning: "ok" }, "1"))] });
+
+    useSettings(JSON.parse('{"pricing":{"dated-model":{"inputPer1M":1,"outputPer1M":1,"as_of":"2026-11-15","source":"test"}}}'));
+
+    try {
+      await reviewWithTools({ modelId: "bedrock:dated-model", model: submit, schema: Verdict, system: "Review.", prompt: "Diff here.", repoRoot: repo(), session: "gate-1-abc" });
+      expect(priceAsOf("dated-model")).toBe("2026-11-15");
+    } finally {
+      useSettings({});
+    }
+  });
+
+  test("a policy price resolves the way ids do: exact, then prefix, after each dotted prefix is peeled", async () => {
+    const submit = new MockLanguageModelV4({ doGenerate: [turn(call("submit_verdict", { verdict: "APPROVE", reasoning: "ok" }, "1"))] });
+
+    useSettings(JSON.parse('{"pricing":{"openai.gpt-oss-120b":{"inputPer1M":0.18,"outputPer1M":0.7}}}'));
+
+    try {
+      await reviewWithTools({ modelId: "bedrock:eu.openai.gpt-oss-120b-1:0", model: submit, schema: Verdict, system: "Review.", prompt: "Diff here.", repoRoot: repo(), session: "gate-1-abc" });
+      expect(policyPrice("eu.openai.gpt-oss-120b-1:0")?.inputPer1M).toBe(0.18);
+      expect(policyPrice("openai.gpt-oss-20b-1:0")).toBeUndefined();
+    } finally {
+      useSettings({});
+    }
+  });
+
+  test("a slash-prefixed id keeps its policy price, and a version is never mistaken for a prefix", async () => {
+    const submit = new MockLanguageModelV4({ doGenerate: [turn(call("submit_verdict", { verdict: "APPROVE", reasoning: "ok" }, "1"))] });
+
+    useSettings(JSON.parse('{"pricing":{"kimi-k3":{"inputPer1M":0.6,"outputPer1M":2.5},"1-mini":{"inputPer1M":9,"outputPer1M":9}}}'));
+
+    try {
+      const { run: priced } = await reviewWithTools({ modelId: "openrouter:moonshotai/kimi-k3", model: submit, schema: Verdict, system: "Review.", prompt: "Diff here.", repoRoot: repo(), session: "gate-1-abc" });
+
+      expect(priced.costUsd).not.toBeNull();
+      expect(policyPrice("gpt-4.1-mini")).toBeUndefined();
+    } finally {
+      useSettings({});
+    }
+  });
+
+  test("a model with no price in the policy is unpriced: shepherd ships no Bedrock prices", async () => {
+    const model = new MockLanguageModelV4({ doGenerate: [turn(call("submit_verdict", { verdict: "APPROVE", reasoning: "ok" }, "1"))] });
+
+    expect((await run(model)).run.costUsd).toBeNull();
   });
 });
 

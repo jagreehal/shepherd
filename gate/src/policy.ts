@@ -73,8 +73,19 @@ export function brand(b: z.infer<typeof Branding> | undefined) {
   return { ...glyphs, heading: (verdict: "APPROVED" | "REFUSED" | "ESCALATE" | "ERROR") => `## ${avatar}${glyphs[verdict]} ${escapeText(name)}: ${verdict}` };
 }
 
-/** Prices per million tokens for models autotel's tables leave out: `{"kimi-k3":{"inputPer1M":3,"outputPer1M":15}}`. */
-export const Pricing = z.record(z.string(), z.object({ inputPer1M: z.number(), outputPer1M: z.number(), cachedInputPer1M: z.number().optional() }).strict());
+/** Prices per million tokens by model, dated: `{"kimi-k3":{"inputPer1M":3,"outputPer1M":15,"as_of":"2026-11-15"}}`. */
+export const Pricing = z.record(
+  z.string(),
+  z
+    .object({
+      inputPer1M: z.number(),
+      outputPer1M: z.number(),
+      cachedInputPer1M: z.number().optional(),
+      as_of: z.iso.date().optional().describe("The date you read these prices (YYYY-MM-DD), so a stale price is visible."),
+      source: z.string().optional().describe("Where the prices came from: a price page, a contract, a region."),
+    })
+    .strict(),
+);
 
 export const Effort = z.enum(["low", "medium", "high"]);
 
@@ -110,7 +121,7 @@ export const PolicySchema = z
     // variable overrides each one (config.ts, `gate config`). Secrets are never here.
     model: z.string().min(1).optional().describe("The reviewer model, provider/model. Overridden by SHEPHERD_MODEL."),
     backends: z.array(z.string().min(1)).min(1).optional().describe("Primary backend, then a second opinion."),
-    pricing: Pricing.optional().describe("Prices per million tokens for models autotel's tables leave out."),
+    pricing: Pricing.optional().describe("Prices per million tokens for each model you use. Shepherd ships no prices: without one, the $ budget is inactive and costs show as unpriced."),
     provider: z.object({ region: z.string().regex(/^[a-z]{2}(-[a-z]+)+-\d$/, "an AWS region such as eu-west-1").optional(), base_url: z.url({ protocol: /^https?$/ }).optional(), anthropic_base_url: z.url({ protocol: /^https?$/ }).optional() }).strict().optional(),
     guard: z
       .object({
@@ -1251,8 +1262,13 @@ export function runGates(policy: Policy, pr: PRMeta): GateRun {
 export const enableAwsOidc = (template: string) => template.replace(/^(\s*)#aws-oidc /gm, "$1");
 
 /** The bundled policy with the settings `gate init` was given written in, so a first run needs only the secret. */
-export function policyWithSettings(text: string, s: { model?: string; region?: string }): string {
-  const lines = [s.model && `model: ${JSON.stringify(s.model)}`, s.region && `provider:\n  region: ${JSON.stringify(s.region)}`].filter(Boolean);
+export function policyWithSettings(text: string, s: { model?: string; region?: string; pricing?: z.infer<typeof Pricing> }): string {
+  const lines = [
+    s.model && `model: ${JSON.stringify(s.model)}`,
+    s.region && `provider:\n  region: ${JSON.stringify(s.region)}`,
+    s.pricing && `pricing:\n${Object.entries(s.pricing).map(([model, price]) => `  ${JSON.stringify(model)}: ${JSON.stringify(price)}`).join("\n")}`,
+  ].filter(Boolean);
+
   const out = lines.length ? text.replace(/^version: 1\n/m, `$&\n# Written by gate init.\n${lines.join("\n")}\n`) : text;
 
   PolicySchema.parse(parseYaml(out)); // a bad --model or --region fails here, not on the first review

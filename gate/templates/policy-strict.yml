@@ -10,11 +10,12 @@ version: 1
 
 # Settings. Each is optional. SHEPHERD_MODEL overrides `model`; `shepherd gate config` shows every value in effect
 # and where it came from.
-# Secrets never go here. Without a price for the model, the $ budget cannot fire ("budget guard inactive").
+# Secrets never go here. Without a price for the model, the $ budget cannot fire ("budget guard inactive"); gate init
+# writes the model's list price from models.dev, dated, for you to check against your region or contract.
 # model: bedrock/minimax.minimax-m2.5
 # backends: [api, bedrock:openai.gpt-oss-120b-1:0]   # primary, then a second opinion
 # pricing:
-#   minimax.minimax-m2.5: { inputPer1M: 0.3, outputPer1M: 1.2 }
+#   openai.gpt-oss-120b: { inputPer1M: 0.18, outputPer1M: 0.70, as_of: 2026-11-14, source: aws.amazon.com/bedrock/pricing eu-west-1 }
 # provider: { region: eu-west-1 }                    # also base_url (openai-compatible/) and anthropic_base_url
 # guard: { budget_usd: 2, tokens: 3m, loop: 4/12, max_tools: 80, timeout: 15m }
 # max_output_tokens: 16000
