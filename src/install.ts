@@ -27,17 +27,27 @@ export function environmentWorkflow(text: string, name: string): string {
 }
 
 /**
+ * The incident workflow's `branches: [<default>]` filled with the default branch, so CI on other branches starts no
+ * run. Without a name the filter goes, and every CI run starts one that its job condition skips, as before.
+ */
+export const branchWorkflow = (text: string, branches: string[] = []) =>
+  branches.length
+    ? // Always quoted: a JSON string is a YAML scalar that stays a string (`true`, `123`) and cannot end the list.
+      text.replaceAll("branches: [<default>]", `branches: [${branches.map((b) => JSON.stringify(b)).join(", ")}]`)
+    : text.replaceAll(/^ +branches: \[<default>\].*\n/gm, "");
+
+/**
  * A workflow rewritten from its current template, keeping what the installer or the team chose in the old copy: the
  * model job's environment and the `workflows:` list naming their CI. Everything else is the template's.
  */
-export function upgradeWorkflow(template: string, existing: string, version: string, environment?: string) {
+export function upgradeWorkflow(template: string, existing: string, version: string, environment?: string, defaultBranch?: string) {
   const kept: string[] = [];
 
   // Read as YAML, not by pattern: a quoted environment or a multiline workflows list is just as valid, and losing
   // either takes the model's keys away or stops reviews. Anything this cannot carry over refuses the upgrade.
   const old = z
     .object({
-      on: z.object({ workflow_run: z.object({ workflows: z.array(z.string()).min(1) }).optional() }).optional(),
+      on: z.object({ workflow_run: z.object({ workflows: z.array(z.string()).min(1), branches: z.array(z.string()).optional() }).optional() }).optional(),
       jobs: z.record(z.string(), z.object({ environment: z.union([z.string(), z.object({ name: z.string() }).transform((e) => e.name)]).optional() })),
     })
     .safeParse(parse(existing));
@@ -64,6 +74,12 @@ export function upgradeWorkflow(template: string, existing: string, version: str
     text = text.replace(/^( +workflows: )\[.*\]\s*$/m, `$1${list}`);
     kept.push(`workflows ${list}`);
   }
+
+  // A branch filter the team set wins over the detected default branch.
+  const branches = old.data.on?.workflow_run?.branches;
+
+  if (branches) kept.push(`branches [${branches.join(", ")}]`);
+  text = branchWorkflow(text, branches ?? (defaultBranch ? [defaultBranch] : []));
 
   return { text, kept };
 }

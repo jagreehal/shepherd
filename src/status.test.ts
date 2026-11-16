@@ -27,8 +27,10 @@ describe("shepherd status", () => {
     expect(prStatus({ ...base, gate: approved, shepherd: success, changesRequested: ["sam"] })).toMatchObject({ stage: "needs you", next: expect.stringContaining("sam") });
     expect(prStatus({ ...base, gate: { verdict: "REFUSED", head: "abcdef1" }, runs: [{ name: "shepherd-gate", status: "completed", conclusion: "failure", url: "" }] }).next).toContain("the gate's review");
     expect(prStatus({ ...base, gate: { verdict: "DISMISSED", head: "abcdef1" } }).stage).toBe("needs you");
+    expect(prStatus({ ...base, gate: approved, shepherd: success, runs: [{ name: "api-gateway", status: "completed", conclusion: "failure", url: "" }] }).stage).toBe("needs you");
     expect(prStatus({ ...base, gate: approved, shepherd: success, openThreads: 2 })).toMatchObject({ stage: "needs you", next: expect.stringContaining("2 open review threads") });
     expect(prStatus({ ...base, gate: approved, shepherd: success, runs: [{ name: "ci/circleci", status: "completed", conclusion: "failure", url: "" }] }).stage).toBe("needs you");
+    expect(prStatus({ ...base, gate: approved, shepherd: success, runs: [{ name: "deploy-preview", status: "completed", conclusion: "action_required", url: "" }] }).stage).toBe("needs you");
   });
 
   test("a running gate or CI job is named over shepherd's pending status, and an older head's approval is not ready", () => {

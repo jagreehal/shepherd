@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import Ajv from "ajv";
 import { ConfigSchema, configJsonSchema } from "./config.ts";
 import { runsGate } from "./doctor.ts";
-import { pinWorkflow } from "./install.ts";
+import { branchWorkflow, pinWorkflow, upgradeWorkflow } from "./install.ts";
 import path from "node:path";
 import { parse, stringify } from "yaml";
 
@@ -210,6 +210,14 @@ describe("adoption", () => {
     expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
     expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
     expect(plan.opencode.enabled_providers).toEqual(["amazon-bedrock", "opencode"]); // the providers the team named, no others
+  });
+
+  test("suggest mode reviews on the gate engine only when no team lens needs the agent loop to run it", () => {
+    const engine = (config: string) => JSON.parse(repo({ ".shepherd/config.yml": config, ".shepherd/lenses/go/SKILL.md": "---\nname: go\ndescription: Go rules.\n---\n" }).run("ci-models").out).engine;
+
+    expect(engine("fixes: { mode: suggest }\n")).toBe("gate");
+    expect(engine("fixes: { mode: suggest }\nlenses: { go: { skill: .shepherd/lenses/go } }\n")).toBe("opencode");
+    expect(engine("fixes: { mode: push }\n")).toBe("opencode");
   });
 
   // OpenCode's own agents and its small model choose for themselves when nothing names one. CI names one for each and
@@ -504,6 +512,27 @@ describe("adoption", () => {
 
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("inside GitHub Actions the workflow already runs it");
+  });
+
+  test("the incident workflow runs only for CI on the default branch, and keeps a filter the team set on upgrade", () => {
+    const template = readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-incident.yml"), "utf8");
+    const on = (text: string) => parse(text).on.workflow_run;
+
+    expect(on(branchWorkflow(template, ["main"])).branches).toEqual(["main"]);
+    // No default branch to name: no filter, and the job condition skips runs from other branches.
+    expect(on(branchWorkflow(template)).branches).toBeUndefined();
+    // Quoted, so globs survive, YAML keywords stay strings, and a hostile name stays one list item.
+    expect(on(branchWorkflow(template, ["main", "release/**", "true", "null", "123"])).branches).toEqual(["main", "release/**", "true", "null", "123"]);
+    expect(on(branchWorkflow(template, ["x]\n  evil: 1"])).branches).toEqual(["x]\n  evil: 1"]);
+    expect(branchWorkflow(template, ["main"])).not.toContain("<default>");
+
+    const teamSet = branchWorkflow(template, ["main", "release/**", "true"]);
+    const upgraded = upgradeWorkflow(template, teamSet, "9.9.9", undefined, "trunk").text;
+
+    expect(on(upgraded).branches).toEqual(["main", "release/**", "true"]);
+    // And again: the quoted copy reads back as strings on the next upgrade.
+    expect(on(upgradeWorkflow(template, upgraded, "9.9.9", undefined, "trunk").text).branches).toEqual(["main", "release/**", "true"]);
+    expect(on(upgradeWorkflow(template, branchWorkflow(template), "9.9.9", undefined, "trunk").text).branches).toEqual(["trunk"]);
   });
 
   test("pinWorkflow sets every SHEPHERD_VERSION pin in both templates, not just the first", () => {

@@ -19,6 +19,7 @@
 // shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]   (Markdown: swarm's summary comment)
 // shepherd branding [--working-tree]                (JSON: the name, avatar, glyphs and headers posted comments use)
 // shepherd ci-settings [--outputs]                  (the CI settings from variables, the default branch's ci:, defaults)
+// shepherd ci-review <pr>                           (fixes.mode suggest: the gate engine reviews the PR; prints the round)
 // shepherd fanout [--base <ref>] [--working-tree]   (JSON: the lenses swarm starts beside the router, each with its scope)
 // shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]  (what would run on your change)
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
@@ -51,14 +52,15 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, parseDocument, stringify } from "yaml";
 import { z } from "zod";
-import { branding, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
-import { commentableLines, type OpenThread, renderReview, renderSummary, reviewedTips, roundCoverage, swarmThreads } from "./summary.ts";
+import { branding, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchName, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
+import { GateEvidence, type RoundStatus, roundFromGate, statusFromRound } from "./gate-round.ts";
+import { commentableLines, type OpenThread, renderReview, renderSummary, reviewedTips, roundCoverage, SummaryInput, swarmThreads } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
 import { fileLedger, LEDGER_CONTEXT, notify, notifyOn, STATES, statusLedger } from "./notify.ts";
 import { collect, collectEscapes, score } from "./garden.ts";
 import { collectTraces, tempoHeaders, traceLimits, traceScores } from "./garden-traces.ts";
-import { environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
+import { branchWorkflow, environmentWorkflow, install, type Outcome, pinWorkflow, uninstall, upgradeWorkflow } from "./install.ts";
 import { exportCase, importRun, loadCases, PostedComments, loadRuns, pick, prepare, runCase, scoreRuns, treeHash } from "./eval.ts";
 import { buildDemo, captureChange, changedRanges, demoBugs, finish, receiptStatus } from "./local.ts";
 import { analyzeLog } from "./cilog.ts";
@@ -119,6 +121,7 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]
        shepherd branding [--working-tree]
        shepherd ci-settings [--outputs]
+       shepherd ci-review <pr>
        shepherd fanout [--base <ref>] [--working-tree]
        shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]
        shepherd doctor [--json]
@@ -467,7 +470,37 @@ if (command === "install") {
   // Every key the plan's models read, so the workflow can drop the rest before the model runs.
   const keyEnvs = [...new Set([session, ...Object.values(opencode.agent).map((a) => a.model)].flatMap((m) => providerKeyEnv(m) ?? []))].sort();
 
-  console.log(JSON.stringify({ model: session, source, key_envs: keyEnvs, opencode }));
+  // fixes.mode suggest only reviews, so the gate's engine does it (ci-review). Fixes and team lenses run on the agent:
+  // the gate engine reviews correctness only.
+  const engine = p.fixes.value.mode === "suggest" && !Object.keys(p.lenses).length ? "gate" : "opencode";
+
+  console.log(JSON.stringify({ model: session, source, engine, key_envs: keyEnvs, opencode }));
+} else if (command === "ci-review" && sub) {
+  // The CI loop's review under fixes.mode suggest: the gate's engine, a model with read, grep and glob over the
+  // checkout and no shell, so it cannot comment, push or start another agent. Prints the round publish renders.
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "shepherd-ci-review-")), "gate.json");
+  // The gate's own output goes to stderr, for the log; stdout carries only the round.
+  const ran = spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "gate", "src", "cli.ts"), sub, "--json", out], { cwd: repoRoot, stdio: ["ignore", 2, 2] });
+
+  if (!existsSync(out)) orExit(() => { throw new Error(`the gate wrote no evidence (exit ${ran.status})`); });
+  const round = orExit(() => roundFromGate(GateEvidence.parse(JSON.parse(readFileSync(out, "utf8")))));
+
+  orExit(() => SummaryInput.parse(round));
+
+  // In the CI loop the round writes status.json, since no agent runs. Unreadable checks leave it pending for the next iteration.
+  if (process.env.SHEPHERD_HANDOFF) {
+    let status: RoundStatus;
+
+    try {
+      status = statusFromRound(round, prFacts(Number(sub)), process.env.GITHUB_WORKFLOW ?? "");
+    } catch (e) {
+      status = { state: "pending", description: `could not read the PR's checks: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`.slice(0, 139) };
+    }
+
+    writeFileSync(path.join(process.env.SHEPHERD_HANDOFF, "status.json"), JSON.stringify(status));
+  }
+
+  console.log(JSON.stringify(round, null, 2));
 } else if (command === "model-id" && sub) {
   // A model id as OpenCode spells it, so gate's provider:model spelling works in a local OpenCode run too.
   console.log(opencodeModel(sub));
@@ -508,6 +541,15 @@ if (command === "install") {
 
   const dest = path.join(repoRoot, ".github", "workflows");
 
+  // The incident workflow's branch filter. With no default branch to name, the template's filter line goes.
+  const defaultBranch = (() => {
+    try {
+      return defaultBranchName(repoRoot);
+    } catch {
+      return undefined;
+    }
+  })();
+
   mkdirSync(dest, { recursive: true });
 
   for (const name of ["shepherd.yml", "shepherd-incident.yml", ...(opts.audit ? ["shepherd-audit.yml"] : [])]) {
@@ -517,7 +559,7 @@ if (command === "install") {
     const version = bundleVersion();
 
     if (existsSync(to) && opts.upgrade) {
-      const upgraded = orExit(() => upgradeWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), readFileSync(to, "utf8"), version, opts.environment));
+      const upgraded = orExit(() => upgradeWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), readFileSync(to, "utf8"), version, opts.environment, defaultBranch));
 
       writeFileSync(to, upgraded.text);
       console.log(`upgraded  .github/workflows/${name} to ${version}${upgraded.kept.length ? ` (kept ${upgraded.kept.join(", ")})` : ""}`);
@@ -539,7 +581,7 @@ if (command === "install") {
       continue;
     }
 
-    const text = pinWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), version);
+    const text = branchWorkflow(pinWorkflow(readFileSync(path.join(BUNDLE_ROOT, "templates", name), "utf8"), version), defaultBranch ? [defaultBranch] : []);
 
     writeFileSync(to, opts.environment ? orExit(() => environmentWorkflow(text, opts.environment!)) : text);
     console.log(`wrote     .github/workflows/${name}`);

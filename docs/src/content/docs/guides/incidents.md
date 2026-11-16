@@ -18,7 +18,7 @@ flowchart LR
 
 It dedupes on a fingerprint of the error, never pushes to the default branch, and stops without a fix when it cannot reproduce the failure. The gate refuses an incident fix that has no reproducing test or that hides the symptom.
 
-`shepherd workflows` installs `shepherd-incident.yml`, which runs it when CI fails on a push to the default branch, or when you paste an error into the workflow's manual `error` input. An alerting tool (Sentry, Grafana, PagerDuty, a script) can start it too:
+`shepherd workflows` installs `shepherd-incident.yml`, which runs it when CI fails on a push to the default branch, or when you paste an error into the workflow's manual `error` input. Its `branches:` filter names the default branch, so CI on a PR branch starts no incident run. An alerting tool (Sentry, Grafana, PagerDuty, a script) can start it too:
 
 ```bash
 gh api repos/<owner>/<repo>/dispatches -f event_type=incident -F 'client_payload[error]=<error text>'

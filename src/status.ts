@@ -29,15 +29,24 @@ export type PrStatus = { stage: Stage; lines: string[]; next: string };
 
 const short = (sha: string) => sha.slice(0, 7);
 
+/** A finished check that is not green. Listed by what passes, so action_required, stale or a new conclusion blocks. */
+export const isRed = (r: Run) => r.status === "completed" && !/^(success|neutral|skipped)$/.test(r.conclusion);
+
+/** The gate's own workflows, by the names its templates give them: a repo's `api-gateway` CI is not the gate. */
+export const isGateRun = (name: string) => /^shepherd-gate(-edited|-actions)?$/.test(name);
+
+/** The gate's verdict when it covers the current head: reviewed there, or an approval kept over an identical diff. */
+export const gateOnHead = (f: PrFacts) => (f.gate && (f.gate.kept || f.head.startsWith(f.gate.head)) ? f.gate : undefined);
+
 export function prStatus(f: PrFacts): PrStatus {
   const running = f.runs.filter((r) => r.status !== "completed");
   // The gate's run fails on a refusal: its verdict, read from its review, speaks for it.
-  const failed = f.runs.filter((r) => r.status === "completed" && /^(failure|timed_out|startup_failure)$/.test(r.conclusion) && !/gate/.test(r.name));
-  const gateOnHead = f.gate && (f.gate.kept || f.head.startsWith(f.gate.head)) ? f.gate : undefined;
+  const failed = f.runs.filter((r) => isRed(r) && !isGateRun(r.name));
+  const onHead = gateOnHead(f);
 
   const lines = [
     `PR #${f.pr} on ${short(f.head)}  ${f.url}`,
-    `gate      ${gateOnHead ? `${gateOnHead.verdict}${gateOnHead.kept ? ` (kept from ${short(gateOnHead.head)}: the PR's diff is unchanged)` : ""}` : f.gate ? `${f.gate.verdict} on ${short(f.gate.head)}, an older head` : "has not reviewed it"}`,
+    `gate      ${onHead ? `${onHead.verdict}${onHead.kept ? ` (kept from ${short(onHead.head)}: the PR's diff is unchanged)` : ""}` : f.gate ? `${f.gate.verdict} on ${short(f.gate.head)}, an older head` : "has not reviewed it"}`,
     `shepherd  ${f.shepherd ? `${f.shepherd.state}: ${f.shepherd.description}` : "has not run on this head"}`,
     `CI        ${f.runs.length ? f.runs.map((r) => `${r.name} ${r.status === "completed" ? r.conclusion : r.status}`).join(", ") : "no runs on this head"}`,
     ...(f.changesRequested.length ? [`reviews   changes requested by ${f.changesRequested.join(", ")}`] : []),
@@ -51,7 +60,7 @@ export function prStatus(f: PrFacts): PrStatus {
   if (f.state === "CLOSED") return at("closed", "nothing: it is closed");
 
   // What is running now comes first: a pending status only says shepherd is not done, not what it waits on.
-  if (running.some((r) => /gate/.test(r.name))) return at("reviewing", "wait: the gate is reviewing");
+  if (running.some((r) => isGateRun(r.name))) return at("reviewing", "wait: the gate is reviewing");
 
   if (running.length) return at("waiting for CI", `wait: ${running.map((r) => r.name).join(", ")} running`);
 
@@ -60,11 +69,11 @@ export function prStatus(f: PrFacts): PrStatus {
 
   if (f.changesRequested.length) return at("needs you", `answer the review from ${f.changesRequested.join(", ")}`);
 
-  if (gateOnHead?.verdict === "ERROR") return at("needs you", "the gate could not review: open its run, then comment /gate");
+  if (onHead?.verdict === "ERROR") return at("needs you", "the gate could not review: open its run, then comment /gate");
 
-  if (gateOnHead?.verdict === "DISMISSED") return at("needs you", "the gate's approval was dismissed: comment /gate to review again");
+  if (onHead?.verdict === "DISMISSED") return at("needs you", "the gate's approval was dismissed: comment /gate to review again");
 
-  if (gateOnHead && gateOnHead.verdict !== "APPROVED") return at("needs you", "read the gate's review, then push a fix or comment /shepherd");
+  if (onHead && onHead.verdict !== "APPROVED") return at("needs you", "read the gate's review, then push a fix or comment /shepherd");
 
   if (f.shepherd?.state === "pending") return at("fixing", `wait: shepherd is working (${f.shepherd.description})`);
 
@@ -74,7 +83,7 @@ export function prStatus(f: PrFacts): PrStatus {
 
   if (f.openThreads) return at("needs you", `resolve the ${f.openThreads} open review thread${f.openThreads === 1 ? "" : "s"}, or comment /shepherd to have shepherd work through them`);
 
-  if (!gateOnHead) return at("reviewing", f.gate ? "wait for the gate to review the new head, or comment /gate" : "comment /shepherd to start, or /gate for a review only");
+  if (!onHead) return at("reviewing", f.gate ? "wait for the gate to review the new head, or comment /gate" : "comment /shepherd to start, or /gate for a review only");
 
   return at("ready", "merge it");
 }

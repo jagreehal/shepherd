@@ -339,12 +339,17 @@ describe("publish: the status the model asked for", () => {
     expect(r.description.length).toBeLessThan(140);
   });
 
-  test("after a push the status is pending whatever the model said, and a missing file is pending too", () => {
+  test("after a push the status is pending whatever the model said; with no review, status or push it is an error", () => {
     expect(run(JSON.stringify({ state: "success", description: "done" }), "2").args).toContain("state=pending");
     expect(run(JSON.stringify({ state: "success", description: "done" }), "2").description).toStartWith("pushed 2 commit(s) for review");
-    expect(run(null).args).toContain("state=pending");
-    expect(run("[]").args).toContain("state=pending");
-    expect(run('"success"').args).toContain("state=pending");
+
+    // An iteration with no review, status or commit sets error, so the PR shows where the loop stopped.
+    for (const status of [null, "[]", '"success"']) {
+      expect(run(status).args).toContain("state=error");
+      expect(run(status).description).toBe("the iteration produced no review; comment /shepherd to retry");
+    }
+
+    expect(run(null, "", "", { "round.json": JSON.stringify({ findings: [] }) }).args).toContain("state=pending");
   });
 
   test("a refused push is a failure that names why, whatever the model said", () => {
