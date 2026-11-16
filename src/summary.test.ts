@@ -580,6 +580,26 @@ describe("findings on a thread that is still open", () => {
     expect(summary(offset)).toContain(`[▶](${url})`);
   });
 
+  test("each finding posts once: with a thread, the summary keeps one linked line and the thread keeps the text", () => {
+    // The folded agent prompt still holds every finding, so one paste fixes them all.
+    const list = summary(offset).split("Fix with an agent")[0]!;
+
+    expect(list).not.toContain(offset.body);
+    expect(list).not.toContain("**Input:** page=1");
+    expect(posted).toContain(offset.body);
+    // Without a thread the summary is the only place the finding appears, so it keeps the whole text.
+    expect(summary({ ...offset, inline: false, line: "general" })).toContain(offset.body);
+  });
+
+  test("a body that opens with its title does not repeat it, and the review says how many comments it carries", () => {
+    const echo = { ...offset, title: "clamp ignores min", body: "clamp ignores min; clamp(-1, 0, 3) returns -1." };
+    const out = renderReview({ ...round, findings: [echo] }, BRANDING.emoji, HEADER);
+
+    expect(out.comments[0]!.body.split("clamp ignores min")).toHaveLength(3); // the title, and once in the agent prompt
+    expect(out.comments[0]!.body).toContain("clamp(-1, 0, 3) returns -1.");
+    expect(out.body).toContain("**Actionable comments posted: 1**");
+  });
+
   test("a finding swarm marked as that thread's repeat, by its url, joins it however it is worded", () => {
     const reworded = { ...offset, title: "Page 1 is skipped", url };
 

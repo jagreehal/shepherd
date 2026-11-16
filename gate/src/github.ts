@@ -124,25 +124,16 @@ const File = z.object({ filename: z.string(), previous_filename: z.string().opti
 
 const ReviewRow = z.object({ id: z.number(), user: Login, state: z.string(), body: z.string(), commit_id: z.string(), author_association: z.string().optional() });
 
-const ThreadPage = z.object({
-  data: z.object({
-    repository: z.object({
-      pullRequest: z.object({
-        reviewThreads: z.object({
-          nodes: z.array(
-            z.object({
-              id: z.string(),
-              isResolved: z.boolean(),
-              isOutdated: z.boolean(),
-              path: z.string(),
-              comments: z.object({ totalCount: z.number(), nodes: z.array(z.object({ author: z.object({ login: z.string(), __typename: z.string() }).nullable(), body: z.string(), createdAt: z.string() })) }),
-            }),
-          ),
-        }),
-      }),
-    }),
-  }),
+/** One review thread as the threads query reads it. */
+export const ThreadNode = z.object({
+  id: z.string(),
+  isResolved: z.boolean(),
+  isOutdated: z.boolean(),
+  path: z.string(),
+  comments: z.object({ totalCount: z.number(), nodes: z.array(z.object({ author: z.object({ login: z.string(), __typename: z.string() }).nullable(), body: z.string(), createdAt: z.string() })) }),
 });
+
+const ThreadPage = z.object({ data: z.object({ repository: z.object({ pullRequest: z.object({ reviewThreads: z.object({ nodes: z.array(ThreadNode) }) }) }) }) });
 
 // REST lists inline comments without their thread's resolution, so threads come from GraphQL.
 const THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path comments(first:50){totalCount nodes{author{login __typename} body createdAt}}}}}}}`;
@@ -167,13 +158,10 @@ const CommentRow = z.object({ user: Login, body: z.string(), created_at: z.strin
 
 const ReactionRow = z.object({ user: Login, content: z.string(), created_at: z.string() });
 
-type Thread = z.infer<typeof ThreadPage>["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
+export type Thread = z.infer<typeof ThreadPage>["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
 
 /** Every review thread of a PR, from every page. */
-/** How many of the PR's review threads are unresolved, whoever opened them. */
-export const openThreadCount = (repo: string, number: number, cwd: string) => reviewThreads(repo, number, cwd).filter((t) => !t.isResolved).length;
-
-function reviewThreads(repo: string, number: number, cwd: string): Thread[] {
+export function reviewThreads(repo: string, number: number, cwd: string): Thread[] {
   const [owner = "", name = ""] = repo.split("/");
 
   return z

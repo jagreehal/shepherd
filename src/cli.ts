@@ -19,7 +19,8 @@
 // shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]   (Markdown: swarm's summary comment)
 // shepherd branding [--working-tree]                (JSON: the name, avatar, glyphs and headers posted comments use)
 // shepherd ci-settings [--outputs]                  (the CI settings from variables, the default branch's ci:, defaults)
-// shepherd ci-review <pr>                           (fixes.mode suggest: the gate engine reviews the PR; prints the round)
+// shepherd ci-review <pr>                           (fixes.mode suggest: the shepherd status from the gate's verdict and checks)
+// shepherd ci-retire <pr>                           (once the gate approves the head: resolve the bots' threads on earlier heads)
 // shepherd fanout [--base <ref>] [--working-tree]   (JSON: the lenses swarm starts beside the router, each with its scope)
 // shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]  (what would run on your change)
 // shepherd doctor [--json]                          (is this machine and repository set up? each problem says what to do)
@@ -46,14 +47,14 @@
 // personal preview that prints locally and never posts. Model ids pass straight to the harness's agent
 // tool (`haiku` on Claude Code, `provider/model` on OpenCode); --model on a lens pins it to one.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { parse as parseYaml, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { branding, ciModel, ciSettings, type Config, ConfigSchema, defaultBranchDir, defaultBranchName, defaultBranchReader, type Effective, fetchPackLenses, ghFetch, ghFetchDir, loadPolicy, policyProblems, PRESETS, preview, type Read, TEAM_FILES, configJsonSchema, schemaLine } from "./config.ts";
-import { GateEvidence, type RoundStatus, roundFromGate, statusFromRound } from "./gate-round.ts";
+import { type CiStatus, retirable, statusFromGate } from "./ci-status.ts";
 import { commentableLines, type OpenThread, renderReview, renderSummary, reviewedTips, roundCoverage, SummaryInput, swarmThreads } from "./summary.ts";
 import { ghThreads, snapshot, verdict } from "./acceptance.ts";
 import { doctor } from "./doctor.ts";
@@ -68,10 +69,10 @@ import { numberDiff } from "./diff.ts";
 import { formatLeads, leadsAt } from "./leads.ts";
 import { prInterdiff, prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { compareDiff, latestVerdict, listReviews, openThreadCount } from "../gate/src/github.ts";
+import { compareDiff, latestVerdict, listReviews, reviewThreads as prThreads, type Thread, ThreadNode } from "../gate/src/github.ts";
 import { approvedDiffUnchanged } from "../gate/src/retention.ts";
 import { githubSetup, KEY_MODELS, modelProblem, pickModel } from "./setup.ts";
-import { type PrFacts, prStatus } from "./status.ts";
+import { gateOnHead, type PrFacts, prStatus } from "./status.ts";
 import { DEFAULT_LOOK, isWorkingNote, WORKING_IMAGE, workingNote } from "./working.ts";
 import { addLens, sharedModelProblem, BUILT_IN_LENSES, ciOpencodeConfig, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, providerKeyEnv, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setCi, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
 
@@ -122,6 +123,7 @@ const USAGE = `usage: shepherd install   [--project | --target <dir>] [--link] [
        shepherd branding [--working-tree]
        shepherd ci-settings [--outputs]
        shepherd ci-review <pr>
+       shepherd ci-retire <pr>
        shepherd fanout [--base <ref>] [--working-tree]
        shepherd preview [--recipe <name>] [--base <ref>] [--working-tree]
        shepherd doctor [--json]
@@ -476,31 +478,44 @@ if (command === "install") {
 
   console.log(JSON.stringify({ model: session, source, engine, key_envs: keyEnvs, opencode }));
 } else if (command === "ci-review" && sub) {
-  // The CI loop's review under fixes.mode suggest: the gate's engine, a model with read, grep and glob over the
-  // checkout and no shell, so it cannot comment, push or start another agent. Prints the round publish renders.
-  const out = path.join(mkdtempSync(path.join(tmpdir(), "shepherd-ci-review-")), "gate.json");
-  // The gate's own output goes to stderr, for the log; stdout carries only the round.
-  const ran = spawnSync(process.execPath, [path.join(BUNDLE_ROOT, "gate", "src", "cli.ts"), sub, "--json", out], { cwd: repoRoot, stdio: ["ignore", 2, 2] });
+  // fixes.mode suggest with no team lenses: the gate's posted review is the review, so no model runs here and nothing
+  // posts. The status follows the gate's verdict and the head's checks; unreadable facts leave it pending.
+  let status: CiStatus;
 
-  if (!existsSync(out)) orExit(() => { throw new Error(`the gate wrote no evidence (exit ${ran.status})`); });
-  const round = orExit(() => roundFromGate(GateEvidence.parse(JSON.parse(readFileSync(out, "utf8")))));
-
-  orExit(() => SummaryInput.parse(round));
-
-  // In the CI loop the round writes status.json, since no agent runs. Unreadable checks leave it pending for the next iteration.
-  if (process.env.SHEPHERD_HANDOFF) {
-    let status: RoundStatus;
-
-    try {
-      status = statusFromRound(round, prFacts(Number(sub)), process.env.GITHUB_WORKFLOW ?? "");
-    } catch (e) {
-      status = { state: "pending", description: `could not read the PR's checks: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`.slice(0, 139) };
-    }
-
-    writeFileSync(path.join(process.env.SHEPHERD_HANDOFF, "status.json"), JSON.stringify(status));
+  try {
+    status = statusFromGate(prFacts(Number(sub)), process.env.GITHUB_WORKFLOW ?? "");
+  } catch (e) {
+    status = { state: "pending", description: `could not read the PR's checks: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`.slice(0, 139) };
   }
 
-  console.log(JSON.stringify(round, null, 2));
+  if (process.env.SHEPHERD_HANDOFF) {
+    writeFileSync(path.join(process.env.SHEPHERD_HANDOFF, "status.json"), JSON.stringify(status));
+    // A 0.19 workflow sends stdout to round.json; with nothing to post, that file must not exist.
+    rmSync(path.join(process.env.SHEPHERD_HANDOFF, "round.json"), { force: true });
+  }
+
+  console.error(`shepherd status: ${status.state}: ${status.description}`);
+} else if (command === "ci-retire" && sub) {
+  // Once the gate approves the head, the bots' threads on earlier heads are answered: resolve them, then count again,
+  // so the status publish sets next reflects what is really open. Runs in publish, whose token can resolve threads.
+  const facts = orExit(() => prFacts(Number(sub)));
+  const gate = gateOnHead(facts);
+  const repo = facts.url.split("/").slice(3, 5).join("/");
+  const viewer = viewerLogin();
+  const candidates = gate?.verdict === "APPROVED" ? prThreads(repo, facts.pr, repoRoot).filter((t) => retirable(t, viewer)) : [];
+  let resolved = 0;
+
+  for (const t of candidates) {
+    // Read again just before resolving: a person who replied since the list was read keeps the thread open.
+    if (!retirable(orExit(() => threadById(t.id)), viewer)) continue;
+    execFileSync("gh", ["api", "graphql", "-f", "query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}", "-f", `id=${t.id}`], { cwd: repoRoot, stdio: ["ignore", "ignore", "inherit"] });
+    resolved++;
+  }
+
+  const after = orExit(() => prFacts(Number(sub)));
+
+  // The head the count is for: publish sets this status only on that head.
+  console.log(JSON.stringify({ gate: gate?.verdict ?? null, resolved, head: after.head, status: statusFromGate(after, process.env.GITHUB_WORKFLOW ?? "") }));
 } else if (command === "model-id" && sub) {
   // A model id as OpenCode spells it, so gate's provider:model spelling works in a local OpenCode run too.
   console.log(opencodeModel(sub));
@@ -1054,6 +1069,11 @@ function prFacts(pr: number): PrFacts {
     }
   })();
 
+  const threads = prThreads(repo, pr, repoRoot);
+  // The threads this head's approval answers: the bots' own, which publish resolves before it reports success.
+  const approved = verdict?.verdict === "APPROVED" && (head.startsWith(verdict.head) || kept);
+  const viewer = approved ? viewerLogin() : null;
+
   return {
     pr,
     state: view.state,
@@ -1062,9 +1082,27 @@ function prFacts(pr: number): PrFacts {
     gate: verdict && { verdict: verdict.verdict, head: verdict.head, kept },
     shepherd: own && { state: own.state, description: own.description ?? "" },
     changesRequested: [...latestByPerson].flatMap(([login, state]) => (state === "CHANGES_REQUESTED" ? [login] : [])),
-    openThreads: openThreadCount(repo, pr, repoRoot),
+    openThreads: threads.filter((t) => !t.isResolved).length,
+    answeredThreads: approved ? threads.filter((t) => retirable(t, viewer)).length : 0,
     runs: [...workflows.map((r) => ({ name: r.workflowName, status: r.status, conclusion: r.conclusion, url: r.url })), ...otherApps, ...external],
   };
+}
+
+/** One review thread, read fresh by its id. */
+function threadById(id: string): Thread {
+  const query = "query($id:ID!){node(id:$id){... on PullRequestReviewThread{id isResolved isOutdated path comments(first:50){totalCount nodes{author{login __typename} body createdAt}}}}}";
+  const out = execFileSync("gh", ["api", "graphql", "-f", `query=${query}`, "-f", `id=${id}`, "--jq", ".data.node"], { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  return ThreadNode.parse(JSON.parse(out));
+}
+
+/** The account gh is signed in as, or null for an installation token (CI's github.token), which has no user. */
+function viewerLogin(): string | null {
+  try {
+    return execFileSync("gh", ["api", "user", "--jq", ".login"], { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function trackedFiles(): string[] {

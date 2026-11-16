@@ -51,6 +51,10 @@ to all of them.
   `failure` naming what the author must do when the
   loop can do no more, `pending` otherwise. A green PR with shepherd stopped
   short must never be possible. This is shepherd's only status write.
+- **Only an approval of the head answers the bots' threads.** Publish then
+  resolves the gate's threads from earlier runs and swarm's threads on changed
+  code, only where bots alone wrote them, reading each again just before it
+  resolves it. `success` comes from the count taken afterwards, never before.
 - **A base conflict is resolved by a merge, never a rebase,** and only where
   no decision hides in it: nothing under `escalate.paths` or a deferred thread,
   nothing risky, no choice of what the product does. A resolution changes the
