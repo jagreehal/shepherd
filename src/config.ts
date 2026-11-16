@@ -495,11 +495,14 @@ export function preview(p: Effective, files: string[], recipe?: string) {
 
 const gitIn = (repoRoot: string) => (...args: string[]) => execFileSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
+/** `origin`'s default branch name. CI names it (SHEPHERD_DEFAULT_BRANCH), since a checkout without a persisted token cannot ask a private origin. */
+export const defaultBranchName = (repoRoot: string): string | undefined =>
+  process.env.SHEPHERD_DEFAULT_BRANCH || /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(gitIn(repoRoot)("ls-remote", "--symref", "origin", "HEAD"))?.[1];
+
 /** The fetched ref of `origin`'s default branch. The name comes from the remote, since a CI checkout sets no origin/HEAD. */
 export function defaultBranchRef(repoRoot: string): string {
   const git = gitIn(repoRoot);
-  // CI names it (SHEPHERD_DEFAULT_BRANCH), since a checkout without a persisted token cannot ask a private origin.
-  const branch = process.env.SHEPHERD_DEFAULT_BRANCH || /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(git("ls-remote", "--symref", "origin", "HEAD"))?.[1];
+  const branch = defaultBranchName(repoRoot);
 
   if (!branch) throw new Error("cannot tell origin's default branch");
   const ref = `refs/remotes/origin/${branch}`;

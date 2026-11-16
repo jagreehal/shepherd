@@ -268,16 +268,21 @@ jobs:
         env:
           GIT_NAME: ${{ needs.gate.outputs.git_name }}
           GIT_EMAIL: ${{ needs.gate.outputs.git_email }}
+          GH_TOKEN: ${{ github.token }} # ci-models reads the team policy, which may extend a shared one
+          SHEPHERD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           # The pinned CLI on PATH: the skills call `shepherd`, and fall back to an unpinned bunx without it.
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
-          shepherd install   # skills to ~/.claude/skills, where opencode finds them
-          # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
-          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0
-          "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
-          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          # fixes.mode suggest with no team lenses runs no agent (the gate's engine reviews): OpenCode is installed only when needed.
+          if [ "$(shepherd ci-models | jq -r .engine)" = opencode ]; then
+            shepherd install   # skills to ~/.claude/skills, where opencode finds them
+            # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
+            curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.0
+            "$HOME/.opencode/bin/opencode" --version # fails the step if the install did not land
+            echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+          fi
           git config user.name "$GIT_NAME"
           git config user.email "$GIT_EMAIL"
           mkdir -p "$RUNNER_TEMP/handoff"
@@ -316,6 +321,13 @@ jobs:
           plan=$(shepherd ci-models)
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
+          # fixes.mode suggest, no team lenses: no agent. The gate's engine reviews with read, grep and glob and no
+          # shell, so it cannot comment, push or start another agent. It writes the round publish posts and status.json
+          # from its verdict and the head's checks, on the gate's model.
+          if [ "$(jq -r .engine <<<"$plan")" = gate ]; then
+            shepherd ci-review "$PR" > "$SHEPHERD_HANDOFF/round.json"
+            exit 0
+          fi
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
           # provider's other credentials.
           keys=" $(jq -r '.key_envs | join(" ")' <<<"$plan") "
@@ -464,7 +476,11 @@ jobs:
               s = {}
           state = s.get("state") if s.get("state") in ("success", "pending", "failure") else "pending"
           desc = " ".join(str(s.get("description") or "iteration ended without a status").split())
-          if sys.argv[3]:
+          import os
+          if not s and not sys.argv[2] and not any(os.path.exists(f"handoff/{f}") for f in ("round.json", "findings.md")):
+              # The model ended without a review, a status or a commit: say so, never leave a quiet pending.
+              state, desc = "error", "the iteration produced no review; comment /shepherd to retry"
+          elif sys.argv[3]:
               state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
           elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"

@@ -24,6 +24,7 @@ on:
   workflow_run:
     workflows: [ci]
     types: [completed]
+    branches: [<default>] # `shepherd workflows` writes the default branch: CI on other branches starts no run here
   workflow_dispatch:
     inputs:
       error:

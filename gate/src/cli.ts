@@ -723,6 +723,7 @@ const evidence = {
   opinion,
   advisory,
   verdict,
+  reasoning: body, // the final verdict's reason: a late escalation (weakened tests, stacked parent, refusal cap) is only here
   ...finished(),
 };
 
