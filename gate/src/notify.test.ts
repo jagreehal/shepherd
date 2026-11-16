@@ -103,23 +103,16 @@ describe("stale verdicts", () => {
 
   const opts = { cwd: tmpdir(), botLogin: "github-actions[bot]", started: new Date().toISOString() };
 
-  test("an approval still on the live head is reported current", () => {
+  test("a review still on the live head is current", () => {
     withGh(HEAD, (log) => {
-      expect(reconcilePosted(pr, 1, "APPROVED", opts)).toBe(true);
-      expect(readFileSync(log, "utf8")).not.toContain("dismissals");
+      expect(reconcilePosted(pr, opts)).toBe(true);
+      expect(existsSync(log) && readFileSync(log, "utf8").includes("dismissals")).toBe(false);
     });
   });
 
-  test("an approval the head moved past is dismissed and reported stale", () => {
+  test("a review the head moved past is stale, and stays: a comment grants nothing, so nothing is dismissed", () => {
     withGh("c".repeat(40), (log) => {
-      expect(reconcilePosted(pr, 1, "APPROVED", opts)).toBe(false);
-      expect(readFileSync(log, "utf8")).toContain("reviews/1/dismissals");
-    });
-  });
-
-  test("a stale comment verdict is reported stale too", () => {
-    withGh("c".repeat(40), (log) => {
-      expect(reconcilePosted(pr, 1, "REFUSED", opts)).toBe(false);
+      expect(reconcilePosted(pr, opts)).toBe(false);
       expect(existsSync(log) && readFileSync(log, "utf8").includes("dismissals")).toBe(false);
     });
   });

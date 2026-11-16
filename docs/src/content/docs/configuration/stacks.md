@@ -2,7 +2,7 @@
 title: "Compose reviews for your stack"
 ---
 
-Shepherd ships a starter lens for each common stack. Pick the ones your repository uses, trim the rules you don't want, and add your own on top. The gate reads the same lenses as rule packs, so you declare them once.
+Shepherd ships a starter lens for each common stack. Pick the ones your repository uses, trim the rules you don't want, and add your own on top. The review in CI reads the same lenses as rule packs, so you declare them once.
 
 ## The catalogue
 
@@ -79,18 +79,19 @@ checks still run, and the importer checks semantic fidelity separately. An
 action-only skill can produce no lens. Existing imports keep local rule edits
 and configuration when updated.
 
-## The gate reads the same lenses
+## The CI review reads the same lenses
 
-Add one block to `.shepherd/gate.yml` and the gate treats every shepherd lens as a rule pack, from the same default branch. Each lens's `gate` becomes its `on_break`, and each rule's tag overrides that for the one rule.
+The review treats every lens in `.shepherd/config.yml` as a rule pack, read from the same default branch, so `shepherd init --stacks` is all a Rust, Java or Go repository needs. Each lens's `gate` becomes its `on_break` (`escalate` when unset), and each rule's tag overrides that for the one rule. To change the default for lenses with no `gate`:
 
 ```yaml
-# .shepherd/gate.yml
-rules_from:
-  shepherd: {}             # on_break defaults to escalate for lenses with no gate
+# .shepherd/config.yml
+review:
+  rules_from:
+    shepherd: { on_break: refuse }
 ```
 
-A `rules:` entry with the same name wins over the inherited lens. The gate sends a PR that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how later PRs get judged.
+A `rules:` entry with the same name wins over the inherited lens. The review sends a PR that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how later PRs get judged.
 
 ## OWASP lenses
 
-`owasp-asvs` and `owasp-llm` adapt the [OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook) (CC-BY-4.0) for diff review. They hold for every language, so they compose with any stack pack. For the playbook's whole-repository plays, run the [scheduled security audit](/shepherd/guides/security-audit/).
+`owasp-asvs` and `owasp-llm` adapt the [OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook) (CC-BY-4.0) for diff review. They hold for every language, so they compose with any stack pack.

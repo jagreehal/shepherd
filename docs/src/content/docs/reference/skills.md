@@ -4,7 +4,7 @@ title: "Skills and human decisions"
 
 | Skill | Does |
 |---|---|
-| `shepherd` | Runs the loop: review rounds until dry, then CI, then the gate verdict. Owns state, model choice, and when to ask you. |
+| `shepherd` | Runs the loop from your coding agent: review rounds until dry, then CI, then the CI review's verdict. Owns state, model choice, and when to ask you. |
 | `swarm` | Runs the repo's own checks, then the router, correctness and every matching team lens in parallel, with a second wave for risky hunks the router hands on. Verifies serious findings, and posts inline comments plus one summary comment. |
 | `triage` | Ends every review thread fixed, resolved, or deferred. Never replies, never touches a thread a human is in. |
 | `ci-repair` | Works on the PR's own head on a clean checkout. Diagnoses failing checks to the leaf job. Under `fixes.mode: push` it updates a stale branch, merges base conflicts it can settle, makes one verified fix and reruns flaky jobs once; under `local` and `suggest` it changes nothing on GitHub. A risky fix waits for a second model. |

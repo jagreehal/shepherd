@@ -9,3 +9,4 @@ docs/dist/
 
 # Eval runs: per-machine results, scored with shepherd eval score
 evals/runs/
+dist/

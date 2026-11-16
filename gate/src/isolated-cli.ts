@@ -1,5 +1,6 @@
 // Launch CLI reviewers in private process and mount namespaces with a trusted image.
 import { spawnSync } from "node:child_process";
+import { PACKAGE_ROOT } from "../../src/root.ts";
 import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, constants, cpSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ const preparedImages = new Set<string>();
 export function prepareCliImage(image: string, env: NodeJS.ProcessEnv, context: string): void {
   if (process.env.SHEPHERD_BUILD_CLI_IMAGE !== "1" || preparedImages.has(image)) return;
 
-  const dockerfile = path.resolve(import.meta.dir, "../templates/reviewer.Dockerfile");
+  const dockerfile = path.join(PACKAGE_ROOT, "gate/templates/reviewer.Dockerfile");
   const run = spawnSync("docker", ["build", "--file", dockerfile, "--tag", image, context], { encoding: "utf8", env, maxBuffer: 8 << 20, timeout: 10 * 60_000 });
 
   if (run.error || run.status !== 0) throw new Error(`CLI image preparation: ${run.error?.message ?? run.stderr.slice(0, 500)}`);

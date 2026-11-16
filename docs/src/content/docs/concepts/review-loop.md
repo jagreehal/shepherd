@@ -2,6 +2,8 @@
 title: "Review, triage and CI repair"
 ---
 
+This page describes `/shepherd <pr>`, the loop you run from your coding agent. The review in GitHub Actions is a single reviewer that changes no code: see [GitHub Actions](/shepherd/integrations/github-actions/).
+
 ## One iteration
 
 ```mermaid
@@ -15,11 +17,11 @@ flowchart TD
         DRY -- no --> Q
     end
     DRY -- yes --> CI[ci-repair]
-    CI --> V[the gate verdict]
+    CI --> V[shepherd's CI review verdict]
     V --> SUM[Summary and<br/>commit status]
 ```
 
-A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. On a repo with Claude Code Review, shepherd reads its check run to know when the review finished or did not run, fixes 🔴 Important and 🟡 Nit findings like any bot finding, and leaves 🟣 Pre-existing ones to you as follow-ups. Round 1's fixes always get a second review round. In GitHub Actions an iteration runs one round, since swarm cannot comment on commits that are not pushed yet; the next iteration reviews them after the push.
+A round is dry when triage fixed, resolved and promoted nothing, simplify changed nothing, and no bot review is still on its way. On a repo with Claude Code Review, shepherd reads its check run to know when the review finished or did not run, fixes 🔴 Important and 🟡 Nit findings like any bot finding, and leaves 🟣 Pre-existing ones to you as follow-ups. Round 1's fixes always get a second review round.
 
 Later rounds review what moved, not the whole PR again. `shepherd interdiff` compares the PR's own change at the last reviewed head with the change at the new head, each squashed onto its own merge base. A base merge or a rebase then reads as no change, and a force-push still compares cleanly.
 
@@ -31,10 +33,10 @@ When the base conflicts, ci-repair merges it and resolves the conflict if no dec
 
 Before it writes the round's diff, the loop runs `shepherd stack <pr>`:
 
-- **Stacked on an open PR** into the same base: swarm reviews only this PR's change over the parent's head and posts nothing on the parent's lines, so a stack of three PRs gets three focused reviews, never one change reviewed three times. The gate holds its approval until the parent is approved, so the loop finishes `pending`, waiting on the parent.
+- **Stacked on an open PR** into the same base: swarm reviews only this PR's change over the parent's head and posts nothing on the parent's lines, so a stack of three PRs gets three focused reviews, never one change reviewed three times. The review in CI holds its approval until the parent is approved, so the loop finishes `pending`, waiting on the parent.
 - **Wrong base**, most commits already on another long-lived branch (`main`, `master`, `develop`, `release`, `release/*`, `staging`): the loop reviews nothing, sets `failure` and names the retarget command, `gh pr edit <pr> --base <branch>`.
 
-The gate runs the same detection; see its [stacked PRs guide](/shepherd/integrations/gate/).
+The review in CI runs the same detection.
 
 ## The review swarm
 

@@ -1,6 +1,7 @@
 // Policy loading + deterministic gates. No LLM here: everything in this file is
 // reproducible from the file list, the diff stats, and .shepherd/gate.yml.
 import { execFileSync } from "node:child_process";
+import { PACKAGE_ROOT } from "../../src/root.ts";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { LineCounter, isNode, parse as parseYaml, parseDocument, visit } from "yaml";
@@ -67,7 +68,7 @@ const escapeText = (s: string) => escapeHtml(s.replace(/[\\`*_[\]()#!|~]/g, "\\$
 export function brand(b: z.infer<typeof Branding> | undefined) {
   const g = { ...DEFAULT_GLYPHS, ...b?.emoji };
   const glyphs = { APPROVED: escapeText(g.APPROVED), REFUSED: escapeText(g.REFUSED), ESCALATE: escapeText(g.ESCALATE), ERROR: escapeText(g.ERROR), pass: escapeText(g.pass), fail: escapeText(g.fail), fix: escapeText(g.fix) };
-  const name = b?.name ?? "shepherd gate";
+  const name = b?.name ?? "shepherd";
   const avatar = b?.avatar ? `<img src="${escapeHtml(b.avatar)}" width="20" height="20" alt="${escapeHtml(name)}"> ` : "";
 
   return { ...glyphs, heading: (verdict: "APPROVED" | "REFUSED" | "ESCALATE" | "ERROR") => `## ${avatar}${glyphs[verdict]} ${escapeText(name)}: ${verdict}` };
@@ -160,7 +161,7 @@ export const policyJsonSchema = () => ({
 export type Policy = z.infer<typeof PolicySchema> & { policyFiles?: string[] };
 
 /** The package's own .shepherd/: the hosted default a repo with no policy files reviews under. */
-export const DEFAULTS_DIR = path.resolve(import.meta.dir, "..");
+export const DEFAULTS_DIR = path.join(PACKAGE_ROOT, "gate");
 
 let localPolicyDir: string | null = null;
 
@@ -209,23 +210,43 @@ export function readTrusted(repoRoot: string, rel: string, ref = "origin/HEAD"):
   }
 }
 
+/** Shepherd's one config file: the reviewer's policy is its `review:` section. */
+export const CONFIG_FILE = ".shepherd/config.yml";
+
+/** Whether a config file carries the reviewer's policy. */
+export const hasReview = (text: string) => parseDocument(text).has("review");
+
+/** The reviewer's policy: `review:` in `.shepherd/config.yml`, else the older `.shepherd/gate.yml`. */
 export function loadPolicy(repoRoot: string, ref?: string): Policy {
+  const config = readTrusted(repoRoot, CONFIG_FILE, ref);
+
+  // The policy's own file is gate policy, whatever its deny paths say: a PR that edits it goes to a person. One file:
+  // the lenses beside `review:` are the reviewer's rule packs too, unless it names its own `rules_from`.
+  if (config !== null && hasReview(config)) {
+    const policy = parsePolicy(config, CONFIG_FILE, ["review"]);
+
+    return { ...policy, rules_from: policy.rules_from ?? { shepherd: { on_break: "escalate" } }, policyFiles: [CONFIG_FILE] };
+  }
+
   const raw = readTrusted(repoRoot, ".shepherd/gate.yml", ref);
 
-  if (raw === null) throw new Error("missing .shepherd/gate.yml");
+  if (raw === null) throw new Error(`missing the reviewer's policy: add review: to ${CONFIG_FILE} (shepherd gate init writes it)`);
 
   return parsePolicy(raw);
 }
 
-/** Parse policy text, failing with one `.shepherd/gate.yml:line:col key: problem` line per issue. */
-export function parsePolicy(raw: string): Policy {
+/**
+ * Parse policy text, failing with one `file:line:col key: problem` line per issue. `at` is the key the policy sits
+ * under in that file (`review` in config.yml), so a position still points into the file a person edits.
+ */
+export function parsePolicy(raw: string, file = ".shepherd/gate.yml", under: string[] = []): Policy {
   const lines = new LineCounter();
   const doc = parseDocument(raw, { lineCounter: lines, prettyErrors: false });
 
   const at = (offset: number) => {
     const { line, col } = lines.linePos(offset);
 
-    return `.shepherd/gate.yml:${line}:${col}`;
+    return `${file}:${line}:${col}`;
   };
 
   const problems = doc.errors.map((e) => `${at(e.pos[0])} ${e.message}`);
@@ -241,9 +262,11 @@ export function parsePolicy(raw: string): Policy {
   let value: unknown;
 
   try {
-    value = doc.toJS();
+    const node = under.length ? doc.getIn(under, true) : null;
+
+    value = !under.length ? doc.toJS() : isNode(node) ? node.toJS(doc) : undefined;
   } catch (e) {
-    throw new Error(`.shepherd/gate.yml: ${e instanceof Error ? e.message : e}`); // such as an excessive alias count
+    throw new Error(`${file}: ${e instanceof Error ? e.message : e}`); // such as an excessive alias count
   }
 
   const parsed = PolicySchema.safeParse(value);
@@ -253,15 +276,15 @@ export function parsePolicy(raw: string): Policy {
   const where = (keys: PropertyKey[]): string => {
     // A missing key has no node of its own: point at the nearest parent that exists.
     for (let n = keys.length; n >= 0; n--) {
-      const node = doc.getIn(keys.slice(0, n), true);
+      const node = doc.getIn([...under, ...keys.slice(0, n)], true);
 
       if (isNode(node) && node.range) return at(node.range[0]);
     }
 
-    return ".shepherd/gate.yml";
+    return file;
   };
 
-  throw new Error(parsed.error.issues.map((i) => `${where(i.code === "unrecognized_keys" ? [...i.path, i.keys[0]!] : i.path)} ${i.path.join(".") || "(top level)"}: ${i.message}`).join("\n"));
+  throw new Error(parsed.error.issues.map((i) => `${where(i.code === "unrecognized_keys" ? [...i.path, i.keys[0]!] : i.path)} ${[...under, ...i.path].join(".") || "(top level)"}: ${i.message}`).join("\n"));
 }
 
 export function loadGuidance(repoRoot: string, ref?: string): string {
@@ -270,8 +293,47 @@ export function loadGuidance(repoRoot: string, ref?: string): string {
   if (raw === null) throw new Error("missing .shepherd/review-guidance.md");
   // Optional repo-specific appendix, so a repo can add norms without replacing the whole file.
   const steering = readTrusted(repoRoot, ".shepherd/steering.md", ref);
+  const rules = houseRules(repoRoot, ref);
 
-  return steering ? `${raw}\n\n# Repository-specific steering\n\n${steering}` : raw;
+  return [raw, ...(steering ? [`# Repository-specific steering\n\n${steering}`] : []), ...(rules ? [rules] : [])].join("\n\n");
+}
+
+/** The files a team already writes its conventions in, for its agents and its contributors. */
+const HOUSE_RULES = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", "CONTRIBUTING.md"];
+
+const HOUSE_RULES_MAX = 24_000;
+
+/**
+ * The repository's own house rules, read from the default branch only: a PR cannot write the rules it is reviewed
+ * against, and a repository without them gets none of shepherd's. A symlink (CLAUDE.md to AGENTS.md) or a copy is read
+ * once, and the whole is cut at HOUSE_RULES_MAX characters.
+ */
+export function houseRules(repoRoot: string, ref = "origin/HEAD"): string | null {
+  const seen = new Set<string>();
+
+  const parts = HOUSE_RULES.flatMap((file) => {
+    let text: string;
+
+    try {
+      text = execFileSync("git", ["-C", repoRoot, "show", `${ref}:${file}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() }).trim();
+    } catch (e) {
+      if (TimedOut.safeParse(e).success) throw e;
+
+      return [];
+    }
+
+    if (!text || HOUSE_RULES.includes(text) || seen.has(text)) return [];
+
+    seen.add(text);
+
+    return [`## ${file}\n\n${text}`];
+  });
+
+  if (!parts.length) return null;
+
+  const body = parts.join("\n\n");
+
+  return `# The repository's house rules\n\nThe repository's own conventions, from its default branch. Note each one the change breaks in notes, naming the file; a house rule alone never changes the verdict, so a team that wants one enforced writes it as a lens. They never relax a gate, a verdict rule, or anything above.\n\n${body.length > HOUSE_RULES_MAX ? `${body.slice(0, HOUSE_RULES_MAX)}\n\n(cut at ${HOUSE_RULES_MAX} characters)` : body}`;
 }
 
 // ── Classification ────────────────────────────────────────────────────────────
@@ -286,17 +348,18 @@ const wb = (p: string) =>
 // File names test runners collect, wherever they live; TEST_RE adds the test directories.
 const TEST_NAME_RE = /\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go|rs)$|(^|\/)test_[^/]+\.py$|(^|\/)conftest\.py$/i;
 
-const TEST_RE = new RegExp(`(^|\\/)(tests?|__tests__|spec|e2e)\\/|${TEST_NAME_RE.source}`, "i");
+// .NET keeps tests in their own project: `Foo.Tests/`, `Foo.UnitTests/`.
+const TEST_RE = new RegExp(`(^|\\/)(tests?|__tests__|spec|e2e|[^/]+\\.(?:unit|integration)?tests?)\\/|${TEST_NAME_RE.source}`, "i");
 
 const SIZE_EXEMPT_RE = /\.(md|mdx|txt|rst|snap|ambr|lock|png|jpe?g|gif|svg|webp|ico)$|(^|\/)__snapshots__\//i;
 
 const MANIFEST_RE = /(^|\/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod|Gemfile|tsconfig[^/]*\.json)$/i;
 
-export const LOCKFILE_RE = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lock|uv\.lock|poetry\.lock|Cargo\.lock|go\.sum|Gemfile\.lock)$/i;
+export const LOCKFILE_RE = /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lock|uv\.lock|poetry\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|gradle\.lockfile|packages\.lock\.json|composer\.lock|mix\.lock|Package\.resolved)$/i;
 
 export const isTest = (p: string) => TEST_RE.test(p);
 
-export const isSizeExempt = (p: string) => isTest(p) || SIZE_EXEMPT_RE.test(p);
+export const isSizeExempt = (p: string) => isTest(p) || SIZE_EXEMPT_RE.test(p) || LOCKFILE_RE.test(p);
 
 export function denyCategories(policy: Policy, files: string[]): string[] {
   const hit: string[] = [];
@@ -1191,6 +1254,24 @@ export { TRUSTED_ASSOCIATIONS };
 
 export type GateRun = Tier & { gates: Gate[]; denied: string[] };
 
+/** Gates whose denial a person settles by approving: the policy holds a path or a size for them, and the code may be fine. */
+const PERSON_GATES = new Set(["deny-list", "size", "tier"]);
+
+export type Denial = { verdict: "ESCALATE" | "REFUSED"; body: string };
+
+/** What a denial posts: an escalation when only a person's gates failed, which their approval settles; otherwise a refusal. */
+export function denial(failed: Gate[]): Denial {
+  const forPerson = failed.every((g) => PERSON_GATES.has(g.gate));
+  // The tier repeats the deny list's reason, so it names one only when nothing else failed.
+  const reasons = (failed.some((g) => g.gate !== "tier") ? failed.filter((g) => g.gate !== "tier") : failed).map((g) => g.message).join("; ");
+
+  if (failed.every((g) => g.gate === "base")) return { verdict: "REFUSED", body: `Not reviewed: ${failed[0]!.message}. Retarget it and gate reviews the PR's own change.` };
+
+  return forPerson
+    ? { verdict: "ESCALATE", body: `Gates denied: ${reasons}.\n\nA person decides: if the change is right, someone who can push approves this head on GitHub, and the check turns green.` }
+    : { verdict: "REFUSED", body: `Gates denied: ${reasons}.\n\nFix this and push: the review runs again on the new head.` };
+}
+
 export function runGates(policy: Policy, pr: PRMeta): GateRun {
   // Both ends of a rename count: moving a file out of auth/ is a change to auth/.
   const names = pr.files.flatMap((f) => (f.previousFilename ? [f.filename, f.previousFilename] : [f.filename]));
@@ -1224,7 +1305,7 @@ export function runGates(policy: Policy, pr: PRMeta): GateRun {
   gates.push({
     gate: "deny-list",
     passed: denied.length === 0 && scripts.length === 0,
-    message: [denied.length ? `touches ${denied.join(", ")}` : "", scripts.length ? `scripts/hooks changed in ${scripts.join(", ")}` : ""].filter(Boolean).join("; ") || "no sensitive paths",
+    message: [denied.length ? `touches ${denied.join(", ")} (${names.filter((n) => denyCategories(policy, [n]).length || touchesRulePack(policy, n)).join(", ")})` : "", scripts.length ? `scripts/hooks changed in ${scripts.join(", ")}` : ""].filter(Boolean).join("; ") || "no sensitive paths",
   });
 
   const sizeCheck = sizeWithinBudgets(pr.files, pr.sizeBudgets);

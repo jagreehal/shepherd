@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { BRANDING } from "./config.ts";
 import { adviceOverCode, anchorSuggestion, capped, checkedRound, commentableLines, reviewedTips, swarmThreads, roundCoverage, reindent, renderReview, renderSummary, type SummaryInput } from "./summary.ts";
 
@@ -645,11 +643,7 @@ describe("findings on a thread that is still open", () => {
     expect(swarmThreads([node("github-actions", "Bot", "a plain comment")], "github-actions")).toEqual([]);
   });
 
-  test("the published summary is the CLI's render, so the next round still reads the reviewed head", () => {
-    const wf = readFileSync(path.join(import.meta.dir, "../templates/shepherd.yml"), "utf8");
-
-    expect(wf).toContain('shepherd summary ../handoff/round.json --previous ../summary.md "${fanout[@]}") > findings.out');
-    expect(wf).toContain('[ -n "${rendered:-}" ] || python3 - handoff/findings.md');
+  test("the summary the CLI renders names the reviewed head, so the next round reads it back", () => {
     expect(reviewedTips(renderSummary({ ...round, base_sha: "b".repeat(40) }, BRANDING.emoji, HEADER))).toEqual({ head_sha: head, base_sha: "b".repeat(40) });
   });
 });

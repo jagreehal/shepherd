@@ -10,22 +10,22 @@ describe("first-run setup", () => {
     expect(pickModel(undefined, undefined, { OPENCODE_API_KEY: "  " })).toBeNull(); // what a workflow passes for an unset secret
   });
 
-  test("sets each secret on stdin and allows Actions to approve; a step that cannot run becomes a todo", () => {
+  test("sets each secret on stdin, and a secret it cannot set becomes a todo", () => {
     const calls: { args: string[]; input?: string }[] = [];
 
     const gh: Gh = (args, input) => {
       calls.push({ args, input });
 
-      return { ok: !args.includes("PUT"), out: args.includes("--jq") ? "read\n" : "" };
+      return { ok: true, out: "" };
     };
 
-    const done = githubSetup(gh, { repo: "o/r", secrets: [{ name: "OPENCODE_API_KEY", value: "secret-value" }, { name: "SHEPHERD_TOKEN", value: undefined }] });
+    const done = githubSetup(gh, { repo: "o/r", secrets: [{ name: "OPENCODE_API_KEY", value: "secret-value" }, { name: "ANTHROPIC_API_KEY", value: undefined }] });
     const secret = calls.find((c) => c.args[0] === "secret")!;
 
     expect(secret.input).toBe("secret-value");
     expect(secret.args).not.toContain("secret-value"); // never in arguments, where ps can read it
-    expect(calls.find((c) => c.args.includes("PUT"))?.args).toEqual(expect.arrayContaining(["default_workflow_permissions=read", "can_approve_pull_request_reviews=true"]));
-    expect(done.todo).toEqual(["gh secret set SHEPHERD_TOKEN --repo o/r", expect.stringContaining("repository admin")]);
-    expect(calls.some((c) => c.args[0] === "pr" || c.args[0] === "push")).toBe(false); // setup never commits, pushes or opens PRs
+    expect(done.todo).toEqual(["gh secret set ANTHROPIC_API_KEY --repo o/r"]);
+    // The review posts as a comment, so setup changes no Actions setting; it never commits, pushes or opens PRs.
+    expect(calls.every((c) => c.args[0] === "secret")).toBe(true);
   });
 });

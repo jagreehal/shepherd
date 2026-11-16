@@ -1,15 +1,14 @@
 import { PROVIDER_ENV } from "./llm.ts";
-import { AUTOMATED_HEADER, renderCard } from "./actions.ts";
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, symlinkSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { shepherdModel, brand, describedSecrets, enableAwsOidc, installWorkflow, useLocalPolicy, workflowChoices } from "./policy.ts";
+import { CONFIG_FILE, hasReview, parsePolicy, shepherdModel, brand, describedSecrets, enableAwsOidc, installWorkflow, useLocalPolicy, workflowChoices } from "./policy.ts";
 import { band, computeFamiliarity, ensureFullHistory, formatFamiliarity, parseDiff, type AuthorFamiliarity, type FamiliarityPolicy } from "./familiarity.ts";
-import { callTimeout, effectiveAssociation, isOurs, lastReviewed, postVerdict, refusedRounds, retiredThreads, retrying, reviewPayload, sameRepoIssues, scrub, scrubJson, sweepTargets, transientGh, transientReviewError, withBudget, type PR, type ReviewRecord } from "./github.ts";
+import { AUTOMATED_HEADER, callTimeout, checkFor, planThreads, type Thread, effectiveAssociation, isOurs, lastReviewed, postVerdict, refusedRounds, retrying, reviewPayload, sameRepoIssues, scrub, scrubJson, sweepTargets, transientGh, transientReviewError, withBudget, type PR, type ReviewRecord } from "./github.ts";
 import {
   PolicySchema,
   addedSecrets,
@@ -24,7 +23,9 @@ import {
   readTrusted,
   resolveSizeOverrides,
   runGates,
+  denial,
   inheritRules,
+  houseRules,
   keepsRule,
   resolveTiers,
   packRules,
@@ -45,7 +46,7 @@ import {
   type PRMeta,
 } from "./policy.ts";
 import { approvedDiffUnchanged, standingApproval, tryRetainApproval } from "./retention.ts";
-import { advisable, assured, buildPrompt, combine, converged, diffCut, diffIndex, diffSectionPath, fenceFor, firstThatFits, inert, isPlaceholder, readableSections, readAll, independentReviewers, oneLine, parseVerdict, sanitize, secondOpinionNeeded, shortened, splitReviewChanges, unescaped, withAdvice, type LLMVerdict } from "./reviewer.ts";
+import { advisable, assured, buildPrompt, mergeRisk, combine, converged, diffCut, diffIndex, diffSectionPath, fenceFor, firstThatFits, inert, isPlaceholder, readableSections, readAll, independentReviewers, oneLine, parseVerdict, sanitize, secondOpinionNeeded, shortened, splitReviewChanges, unescaped, withAdvice, type LLMVerdict } from "./reviewer.ts";
 import { SIGNAL_IDS, SIGNAL_THRESHOLD, flagged, formatSignals, requestBody, type Signals } from "./signals.ts";
 
 const bundled = loadPolicy(path.resolve(import.meta.dir, ".."), "no-such-ref"); // no such ref → bundled defaults
@@ -58,9 +59,7 @@ test("the bundled policy denies only gate's own policy and flags the sensitive a
   expect(denyCategories(bundled, ["src/auth/session.ts", ".github/workflows/ci.yml", "pnpm-lock.yaml"])).toEqual([]);
   expect(denyCategories(bundled, [".shepherd/gate.yml"])).toEqual(["gate_policy"]);
 
-  // gate's workflows set variables that override the policy, so they are gate inputs too.
-  for (const wf of ["shepherd-gate.yml", "shepherd-gate-edited.yml", "shepherd-gate-actions.yml"]) expect(denyCategories(bundled, [`.github/workflows/${wf}`])).toEqual(["gate_policy"]);
-  expect(denyCategories(bundled, [".github/workflows/ci.yml"])).toEqual([]);
+  expect(denyCategories(bundled, [".github/workflows/shepherd.yml"])).toEqual([]);
   expect(scrutinyFlags(bundled, ["src/auth/session.ts", "pnpm-lock.yaml"]).map((s) => s.name)).toEqual(["auth", "deps_toolchain"]);
 
   // Strict keeps the same scrutiny and deny patterns, as deny categories instead.
@@ -185,6 +184,50 @@ test("policy is read from the trusted ref or the bundled default, never the work
   expect(denyCategories(loadPolicy(repo, "main"), [".shepherd/gate.yml"])).toEqual([]);
 });
 
+test("the default policy reads Java, Rust and .NET projects as well as JS and Python ones", () => {
+  const flags = (file: string) => scrutinyFlags(bundled, [file]).map((x) => x.name);
+
+  expect(flags("src/main/resources/db/migration/V2__users.sql")).toContain("migrations");
+  expect(flags("db/changelog/changes.xml")).toContain("migrations");
+  expect(flags("app/gradle.lockfile")).toContain("deps_toolchain");
+  expect(flags("gradle/libs.versions.toml")).toContain("deps_toolchain");
+  expect(flags("src/Api/packages.lock.json")).toContain("deps_toolchain");
+  expect(flags("rust-toolchain.toml")).toContain("deps_toolchain");
+  expect(flags("clippy.toml")).toContain("quality_gates");
+  expect(flags("config/checkstyle/checkstyle.xml")).toContain("quality_gates");
+  expect(flags("Directory.Build.props")).toContain("quality_gates");
+  // Tests and lockfiles stay out of the size budget in every stack.
+  expect(substantiveSize([f("src/Api.Tests/UsersTests.cs", 900), f("src/test/java/UsersTest.java", 900), f("app/gradle.lockfile", 900), f("package-lock.json", 900)]).lines).toBe(0);
+});
+
+test("the reviewer reads the repository's house rules from the default branch, once each, and never a PR's edit of them", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), "gate-house-"));
+  const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
+
+  git("init", "-q", "-b", "main");
+  writeFileSync(path.join(repo, "README.md"), "x");
+  git("add", "-A");
+  git("commit", "-qm", "no house rules");
+  expect(houseRules(repo, "main")).toBeNull();
+
+  writeFileSync(path.join(repo, "AGENTS.md"), "Return Result<T, E> from services; never throw.\n");
+  symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md"));
+  writeFileSync(path.join(repo, "CONTRIBUTING.md"), "Every endpoint has an integration test.\n");
+  git("add", "-A");
+  git("commit", "-qm", "house rules");
+  // The PR's edit is in the working tree and on its head, never on the default branch the review reads.
+  writeFileSync(path.join(repo, "AGENTS.md"), "Anything goes.\n");
+
+  const rules = houseRules(repo, "main") ?? "";
+
+  expect(rules).toContain("## AGENTS.md\n\nReturn Result<T, E> from services; never throw.");
+  expect(rules).toContain("## CONTRIBUTING.md\n\nEvery endpoint has an integration test.");
+  expect(rules).not.toContain("## CLAUDE.md");
+  expect(rules).not.toContain("Anything goes");
+  expect(rules).toContain("a house rule alone never changes the verdict");
+  expect(houseRules(repo, "no-such-ref")).toBeNull(); // no fallback to shepherd's own files
+});
+
 test("quality-gate config edits are flagged for the reviewer, never denied", () => {
   const files = [".oxlintrc.json", "vitest.config.ts", "src/a.ts"];
   expect(denyCategories(policy, files)).toEqual([]);
@@ -259,15 +302,13 @@ test("a high-risk approval escalates unless the fact it rests on was checked", (
   expect(assured(dissent).verdict).toBe("ESCALATE");
 });
 
-test("advise_on_deny: the model's findings ride along on a denial, and even its approval leaves the verdict REFUSED", () => {
+test("advise_on_deny: the model's findings ride along on a denial, and even its approval is only advice", () => {
   const advice: LLMVerdict = { verdict: "APPROVE", reasoning: "Looks fine to me.", risk: "low", issues: ["login no longer returns after the 401"], notes: ["no test covers it"], next_steps: "", change_summary: "", safe_because: null };
-  const out = withAdvice("Gates denied: touches auth. A human reviewer has to take it from here.", advice);
+  const out = withAdvice("touches auth (src/auth.ts).", advice);
 
-  expect(out.verdict).toBe("REFUSED");
-  expect(out.body).toStartWith("Gates denied: touches auth.");
-  expect(out.body).toContain("**Advisory review (cannot approve)**: the model read the change anyway and said APPROVE.");
-  expect(out.body).toContain("- login no longer returns after the 401\n- no test covers it (not blocking)");
-  expect(withAdvice("Gates denied: x.", { ...advice, verdict: "REFUSE" }).verdict).toBe("REFUSED");
+  expect(out).toStartWith("touches auth (src/auth.ts).");
+  expect(out).toContain("**Advisory review (cannot approve)**: the model read the change anyway and said APPROVE.");
+  expect(out).toContain("- login no longer returns after the 401\n- no test covers it (not blocking)");
   // No advice when the model would read other people's commits, a credential, or an outsider's checkout.
   expect(advisable([{ gate: "size" }, { gate: "deny-list" }])).toBe(true);
 
@@ -1250,7 +1291,7 @@ test("--policy-dir reads .shepherd/ files from that directory first, so a policy
 test("branding: no block posts today's header and glyphs; a custom one is applied, escaped and validated", () => {
   const plain = brand(undefined);
 
-  expect([plain.heading("APPROVED"), plain.heading("REFUSED"), plain.heading("ESCALATE"), plain.heading("ERROR")]).toEqual(["## ✅ shepherd gate: APPROVED", "## ❌ shepherd gate: REFUSED", "## 🙋 shepherd gate: ESCALATE", "## ⚠️ shepherd gate: ERROR"]);
+  expect([plain.heading("APPROVED"), plain.heading("REFUSED"), plain.heading("ESCALATE"), plain.heading("ERROR")]).toEqual(["## ✅ shepherd: APPROVED", "## ❌ shepherd: REFUSED", "## 🙋 shepherd: ESCALATE", "## ⚠️ shepherd: ERROR"]);
   expect([plain.pass, plain.fail, plain.fix]).toEqual(["✓", "✗", "🤖"]);
 
   const custom = brand({ name: "Acme <b>*Review*</b>", avatar: 'https://example.com/a.png?x="><script>', emoji: { REFUSED: "🛑", pass: "🟢" } });
@@ -1270,16 +1311,13 @@ test("branding: no block posts today's header and glyphs; a custom one is applie
 
 describe("workflow template", () => {
   test("only runs that review share the concurrency group, so a skipped run never cancels a review", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
+    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../../templates/shepherd.yml"), "utf8"));
     const squash = (t: string) => t.replace(/\s+/g, " ").trim();
     const reviews = squash(z.string().parse(wf.jobs.review.if));
     const group = squash(z.string().parse(wf.concurrency.group));
-    // A comment joins the review's group only from a known collaborator: anyone else's /gate waits on gate's permission check, in its own group.
-    // A tick of "Review again" carries no ticker's association, so it never joins the group.
-    const tick = /\s*\|\| \(github\.event_name == 'issue_comment' && github\.event\.action == 'edited'.*$/;
-    const trusted = reviews.replace(tick, "").replace("startsWith(github.event.comment.body, '/gate')", `startsWith(github.event.comment.body, '/gate') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)`);
-
-    expect(reviews).toMatch(tick);
+    // A comment joins the review's group only from a known collaborator: anyone else's /review waits on the permission check, in its own group.
+    const command = "(startsWith(github.event.comment.body, '/review') || startsWith(github.event.comment.body, '/gate'))";
+    const trusted = reviews.replace(command, `${command} && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)`);
 
     expect(trusted).not.toBe(reviews);
     expect(group).toContain(`\${{ (${trusted}) && 'review' || github.run_id }}`);
@@ -1287,54 +1325,25 @@ describe("workflow template", () => {
   });
 
   test("a body edit reviews only when the author edits shepherd's review-changes disclosure", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
+    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../../templates/shepherd.yml"), "utf8"));
     const reviews = z.string().parse(wf.jobs.review.if).replace(/\s+/g, " ");
 
     expect(reviews).toContain("github.event.changes.body != null && github.event.sender.login == github.event.pull_request.user.login && contains(github.event.pull_request.body, '<!-- shepherd:review-changes -->')");
   });
 
-  test("edits reach the review only from shepherd-gate-edited.yml, and only for a retarget or the author's disclosure", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
-    const edited = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate-edited.yml"), "utf8"));
-    const condition = z.string().parse(edited.jobs.review.if).replace(/\s+/g, " ");
-
-    expect(wf.on.pull_request.types).not.toContain("edited");
-    expect(wf.on).toHaveProperty("workflow_call");
-    expect(edited.on.pull_request.types).toEqual(["edited"]);
-    expect(edited.jobs.review).toMatchObject({ uses: "./.github/workflows/shepherd-gate.yml", secrets: "inherit" });
-    expect(condition).toContain("github.event.changes.base != null");
-    expect(condition).toContain("contains(github.event.pull_request.body, '<!-- shepherd:review-changes -->')");
-  });
-
-  test("a tick on the gate card acts only when that edit ticked the box, and only shepherd-gate-actions.yml can dispatch", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
-    const actions = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate-actions.yml"), "utf8"));
+  test("one workflow takes every trigger: a base retarget arrives as an edit, a comment only when it is created", () => {
+    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../../templates/shepherd.yml"), "utf8"));
     const reviews = z.string().parse(wf.jobs.review.if).replace(/\s+/g, " ");
-    const handoff = z.string().parse(actions.jobs.shepherd.if).replace(/\s+/g, " ");
 
-    expect(wf.on.issue_comment.types).toEqual(["created", "edited"]);
-    expect(reviews).toContain("github.event.action == 'created' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/gate')");
-    expect(reviews).toContain("contains(github.event.comment.body, '- [x] <!-- gate-action:rereview -->') && !contains(github.event.changes.body.from, '- [x] <!-- gate-action:rereview -->')");
-
-    // A custom App posts the card as <app>[bot], so neither workflow names github-actions[bot].
-    for (const condition of [reviews, handoff]) expect(condition).toContain("endsWith(github.event.comment.user.login, '[bot]') && startsWith(github.event.comment.body, '<!-- gate-actions -->')");
-
-    expect(`${reviews} ${handoff}`).not.toContain("'github-actions[bot]'");
-    expect(handoff).toContain("!contains(github.event.changes.body.from, '- [x] <!-- gate-action:shepherd -->')");
-    expect(wf.permissions.actions).toBe("read");
-    expect(actions.permissions).toEqual({ actions: "write" });
-    expect(actions.jobs.shepherd.steps.some((s: { uses?: string }) => s.uses?.startsWith("actions/checkout"))).toBe(false);
-  });
-
-  test("shepherd-gate-edited.yml grants every permission shepherd-gate.yml asks for, so the called workflow starts", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
-    const edited = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate-edited.yml"), "utf8"));
-
-    expect(edited.permissions).toMatchObject(wf.permissions);
+    expect(wf.on.pull_request.types).toContain("edited");
+    expect(wf.on.issue_comment.types).toEqual(["created"]);
+    expect(Object.keys(wf.on).sort()).toEqual(["issue_comment", "pull_request", "pull_request_review"]);
+    expect(reviews).toContain("github.event.changes.base != null");
+    expect(reviews).not.toContain("pull_request_review"); // a person's review reaches only the decide job
   });
 
   test("the workflow passes every provider's credentials, so choosing a provider needs only a secret and SHEPHERD_MODEL", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
+    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../../templates/shepherd.yml"), "utf8"));
     const env = Object.keys(wf.jobs.review.steps.find((s: { env?: object }) => s.env && "SHEPHERD_MODEL" in s.env).env);
 
     expect(PROVIDER_ENV.filter((k) => !env.includes(k))).toEqual([]);
@@ -1344,7 +1353,7 @@ describe("workflow template", () => {
   });
 
   test("the posting run prepares CLI images and accepts either Codex credential", () => {
-    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-gate.yml"), "utf8"));
+    const wf = parseYaml(readFileSync(path.resolve(import.meta.dir, "../../templates/shepherd.yml"), "utf8"));
     const steps = wf.jobs.review.steps;
     const posting = steps.find((s: { run?: string }) => s.run?.includes("--post"));
 
@@ -1357,53 +1366,50 @@ describe("workflow template", () => {
 });
 
 describe("Bedrock through OIDC", () => {
-  const read = (name: string) => readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
+  const read = (name: string) => readFileSync(path.resolve(import.meta.dir, "../../templates", name), "utf8");
   const Step = z.object({ uses: z.string().optional(), run: z.string().optional(), "continue-on-error": z.boolean().optional(), with: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional() });
   const Review = z.object({ permissions: z.record(z.string(), z.string()), jobs: z.object({ review: z.object({ steps: z.array(Step).optional() }) }) });
 
   test("off by default: no workflow can mint an OIDC token until a team turns it on", () => {
-    for (const name of ["shepherd-gate.yml", "shepherd-gate-edited.yml"]) expect(Review.parse(parseYaml(read(name))).permissions["id-token"]).toBeUndefined();
-    expect(JSON.stringify(parseYaml(read("shepherd-gate.yml")))).not.toContain("configure-aws-credentials");
+    expect(Review.parse(parseYaml(read("shepherd.yml"))).permissions["id-token"]).toBeUndefined();
+    expect(JSON.stringify(parseYaml(read("shepherd.yml")))).not.toContain("configure-aws-credentials");
   });
 
-  test("turned on, both workflows grant id-token and the exchange is pinned and never skips gate's retraction", () => {
-    const wf = Review.parse(parseYaml(enableAwsOidc(read("shepherd-gate.yml"))));
-    const edited = Review.parse(parseYaml(enableAwsOidc(read("shepherd-gate-edited.yml"))));
+  test("turned on, the workflow grants id-token and the exchange is pinned and never skips the review", () => {
+    const wf = Review.parse(parseYaml(enableAwsOidc(read("shepherd.yml"))));
 
     expect(wf.permissions["id-token"]).toBe("write");
-    expect(edited.permissions["id-token"]).toBe("write"); // a called workflow gets no more than its caller grants
     const steps = wf.jobs.review.steps!;
     const aws = steps.findIndex((s) => s.uses?.startsWith("aws-actions/configure-aws-credentials@"));
 
     expect(steps[aws]?.uses).toMatch(/@[0-9a-f]{40}$/);
-    // A failed exchange must still run gate, which retracts standing approvals before it reviews.
+    // A failed exchange must still run the review, which then reports the error on the check.
     expect(steps[aws]?.["continue-on-error"]).toBe(true);
     expect(steps[aws]?.with).toEqual({ "role-to-assume": "${{ vars.AWS_ROLE_ARN }}", "aws-region": "${{ vars.AWS_REGION }}" });
     expect(aws).toBeLessThan(steps.findIndex((s) => JSON.stringify(s).includes("bunx")));
-    expect(enableAwsOidc(read("shepherd-gate.yml"))).not.toMatch(/^\s*#aws-oidc /m);
+    expect(enableAwsOidc(read("shepherd.yml"))).not.toMatch(/^\s*#aws-oidc /m);
   });
 
   test("init pins the workflow to this gate and puts the review job in the environment it was given", () => {
-    const { version } = JSON.parse(read("../../package.json"));
-    const wf = parseYaml(installWorkflow(read("shepherd-gate.yml"), { environment: "ai-review" }));
+    const { version } = JSON.parse(read("../package.json"));
+    const wf = parseYaml(installWorkflow(read("shepherd.yml"), { environment: "ai-review" }));
 
     expect(wf.jobs.review.env.SHEPHERD_VERSION).toBe(`\${{ vars.SHEPHERD_VERSION || '${version}' }}`);
     expect(wf.jobs.review.environment).toBe("ai-review");
-    expect(parseYaml(installWorkflow(read("shepherd-gate.yml"))).jobs.review.environment).toBeUndefined();
-    expect(() => installWorkflow(read("shepherd-gate.yml"), { environment: "x\n  evil: 1" })).toThrow("not a GitHub environment name");
+    expect(parseYaml(installWorkflow(read("shepherd.yml"))).jobs.review.environment).toBeUndefined();
+    expect(() => installWorkflow(read("shepherd.yml"), { environment: "x\n  evil: 1" })).toThrow("not a GitHub environment name");
     // The bundled template names this version too (tools/sync-gate-version.ts keeps it there on release).
-    expect(parseYaml(read("shepherd-gate.yml")).jobs.review.env.SHEPHERD_VERSION).toBe(`\${{ vars.SHEPHERD_VERSION || '${version}' }}`);
+    expect(parseYaml(read("shepherd.yml")).jobs.review.env.SHEPHERD_VERSION).toBe(`\${{ vars.SHEPHERD_VERSION || '${version}' }}`);
   });
 
   test("init --upgrade reads back the environment, OIDC and region a workflow was written with", () => {
     const choices = { awsOidc: true, environment: "ai-review", region: "eu-west-1" };
 
-    expect(workflowChoices(installWorkflow(read("shepherd-gate.yml"), choices))).toEqual(choices);
-    expect(workflowChoices(installWorkflow(read("shepherd-gate-edited.yml"), { awsOidc: true }))).toEqual({ awsOidc: true, environment: undefined, region: undefined });
-    expect(workflowChoices(read("shepherd-gate.yml"))).toEqual({ awsOidc: false, environment: undefined, region: undefined });
+    expect(workflowChoices(installWorkflow(read("shepherd.yml"), choices))).toEqual(choices);
+    expect(workflowChoices(read("shepherd.yml"))).toEqual({ awsOidc: false, environment: undefined, region: undefined });
     // Hand-edited but valid YAML keeps its environment; dropping it would lose the environment's secrets.
-    expect(workflowChoices(read("shepherd-gate.yml").replace(/^( {4}runs-on: .*\n)/m, '$1    environment: "ai-review"\n')).environment).toBe("ai-review");
-    expect(workflowChoices(read("shepherd-gate.yml").replace(/^( {4}runs-on: .*\n)/m, "$1    environment:\n      name: ai-review\n")).environment).toBe("ai-review");
+    expect(workflowChoices(read("shepherd.yml").replace(/^( {4}runs-on: .*\n)/m, '$1    environment: "ai-review"\n')).environment).toBe("ai-review");
+    expect(workflowChoices(read("shepherd.yml").replace(/^( {4}runs-on: .*\n)/m, "$1    environment:\n      name: ai-review\n")).environment).toBe("ai-review");
   });
 });
 
@@ -1790,8 +1796,7 @@ describe("review hardening", () => {
       expect(payload).toEqual({ commit_id: "abc", event: "COMMENT", body: "body [redacted]", comments: [{ path: "a.ts", line: 3, side: "RIGHT", body: `${AUTOMATED_HEADER}\n\na.ts:3 [redacted]\n\n<!-- gate-run:2026-11-03T00:00:00Z -->` }] });
       // triage reads only the first 300 characters for the header
       expect(payload.comments[0]!.body.slice(0, 300)).toContain("🤖 Automated comment by");
-      expect(renderCard({ heading: "h", verdict: "REFUSED", head: "abc1234", reviewId: 1, shepherd: true }).slice(0, 300)).toContain("🤖 Automated comment by");
-      expect(reviewPayload("abc", "APPROVED", "ok", [], "t").event).toBe("APPROVE");
+      expect(reviewPayload("abc", "APPROVED", "ok", [], "t").event).toBe("COMMENT"); // the check carries an approval; a person approves the PR
     } finally {
       process.env.GH_TOKEN = saved;
     }
@@ -1931,29 +1936,40 @@ esac
     }, 10_000);
   });
 
-  test("a new verdict retires our earlier open threads, never this run's, a resolved one, a human's, or one a person joined", () => {
+  describe("threads across pushes", () => {
     const comment = (login: string, body: string, bot = true) => ({ author: { login, __typename: bot ? "Bot" : "User" }, body, createdAt: "2026-11-03T00:00:00Z" });
-    const thread = (id: string, isResolved: boolean, ...nodes: ReturnType<typeof comment>[]) => ({ id, isResolved, isOutdated: false, path: "a.ts", comments: { totalCount: nodes.length, nodes } });
-    const ours = (started: string) => comment("gate-app", `finding\n\n<!-- gate-run:${started} -->`);
-    const now = "2026-11-03T12:00:00Z";
-    const before = "2026-11-03T11:00:00Z";
+    const ours = comment("github-actions", `${AUTOMATED_HEADER}\n\n❌ **Blocks approval** · **clamp ignores min**\n\n<!-- gate-run:2026-11-03T11:00:00Z -->`);
+    const thread = (id: string, line: number | null, over: Partial<Thread> = {}, nodes: Thread["comments"]["nodes"] = [ours]) => ({ id, isResolved: false, isOutdated: line === null, path: "a.ts", line, originalLine: line ?? 10, comments: { totalCount: nodes.length, nodes }, ...over });
+    const finding = (line: number, grade = "❌ **Blocks approval**") => ({ path: "a.ts", line, body: `${grade} · **clamp drops max**` });
+    const changed = (...lines: number[]) => new Map([["a.ts", new Set(lines)]]);
+    const plan = (threads: ReturnType<typeof thread>[], anchors: ReturnType<typeof finding>[], lines: Map<string, Set<number>> | null) => planThreads(threads, anchors, lines, "github-actions[bot]");
 
-    expect(
-      retiredThreads(
-        [
-          thread("old", false, ours(before)),
-          thread("this-run", false, ours(now)),
-          thread("later-run", false, ours("2026-11-03T13:00:00Z")),
-          thread("resolved", true, ours(before)),
-          thread("joined", false, ours(before), comment("alice", "I disagree", false)),
-          thread("forged", false, comment("alice", `<!-- gate-run:${before} -->`, false)),
-          // 51 comments, 50 fetched: the one past the page may be a person's.
-          { ...thread("truncated", false, ours(before)), comments: { totalCount: 51, nodes: [ours(before)] } },
-        ],
-        "github-actions[bot]",
-        now,
-      ),
-    ).toEqual(["old"]);
+    test("on untouched code, a finding near an open thread is that thread again, whatever its grade: nothing new posts", () => {
+      expect(plan([thread("T", 10)], [finding(11)], changed(40))).toEqual({ post: [], retire: [], open: 1 });
+      expect(plan([thread("T", 10)], [finding(11)], null).post).toEqual([]);
+      expect(plan([thread("T", 10)], [finding(30)], null).post).toEqual([finding(30)]); // another place is another finding
+      // A verdict that moved from refusal to escalation carries the same finding: it stays in its thread.
+      expect(plan([thread("T", 10)], [finding(11, "⚠️ **Needs a person**")], null)).toEqual({ post: [], retire: [], open: 1 });
+    });
+
+    test("once the code under a thread changes it resolves, and what the model raises there now posts on the new code", () => {
+      expect(plan([thread("T", 10)], [], changed(12))).toEqual({ post: [], retire: ["T"], open: 0 });
+      expect(plan([thread("T", 10)], [finding(11)], changed(12))).toEqual({ post: [finding(11)], retire: ["T"], open: 1 });
+      expect(plan([thread("T", null)], [], null).retire).toEqual(["T"]); // GitHub marked the code under it changed
+      // Untouched code: a finding the model did not repeat stays open for a person to decide.
+      expect(plan([thread("T", 10)], [], changed(40))).toEqual({ post: [], retire: [], open: 1 });
+      expect(plan([thread("T", 10)], [], null)).toEqual({ post: [], retire: [], open: 1 });
+    });
+
+    test("a thread anyone else wrote in, or one read in part, is never resolved, and only ours or a person's count", () => {
+      const joined = thread("J", 10, {}, [ours, comment("sam", "Agreed, add a test too", false)]);
+      const truncated = thread("X", 10, { comments: { totalCount: 51, nodes: [ours] } });
+      const deleted = thread("D", 10, {}, [ours, { author: null, body: "x", createdAt: "" }]);
+      const otherBot = thread("O", 10, {}, [comment("coderabbitai", "nit")]);
+
+      expect(plan([joined, truncated, deleted, otherBot], [], changed(10))).toEqual({ post: [], retire: [], open: 3 });
+      expect(plan([{ ...thread("R", 10), isResolved: true }], [], changed(10)).open).toBe(0);
+    });
   });
 });
 
@@ -1965,4 +1981,93 @@ test("a gate policy with no model takes the loop's models.loop, and reading it m
   expect(taken.model).toBe("opencode-go/beam-free");
   expect(taken.policyFiles).toContain(".shepherd/config.yml");
   expect(shepherdModel(base, () => null)).toBe(base);
+});
+
+test("a denial a person can settle escalates, and its check says so; anything the author must change refuses", () => {
+  const deny = { gate: "deny-list", passed: false, message: "touches gate_policy (.shepherd/config.yml)" };
+  const tier = { gate: "tier", passed: false, message: "T2-never" };
+  const secret = { gate: "secrets", passed: false, message: "credential added in a.ts" };
+  const config = denial([deny, tier]);
+
+  expect(config.verdict).toBe("ESCALATE");
+  expect(checkFor(config.verdict, config.body, 0).description).toBe("a person decides: Gates denied: touches gate_policy (.shepherd/config.yml).");
+  expect(denial([{ gate: "size", passed: false, message: "900 lines" }]).verdict).toBe("ESCALATE");
+  // An approval never settles a committed credential, weakened tests, or a draft.
+  expect(denial([deny, tier, secret]).verdict).toBe("REFUSED");
+  expect(checkFor("REFUSED", denial([secret]).body, 0).description).toBe("changes needed: Gates denied: credential added in a.ts.");
+  expect(denial([{ gate: "prerequisites", passed: false, message: "draft" }]).verdict).toBe("REFUSED");
+  expect(denial([{ gate: "base", passed: false, message: "3 of 3 commits are already on develop" }]).body).toStartWith("Not reviewed: ");
+});
+
+describe("the shepherd check", () => {
+  test("an approval is green only while no thread of ours or a person's stays open; every other verdict says what to do", () => {
+    expect(checkFor("APPROVED", "Docs only.", 0)).toEqual({ state: "success", description: "approved; no open thread" });
+    expect(checkFor("APPROVED", "Docs only.", 2)).toEqual({ state: "failure", description: "approved; 2 open thread(s) to resolve" });
+    expect(checkFor("REFUSED", "\nclamp drops its lower bound.\nmore", 0)).toEqual({ state: "failure", description: "changes needed: clamp drops its lower bound." });
+    expect(checkFor("ESCALATE", "Gates denied: touches auth (src/auth.ts).", 0).description).toBe("a person decides: Gates denied: touches auth (src/auth.ts).");
+    expect(checkFor("ERROR", "timeout", 0).state).toBe("error");
+  });
+
+});
+
+describe("one config file", () => {
+  const bundledPolicy = readFileSync(path.resolve(import.meta.dir, "../.shepherd/gate.yml"), "utf8");
+  const nested = (policy: string) => `lenses: {}\nreview:\n${policy.split("\n").map((l) => (l ? `  ${l}` : l)).join("\n")}`;
+
+  test("the reviewer's policy reads the same under review: in config.yml as it does from gate.yml", () => {
+    expect(hasReview(nested(bundledPolicy))).toBe(true);
+    expect(hasReview("lenses: {}\n")).toBe(false);
+    expect(parsePolicy(nested(bundledPolicy), CONFIG_FILE, ["review"])).toEqual(parsePolicy(bundledPolicy));
+  });
+
+  test("an edit to config.yml goes to a person, even when an older review: block's deny paths miss it", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "gate-cfg-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
+    const old = bundledPolicy.replace("config\\.yml|", "");
+
+    git("init", "-q", "-b", "main");
+    mkdirSync(path.join(repo, ".shepherd"));
+    writeFileSync(path.join(repo, CONFIG_FILE), nested(old));
+    git("add", "-A");
+    git("commit", "-qm", "policy");
+
+    expect(old).not.toContain("config\\.yml");
+    expect(denyCategories(parsePolicy(old), [CONFIG_FILE])).toEqual([]);
+    const trusted = loadPolicy(repo, "main");
+
+    expect(runGates(trusted, { title: "t", author: "a", authorAssociation: "OWNER", isFork: false, isDraft: false, mergeable: "MERGEABLE", reviews: [], files: [f(CONFIG_FILE, 1)], sizeBudgets: resolveSizeOverrides(trusted, [CONFIG_FILE], () => null) }).denied).toEqual(["gate_policy"]);
+    expect(denyCategories(bundled, [CONFIG_FILE])).toEqual(["gate_policy"]); // a new install's own paths list it too
+  });
+
+  test("the lenses beside review: reach the reviewer as rule packs, so a stack's lens added by init --stacks applies in CI", () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "gate-lens-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
+
+    git("init", "-q", "-b", "main");
+    mkdirSync(path.join(repo, ".shepherd/lenses/rust"), { recursive: true });
+    writeFileSync(path.join(repo, ".shepherd/lenses/rust/SKILL.md"), readFileSync(path.resolve(import.meta.dir, "../../lenses/rust/SKILL.md"), "utf8"));
+    writeFileSync(path.join(repo, CONFIG_FILE), nested(bundledPolicy).replace("lenses: {}", "lenses:\n  rust: { skill: .shepherd/lenses/rust, applies_to: ['**/*.rs'], gate: escalate }"));
+    git("add", "-A");
+    git("commit", "-qm", "policy");
+
+    const { policy, missing } = inheritRules(loadPolicy(repo, "main"), (rel) => readTrusted(repo, rel, "main"));
+
+    expect(missing).toEqual([]);
+    expect(policy.rules.rust).toMatchObject({ skill: ".shepherd/lenses/rust", applies_to: ["**/*.rs"], on_break: "escalate" });
+  });
+
+  test("a problem under review: names the line in config.yml a person edits", () => {
+    const broken = nested(bundledPolicy.replace("max_lines: 800", "max_lines: lots"));
+    const line = broken.split("\n").findIndex((l) => l.includes("max_lines: lots")) + 1;
+
+    expect(() => parsePolicy(broken, CONFIG_FILE, ["review"])).toThrow(new RegExp(`^\\.shepherd/config\\.yml:${line}:\\d+ review\\.size_gate\\.max_lines:`, "m"));
+  });
+});
+
+test("merge risk follows what the code does; a refusal or an escalation reads at least medium", () => {
+  expect(mergeRisk("REFUSED", "low")).toBe("medium");
+  expect(mergeRisk("REFUSED", "high")).toBe("high");
+  expect(mergeRisk("ESCALATE", "low")).toBe("medium");
+  expect(mergeRisk("ESCALATE", "high")).toBe("high");
+  expect(mergeRisk("APPROVED", "low")).toBe("low");
 });

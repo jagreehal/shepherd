@@ -6,11 +6,10 @@
   "repository": "github:jagreehal/shepherd",
   "type": "module",
   "bin": {
-    "shepherd": "./src/bin.ts"
+    "shepherd": "./dist/shepherd.js"
   },
   "files": [
-    "src",
-    "!src/*.test.ts",
+    "dist",
     "skills",
     "commands",
     "examples",
@@ -20,8 +19,6 @@
     "schema",
     "AGENTS.md",
     "THIRD_PARTY_NOTICES.md",
-    "gate/src",
-    "!gate/src/*.test.ts",
     "gate/.shepherd",
     "gate/templates"
   ],
@@ -33,10 +30,12 @@
     "access": "public"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test --timeout 20000",
     "typecheck": "tsc --noEmit",
-    "check": "bun run lint && bun run typecheck && bun test",
+    "check": "bun run lint && bun run typecheck && bun run test",
     "lint": "oxlint src gate/src",
+    "build": "bun build src/bin.ts --target=bun --outfile dist/shepherd.js",
+    "prepack": "bun run build",
     "changeset": "changeset",
     "version-packages": "changeset version && bun tools/sync-gate-version.ts",
     "release": "changeset publish",
@@ -47,16 +46,6 @@
     "schema": "bun src/cli.ts config schema > schema/config.json"
   },
   "devDependencies": {
-    "@changesets/cli": "^3.0.3",
-    "@oxlint/plugins": "1.88.0",
-    "@types/bun": "^1.4.3",
-    "ajv": "8.20.0",
-    "executable-stories-bun": "^0.1.0",
-    "executable-stories-formatters": "^1.27.0",
-    "oxlint": "1.88.0",
-    "typescript": "^7.0.2"
-  },
-  "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.118",
     "@ai-sdk/anthropic": "4.0.82",
     "@ai-sdk/groq": "4.0.63",
@@ -64,10 +53,18 @@
     "@ai-sdk/openai": "4.0.96",
     "@ai-sdk/openai-compatible": "3.0.71",
     "@aws-sdk/credential-provider-node": "^3.972.86",
+    "@changesets/cli": "^3.0.3",
+    "@oxlint/plugins": "1.88.0",
+    "@types/bun": "^1.4.3",
     "ai": "7.0.143",
+    "ajv": "8.20.0",
     "autotel": "9.3.0",
     "autotel-bedrock": "4.0.0",
     "autotel-genai": "0.17.0",
+    "executable-stories-bun": "^0.1.0",
+    "executable-stories-formatters": "^1.27.0",
+    "oxlint": "1.88.0",
+    "typescript": "^7.0.2",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"
   }

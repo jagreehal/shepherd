@@ -10,7 +10,7 @@ const ciFailed = { name: "ci", status: "completed", conclusion: "failure", url: 
 
 describe("shepherd status", () => {
   test("folds the gate, shepherd and CI into one stage and one next step", () => {
-    expect(prStatus(base)).toMatchObject({ stage: "reviewing", next: expect.stringContaining("/shepherd") });
+    expect(prStatus(base)).toMatchObject({ stage: "reviewing", next: expect.stringContaining("/review") });
     expect(prStatus({ ...base, runs: [{ name: "ci", status: "in_progress", conclusion: "", url: "" }] }).stage).toBe("waiting for CI");
     expect(prStatus({ ...base, shepherd: { state: "pending", description: "running" } }).stage).toBe("fixing");
     expect(prStatus({ ...base, shepherd: { state: "failure", description: "stopped after 5 commits" } })).toMatchObject({ stage: "needs you", next: expect.stringContaining("stopped after 5 commits") });
@@ -25,7 +25,7 @@ describe("shepherd status", () => {
     expect(prStatus({ ...base, gate: approved, shepherd: success, runs: [ciFailed] }).stage).toBe("needs you");
     expect(prStatus({ ...base, gate: { verdict: "REFUSED", head: "abcdef1" }, shepherd: success }).stage).toBe("needs you");
     expect(prStatus({ ...base, gate: approved, shepherd: success, changesRequested: ["sam"] })).toMatchObject({ stage: "needs you", next: expect.stringContaining("sam") });
-    expect(prStatus({ ...base, gate: { verdict: "REFUSED", head: "abcdef1" }, runs: [{ name: "shepherd-gate", status: "completed", conclusion: "failure", url: "" }] }).next).toContain("the gate's review");
+    expect(prStatus({ ...base, gate: { verdict: "REFUSED", head: "abcdef1" }, runs: [{ name: "shepherd-gate", status: "completed", conclusion: "failure", url: "" }] }).next).toContain("read the review");
     expect(prStatus({ ...base, gate: { verdict: "DISMISSED", head: "abcdef1" } }).stage).toBe("needs you");
     expect(prStatus({ ...base, gate: approved, shepherd: success, runs: [{ name: "api-gateway", status: "completed", conclusion: "failure", url: "" }] }).stage).toBe("needs you");
     expect(prStatus({ ...base, gate: approved, shepherd: success, openThreads: 2 })).toMatchObject({ stage: "needs you", next: expect.stringContaining("2 open review threads") });

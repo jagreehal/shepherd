@@ -4,5 +4,5 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const { version } = JSON.parse(readFileSync("package.json", "utf8"));
 const sync = (file: string, re: RegExp) => writeFileSync(file, readFileSync(file, "utf8").replace(re, `$1${version}`));
-for (const file of ["gate/templates/shepherd-gate.yml"]) sync(file, /^(\s*SHEPHERD_VERSION: \$\{\{ vars\.SHEPHERD_VERSION \|\| ')[^']*/m);
+for (const file of ["templates/shepherd.yml"]) sync(file, /^(\s*SHEPHERD_VERSION: \$\{\{ vars\.SHEPHERD_VERSION \|\| ')[^']*/m);
 for (const file of ["gate/.shepherd/gate.yml", "gate/templates/policy-strict.yml"]) sync(file, /(\$schema=https:\/\/unpkg\.com\/@jagreehal\/shepherd@)[^/]+/);

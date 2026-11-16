@@ -2,73 +2,92 @@
 title: "Run in GitHub Actions"
 ---
 
-`/loop` stops when your laptop sleeps. To keep the loop going without it, install the workflows:
+Shepherd reviews every PR in GitHub Actions with one workflow and one job. Install it:
 
 ```bash
 bunx @jagreehal/shepherd workflows --model bedrock:minimax.minimax-m2.5 --aws-region eu-west-1 --environment ai-review
 ```
 
-That writes the model and region to `.shepherd/config.yml`. The first run needs one secret: the model key under the provider's own name (`OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`...) in the `ai-review` environment. Merge the config and workflows, and shepherd reviews PRs. Add `SHEPHERD_TOKEN` when you move to `fixes.mode: push`, so pushed fixes start CI. Every other setting is in [the settings table](/shepherd/reference/environment/#settings).
+That writes `.github/workflows/shepherd.yml`, pins the model in `.shepherd/config.yml`, and adds the reviewer's policy under `review:` in the same file. Add the model key as a secret under the provider's own name (`OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`...), merge, and every PR gets a review. No personal access token and no GitHub App are needed.
 
-The command copies both templates into `.github/workflows`, keeps any file already there, and pins `SHEPHERD_VERSION` in each to the version that wrote it. The jobs install that CLI version on `PATH`, so later skill commands use the same release. Name your CI workflow in each file's `workflows:` list (`[ci, the gate]` in `shepherd.yml`, `[ci]` in the incident file), add `SHEPHERD_TOKEN` as a repository secret and the model key under the provider's own name, and merge. The same command writes the gate's workflows and `.shepherd/gate.yml`.
+- **`--model`** writes the model to `.shepherd/config.yml` as `models.loop`, so it is reviewed and versioned with the rest of the policy and read from the default branch. The `SHEPHERD_MODEL` variable overrides it, and `model:` under `review:` overrides `models.loop`. Use the variable to try a model without a PR.
+- **`--environment <name>`** runs the review job in that GitHub environment. Store the model keys as its secrets, not repository secrets.
+- **`--aws-region`** sets the Bedrock region.
 
-- **`--model`** writes the session model to `.shepherd/config.yml` as `models.loop`, so it is reviewed and versioned with the rest of the policy and read from the default branch. Without it, run `shepherd models pin loop <model>`. The `SHEPHERD_MODEL` variable overrides it when set: use it to try a model without a PR.
-- **`--environment <name>`** puts the model job alone in that GitHub environment. Store the model keys as its secrets, not repository secrets, and no other job or workflow can read them.
+The command keeps a `shepherd.yml` that exists. `--upgrade` rewrites it from the current template, keeping its environment, OIDC and region choices, and pins `SHEPHERD_VERSION` to the CLI's version.
+
+## What runs
 
 ```mermaid
 flowchart LR
-    E[CI or the gate finishes,<br/>/shepherd comment,<br/>handoff label, sweep] --> I[One iteration]
-    I --> P[Push fixes]
-    P --> E
-    I --> D{shepherd status}
-    D -- success --> M[You merge]
-    D -- failure --> Y[You act; a push or<br/>/shepherd restarts it]
+    E[Push, base retarget,<br/>or /review comment] --> R[review job:<br/>model keys, contents read]
+    R --> M[Model reads the checkout:<br/>read, grep, glob]
+    M --> W[shepherd posts one review]
+    W --> S[settle job:<br/>no keys, contents write]
+    S --> C[resolves settled threads,<br/>sets the shepherd status]
 ```
 
-- An iteration starts when CI or the gate finishes on a PR from this repository, on a `/shepherd` comment from anyone with write access, when the PR gets the handoff label, or from a manual run with a `pr` input. Every 30 minutes a sweep dispatches an iteration for each open, non-draft PR from this repository whose `shepherd` status is still `pending`. With a handoff label set, it also dispatches labelled PRs shepherd has never touched.
-- **`/shepherd` comments:** the gate asks GitHub's permission API whether the commenter can push, so a private org member or someone with access through a team counts. For one who can, it dispatches a run with `asked: true`, which queues behind any run on the PR. The handoff label works the same way. The comment's or label's own run never joins the PR's queue, so a comment from someone who cannot push, or another label, never displaces a queued run. The gate job has `actions: write` for this dispatch.
-- **Handoff label:** set `ci.label` (or `--label` here) and shepherd takes only PRs that carry it. Whatever opens PRs (a person, Claude Code, Codex, another agent or pipeline) hands one over by adding the label. A `/shepherd` comment always runs.
-- An iteration skips closed PRs, forks, drafts, PRs without the handoff label, PRs whose author lacks write access, a PR whose head branch is the default branch, and `incident/*` branches until a person comments `/shepherd` or adds the label. When CI or the gate finishing starts it, it also skips a head where shepherd already set `success` or `failure`. After 20 shepherd commits on the PR it sets `failure` and stops for a person.
-- The workflows run from the default branch, so a PR cannot change how it is shepherded.
+The job runs on `pull_request` (opened, pushed, reopened, ready for review, and an edit that retargets the base) and on a `/review` comment from someone who can push. `/gate` works too. Shepherd asks GitHub's permission API whether the commenter can push, so access through a team counts; anyone else's comment changes nothing. A newer run on the same PR cancels the one in flight.
 
-## Credential handoff
+Draft PRs and, when `review.label` is set, PRs without that label are skipped, and the skip resets the `shepherd` status. The policy is read from the default branch, so a PR cannot change the rules it is reviewed against. On `pull_request` GitHub runs the workflow file from the PR itself, so a PR that edits `shepherd.yml` runs its own edit. CODEOWNERS on `/.github/` is what makes a person sign off on that (see below).
 
-The model reads text anyone can write: comments, review threads, bot output. So the PR workflow never gives it a write credential. It has four jobs. Read the [handoff contract](https://github.com/jagreehal/shepherd/blob/main/skills/shepherd/SKILL.md#handoff-mode) if you customise them.
+## What the model can do
 
-| Job | Model | Credential | Does |
-| --- | --- | --- | --- |
-| `sweep` | No | `github.token` | On the schedule, dispatches PRs left `pending`; the gate drops a dispatched run whose head has stopped being `pending` |
-| `gate` | No | `SHEPHERD_TOKEN` | Decides whether to run (the skips above) and passes the branch, base, starting head and Git identity to the next jobs |
-| `iterate` | Yes | `github.token` | Runs one iteration in handoff mode and bundles its commits |
-| `publish` | No | `SHEPHERD_TOKEN` | Runs after every iteration, failed or not: checks and pushes the bundle, sets the status, reruns jobs and notifies |
+The model reads the checkout through read, grep and glob. It runs no shell, never executes PR code and holds no token. Shepherd's own process makes every GitHub write after the model returns.
 
-`iterate` gets `github.token` with `contents: read` and write access to pull requests and issues only. Its checkout does not persist credentials. `SHEPHERD_TOKEN` appears nowhere in the job: a secret that any step uses sits in the job's runner memory, where a hijacked model step could read it. `src/workflow.test.ts` pins these properties. The job sets `SHEPHERD_HANDOFF`, so the skill commits fixes, writes `status.json` and never pushes. Under `fixes.mode: suggest`, with no team lenses, the gate's review is the review: `iterate` runs no model and posts nothing, and `shepherd ci-review` sets the status from the gate's verdict, `failure` naming what the author must do when the gate refuses or escalates, `success` once the gate's approval covers the head, the head's other checks are green and no thread is open, `pending` while the gate or checks still run. Once the gate approves a head, publish resolves the gate's threads from earlier runs and shepherd's threads on code the PR has since changed, reading each again just before it resolves it, and sets `success` only from the count it takes afterwards. A thread with a person in it stays open. Without `SHEPHERD_TOKEN` nothing can resolve them, so the status is `failure` until a person does. Otherwise, including suggest with team lenses (the gate engine reviews correctness only), it runs OpenCode 1.19.0. An iteration that ends with no review, status or commit sets the `shepherd` status to error. Commits go out under the `SHEPHERD_TOKEN` owner's name; comments post as `github-actions[bot]`, which the gate counts as automated and leaves out of its review.
+The work is split in two jobs, so the job holding the model keys cannot change code:
 
-Add your project's dependency installation to `iterate` where the template marks it, with install scripts off and no dependency cache (`npm ci --ignore-scripts`; `setup-node` without `cache:`). A cache this job saved would reach every later run on the default branch. `oven-sh/setup-bun` is pinned to a commit in both templates.
+| Job | Permissions | Does |
+| --- | --- | --- |
+| `review` | `contents: read`, `pull-requests: write`, `statuses: write`, and reads of `issues`, `actions`, `checks` | Holds the model keys. Posts the review and sets the status to `pending` |
+| `settle` | `contents: write`, `pull-requests: write`, `statuses: write` | No keys, no checkout, nothing installed: only the `gh` on the runner. Resolves the threads the review settled, reading each one again first, then sets the final status |
 
-Runs for one PR never overlap: the whole workflow, gate to publish, holds a per-PR concurrency group keyed on the gate's own condition. A run that its event alone rules out gets a group of its own. A run the gate step skips after reading GitHub (finished head, label scope, incident branch) still queues in the PR's group, where GitHub keeps one waiting run, so comment `/shepherd` again when a queued request did not start. The gate marks the head `pending` before the model starts, so a rerun never leaves an older green standing. Before the model starts, `iterate` also posts a "shepherd is reviewing" note with a link to the run, and `publish` deletes it whatever the outcome. If the iteration fails or times out, `publish` still runs and, before any setup of its own, sets `error` on the starting head (`shepherd iteration failure; comment /shepherd to retry`), linking the run. If any `publish` step fails (checkout, push or status), its last step sets `error` the same way, so the sweep never reruns the model on a stuck `pending`.
+GitHub requires `contents: write` to resolve a review thread, which is why `settle` exists. The checkout persists no credentials. `oven-sh/setup-bun` is pinned to a commit.
 
-`publish` runs no model and executes nothing the model wrote: it fetches the bundle and checks it. It pushes only when:
+The `review` job can still set the `shepherd` status, so the package it runs is what you trust. Shepherd publishes as one bundled file with no dependencies: `bunx` fetches shepherd and nothing else, at the version `SHEPHERD_VERSION` pins. Keep **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests** off, so the job's token cannot approve a PR.
 
-- the PR branch is neither the default branch nor the PR's base;
-- the PR head is still the starting head. If someone pushed first, it pushes nothing and leaves the status alone; the next iteration starts from the new head;
-- the commits are a fast-forward of the starting head;
-- no path the fixes changed matches `SHEPHERD_PUSH_DENY` or contains a control character. A path counts only when it differs from both the starting head and the base, so a base merge's own changes pass.
+## What it reads
 
-A refusal sets `failure` with `fixes not pushed, a person should look:` and the reason. If the iteration handed off `findings.md` but no swarm summary for this head reached the PR, `publish` posts it with `github.token`, which is why the job has `pull-requests: write`. It edits the swarm summary `github-actions[bot]` posted on the PR in place, keeping its round history, or posts a new comment when there is none. The file is model output: it is capped at 60,000 bytes, its HTML comments are escaped so it cannot pass for a gate or shepherd marker, and mentions, images and control characters are neutralized. Otherwise it sets the status from `status.json`, keeping only a known state and one line of text; after any push the status is `pending`, because the new commits have not been reviewed. It reruns a job ci-repair asked for only when that job ran on this PR's head from a `pull_request` event. Then it runs `shepherd notify`.
+The review reads the PR's diff and the checkout, and your house rules: `AGENTS.md`, `CLAUDE.md`, `REVIEW.md` and `CONTRIBUTING.md` at the repository root, from the default branch. A PR that edits them is reviewed against the old version, and a file that only points at another (`CLAUDE.md` as a symlink to `AGENTS.md`) is read once. A change that breaks a house rule gets a note in the review, and the verdict stays the review's own: a missing doc comment never blocks a merge. A rule you want enforced belongs in a lens under `.shepherd/`, where its `gate` decides whether a breach refuses or escalates.
 
-`SHEPHERD_PUSH_DENY` is an extended regex matched case-insensitively. The default refuses `.github/`, `.gitmodules`, `.gitattributes`, the `.husky`, `.githooks`, `.devcontainer` and `.vscode` directories, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `package.json`, `bunfig.toml`, other manifests (`go.mod`, `Cargo.toml`, `build.rs`, `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements*.txt`, `Gemfile`, `composer.json`, `pom.xml`, Gradle build and settings files), lockfiles by name and extension (`*.lock`, `*.lockb`, `*-lock.json`/`.yaml`/`.yml`/`.hcl`/`.toml`, `*.lock.json` and the like, `*.lockfile`, `npm-shrinkwrap.json`, `go.sum`, `Package.resolved`; source files such as `clock.ts` or `file-lock.ts` pass), makefiles, justfiles, Taskfiles, `.pre-commit-config.yaml`, `.cargo/`, `pnpm-workspace.yaml`, `Pipfile` and `deno.json(c)`. Read the exact regex in the generated template before you change this boundary.
+Merge risk says what merging the head as it stands could break: high for data loss, a security hole, a wrong charge or broken callers, medium for a contained bug or a risk the review could not verify. A refusal or an escalation reads at least medium.
 
-What remains is what `github.token` allows in `iterate`: a hijacked model can comment, resolve threads, edit the PR description, and write a misleading `status.json`. It cannot push code, and it cannot set a `success` status on commits it handed off.
+## What it posts
 
-## Incident workflow
+One review per push, always as a COMMENT. A person approves the PR on GitHub.
 
-The `investigate` job runs the model with `contents: read` and `issues: write`, and no persisted checkout credential: it can read code and file an issue. It hands a fix branch as a Git bundle to the `open` job, which runs no model. `open` requires a branch named `incident/<number>` that shares history with the default branch, refuses an empty change, and requires every changed path to match `ci.incident_paths` before it pushes and opens the PR with `SHEPHERD_TOKEN`. `ci.incident_paths` is an extended regex; the default is `^src/`. A project with tests outside `src/` must review and configure a suitable pattern before it expects those fixes to publish.
+- The heading carries the verdict: `✅ shepherd: APPROVED`, `❌ shepherd: REFUSED` or `🙋 shepherd: ESCALATE`, then what changed.
+- Each finding is an inline comment that opens with `❌ **Blocks approval** · **<short title>**` or `🙋 **Needs a person**`. The comment sits on its line, so it does not repeat the file and line.
 
-`investigate` holds a job-level concurrency group, so incidents run one at a time and a repeat signal dedupes against the first. An `incident/*` PR waits for a person's `/shepherd` comment or the handoff label before the PR workflow starts. You can submit an incident through a failed CI run from a push to the default branch, `repository_dispatch` with type `incident`, or the incident workflow's manual `error` input.
+Each run reviews the head from scratch, and keeps the threads steady across pushes:
 
-## Verify the first CI iteration
+- A shepherd thread resolves once the push changed the code under or near it. What the review raises there now posts fresh, on the new code.
+- On code nobody touched, a finding of the same grade near an open shepherd thread posts nothing new. The thread stays, with its history. A finding the model does not repeat there stays open for a person to resolve.
+- A thread anyone else wrote in stays open. Open shepherd threads hold an approval back.
 
-Match each template's `workflows:` names to the names of your CI and the gate workflows. Add the project dependency installation steps where the template marks them. Set the required secrets, merge the workflows, then start a test PR with the configured label or comment.
+## The `shepherd` status
 
-Inspect the gate step first. It prints `skip:` with the reason: draft, fork, missing label, author permission, finished head, incident branch or commit cap. Then inspect the model step and the `publish` job. Confirm the pushed head and commit status refer to the same commit. A stopped model or a refused bundle needs inspection; it is not a completed review.
+A branch rule can require it.
+
+| State | Description |
+| --- | --- |
+| `pending` | The review is running, or `not reviewed: …` for a draft or a PR without the trigger label |
+| `success` | `approved; no open thread`, or `approved by <person>` after an escalation |
+| `failure` | `changes needed: …`, `a person decides: …`, or `approved; N open thread(s) to resolve` |
+| `error` | The review did not finish; comment `/review` to run it again |
+
+The job fails only when the review did not finish. A refusal or escalation is a `failure` status on a green job.
+
+An escalation (`a person decides: …`) is settled by a person: once someone who can push has approved the head the review read, the `settle` job sets the status to `success`, `approved by <person>`. It runs after every review and on every person's review, and reads the PR as it is: an approval given while the review was still running counts, the latest decision of each person counts (a dismissal takes the approval back), and a thread of shepherd's or a person's still open keeps it `failure` until it is resolved and someone approves again. A refusal is not settled this way: the author changes the code. On a PR from a fork, GitHub gives the review event a read-only token, so an approval cannot set the status: an escalated fork PR stays `failure`, and someone allowed to bypass the branch rule merges it.
+
+## Who owns shepherd's setup
+
+An edit to `.shepherd/config.yml` always escalates under `gate_policy`, so a person decides it. Workflows are yours to guard: `shepherd init` suggests CODEOWNERS entries for `/.shepherd/` and `/.github/`, and `shepherd doctor` says when one is missing or "Require review from Code Owners" is off.
+
+## Move from the older workflows
+
+Run `shepherd workflows --upgrade` (or `shepherd gate init --upgrade`). It rewrites `shepherd.yml`, moves `.shepherd/gate.yml` under `review:` in `.shepherd/config.yml` and deletes it once the new file reads back, and prints which older workflow files to delete: `shepherd-gate.yml`, `shepherd-gate-edited.yml`, `shepherd-gate-actions.yml`, `shepherd-incident.yml` and `shepherd-audit.yml`. Delete them, and the `SHEPHERD_TOKEN` secret if you set one.
+
+## Verify the first review
+
+Merge the workflow and policy, then open a test PR or comment `/review` on one. Confirm the run posts one review and sets the `shepherd` status on the PR's head. The run's `gate-evidence-<pr>` artifact holds the review's evidence as JSON.

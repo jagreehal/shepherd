@@ -15,7 +15,7 @@ models:
   fixers: smart         # triage, simplify, ci-repair, incident
   validators: smart     # the verifier and the validator
   security: smart       # one runner or lens beats its group
-  loop: smart           # the session model in CI
+  loop: smart           # the review model in CI
 ```
 
 Or from the command line:
@@ -67,42 +67,35 @@ Pick a ladder from eval scores. [`shepherd eval`](/shepherd/contributing/evaluat
 
 ## Model ids
 
-Write ids the way your harness takes them (`haiku` on Claude Code, `provider/model` on OpenCode), or the gate's `provider:model`, so one set of tiers serves the loop and the gate. Shepherd writes the gate's spelling the OpenCode way (`bedrock:` becomes `amazon-bedrock/`, `vertex:` becomes `google-vertex/`), and `shepherd models` shows both.
-
-The gate reads the same tiers from the default branch: `SHEPHERD_MODEL=smart` reviews on your `smart` model, so one list of named models drives the loop and the gate.
-
-Shepherd runs models through its harness. In CI that harness is OpenCode, which reaches Bedrock (`amazon-bedrock/`), OpenAI (`openai/`), Anthropic, OpenRouter, Groq, DeepSeek, Mistral, Google, xAI and OpenCode Zen and Go by the model id alone. The gate's `compatible:` provider (any OpenAI-compatible endpoint) is the gate's own: for shepherd, declare that endpoint as a custom provider in OpenCode's config.
-
-## Prices and the gate's budget
-
-The gate stops a review that passes its dollar budget (`guard.budget_usd`, $2 by default). It prices each model call from `pricing:` in `.shepherd/gate.yml`, and from nothing else:
-
-```yaml
-pricing:
-  openai.gpt-oss-120b-1:0: { inputPer1M: 0.18, outputPer1M: 0.70, as_of: 2026-11-14, source: aws bedrock eu-west-1 }
-```
-
-`shepherd init` and `shepherd workflows` write this entry for the model you choose when they create `gate.yml`, from the list price on [models.dev](https://models.dev), with today's date. Change it to your region's or contract's rate. Bedrock prices differ by region: models.dev lists the us-east-1 rate.
-
-A model without a price runs with only the token ceiling, and the review log says `budget guard inactive`. A key matches the model id exactly, by prefix, or after a vendor or region prefix: `openai.gpt-oss-120b` prices `eu.openai.gpt-oss-120b-1:0`, and `kimi-k3` prices `openrouter:moonshotai/kimi-k3`.
+Write ids the way your harness takes them (`haiku` on Claude Code, `provider/model` on OpenCode), or the reviewer's `provider:model`. Shepherd writes the reviewer's spelling the OpenCode way (`bedrock:` becomes `amazon-bedrock/`, `vertex:` becomes `google-vertex/`), and `shepherd models` shows both.
 
 ## In GitHub Actions
 
-Name the session model in `.shepherd/config.yml`, where a change to it is reviewed like any other policy change:
+The review in CI runs one model. It takes the first of:
+
+1. `SHEPHERD_MODEL`, when the repository variable is set: an override for trying a model without a PR. A tier name works.
+2. `model:` under `review:` in `.shepherd/config.yml`.
+3. `models.loop` in `.shepherd/config.yml`.
+4. The built-in default.
+
+Name it in `.shepherd/config.yml`, where a change to it is reviewed like any other policy change:
 
 ```bash
 shepherd models pin loop bedrock:minimax.minimax-m2.5   # or: shepherd workflows --model ..., shepherd init --model ...
 ```
 
-The workflows run `shepherd ci-models`, which reads the tiers, ladder and pins from the default branch, gives OpenCode one agent per rung and per pin, and picks the session model:
+Add the provider's key as a secret under its usual name. [Environment and credentials](/shepherd/reference/environment/) lists them. Bedrock can use OIDC instead of a key: `shepherd gate init --aws-oidc` and the `AWS_ROLE_ARN` variable.
 
-1. `SHEPHERD_MODEL`, a model id or a tier name, when the variable is set: an override for trying a model without a PR.
-2. `models.loop`.
-3. The top of the ladder.
-4. `opencode-go/kimi-k3`, and the log says so.
+## Prices and the review's budget
 
-OpenCode's own agents (`build`, `plan`, `general`, `explore`, `title`, `summary`, `compaction`) and its small model run on the session model unless you pin them, and only the providers your session model, ladder and pins name are enabled. Without that, OpenCode picks for itself: a free Zen model for a subagent, or on Bedrock a `global.` profile that can route outside your region.
+The review stops when it passes its dollar budget (`guard.budget_usd` under `review:`, $2 by default). It prices each model call from `pricing:` under `review:`, and from nothing else:
 
-Add each provider's key as a secret under its usual name: `OPENCODE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK` (with `AWS_REGION`). A ladder that mixes providers needs each one it names.
+```yaml
+review:
+  pricing:
+    openai.gpt-oss-120b-1:0: { inputPer1M: 0.18, outputPer1M: 0.70, as_of: 2026-11-14, source: aws bedrock eu-west-1 }
+```
 
-Shepherd's workflows take Bedrock through an API key, never OIDC: the model runs a shell, and a job that can mint an OIDC token can assume any AWS role that trusts the repository.
+`shepherd init` and `shepherd workflows` write this entry for the model you choose when they first add `review:`, from the list price on [models.dev](https://models.dev), with today's date. Change it to your region's or contract's rate. Bedrock prices differ by region: models.dev lists the us-east-1 rate.
+
+A model without a price runs with only the token ceiling, and the review log says `budget guard inactive`. A key matches the model id exactly, by prefix, or after a vendor or region prefix: `openai.gpt-oss-120b` prices `eu.openai.gpt-oss-120b-1:0`, and `kimi-k3` prices `openrouter:moonshotai/kimi-k3`.

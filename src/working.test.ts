@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { isWorkingNote, WORKING_MARKER, workingNote } from "./working.ts";
 
 describe("the reviewing note", () => {
@@ -24,11 +22,4 @@ describe("the reviewing note", () => {
     expect(note.startsWith(WORKING_MARKER)).toBe(true);
   });
 
-  test("the loop posts the note before the model runs and deletes it whatever the outcome", () => {
-    const wf = readFileSync(path.join(import.meta.dir, "../templates/shepherd.yml"), "utf8");
-
-    expect(wf.indexOf("shepherd working --pr")).toBeLessThan(wf.indexOf("- name: One shepherd iteration"));
-    expect(wf).toMatch(/- name: Remove the reviewing note\n {8}if: always\(\)/);
-    expect(wf).toContain(`startswith("${WORKING_MARKER}")`);
-  });
 });

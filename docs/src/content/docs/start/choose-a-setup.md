@@ -7,17 +7,16 @@ Choose the task you want to complete before you configure models or shared polic
 | Your task | Start with | Result |
 | --- | --- | --- |
 | Check a change before you open a PR | [Shepherd local review](/shepherd/guides/local-review/) | Findings or fixes in your working tree |
-| Review an existing PR and work through findings | [Shepherd first run](/shepherd/start/quickstart/) | Findings, local fixes, or pushed fixes under your team policy |
-| Give eligible PRs a GitHub approval | [Gate first run](/shepherd/integrations/gate/) | Approval, refusal, escalation, or an error |
-| Keep review and repair running in CI | [Shepherd GitHub Actions](/shepherd/integrations/github-actions/) | One iteration per trigger, with a scheduled recovery sweep |
+| Work through an existing PR's findings from your agent | [Shepherd first run](/shepherd/start/quickstart/) | Findings, local fixes, or pushed fixes under your team policy |
+| Review every PR in CI | [Shepherd GitHub Actions](/shepherd/integrations/github-actions/) | One review per push and the `shepherd` status: approved, refused, escalated, or an error |
 
-`shepherd init` sets up both the loop and the gate. Without the gate, shepherd still reviews and fixes, but it cannot report a PR ready to merge.
+`shepherd init` writes the policy and the CI workflow. The skills in your coding agent work without the workflow.
 
 ## Commands and where to enter them
 
 A **terminal** command starts with `bunx`, `shepherd`, `gh`, or `git`. Run it from a clone of the repository you want to review unless a guide says otherwise.
 
-An **agent** command starts with `/`, such as `/shepherd 42`. Enter it in your coding agent after you install the skills. Your harness must support loading skills and the subagents those skills use. Agent scheduling commands such as `/loop` depend on the harness; the GitHub Actions path provides a separate way to schedule work.
+An **agent** command starts with `/`, such as `/shepherd 42`. Enter it in your coding agent after you install the skills. Your harness must support loading skills and the subagents those skills use. Agent scheduling commands such as `/loop` depend on the harness.
 
 ## Start with one repository
 

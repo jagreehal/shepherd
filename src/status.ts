@@ -21,8 +21,6 @@ export type PrFacts = {
   changesRequested: string[];
   /** Unresolved review threads, whoever opened them. */
   openThreads: number;
-  /** Of those, the bots' own threads the gate's approval of this head answers: publish resolves them. */
-  answeredThreads?: number;
   /** Checks on the head: Actions workflow runs, other apps' check runs and commit statuses (CI outside Actions). */
   runs: Run[];
 };
@@ -34,8 +32,8 @@ const short = (sha: string) => sha.slice(0, 7);
 /** A finished check that is not green. Listed by what passes, so action_required, stale or a new conclusion blocks. */
 export const isRed = (r: Run) => r.status === "completed" && !/^(success|neutral|skipped)$/.test(r.conclusion);
 
-/** The gate's own workflows, by the names its templates give them: a repo's `api-gateway` CI is not the gate. */
-export const isGateRun = (name: string) => /^shepherd-gate(-edited|-actions)?$/.test(name);
+/** Shepherd's own review workflow, by the name its template gives it (and the older gate names): `api-gateway` is CI. */
+export const isGateRun = (name: string) => /^shepherd(-gate(-edited|-actions)?)?$/.test(name);
 
 /** The gate's verdict when it covers the current head: reviewed there, or an approval kept over an identical diff. */
 export const gateOnHead = (f: PrFacts) => (f.gate && (f.gate.kept || f.head.startsWith(f.gate.head)) ? f.gate : undefined);
@@ -62,12 +60,12 @@ export function prStatus(f: PrFacts): PrStatus {
   if (f.state === "CLOSED") return at("closed", "nothing: it is closed");
 
   // What is running now comes first: a pending status only says shepherd is not done, not what it waits on.
-  if (running.some((r) => isGateRun(r.name))) return at("reviewing", "wait: the gate is reviewing");
+  if (running.some((r) => isGateRun(r.name))) return at("reviewing", "wait: shepherd is reviewing");
 
   if (running.length) return at("waiting for CI", `wait: ${running.map((r) => r.name).join(", ")} running`);
 
   // Then every current blocker, so an older success never reads as ready over a newer failure.
-  if (failed.length) return at("needs you", `fix ${failed.map((r) => r.name).join(", ")}, or comment /shepherd to have shepherd try`);
+  if (failed.length) return at("needs you", `fix ${failed.map((r) => r.name).join(", ")}, then push`);
 
   if (f.changesRequested.length) return at("needs you", `answer the review from ${f.changesRequested.join(", ")}`);
 
@@ -75,17 +73,17 @@ export function prStatus(f: PrFacts): PrStatus {
 
   if (onHead?.verdict === "DISMISSED") return at("needs you", "the gate's approval was dismissed: comment /gate to review again");
 
-  if (onHead && onHead.verdict !== "APPROVED") return at("needs you", "read the gate's review, then push a fix or comment /shepherd");
+  if (onHead && onHead.verdict !== "APPROVED") return at("needs you", "read the review, then push a fix or comment /review");
 
   if (f.shepherd?.state === "pending") return at("fixing", `wait: shepherd is working (${f.shepherd.description})`);
 
-  if (f.shepherd?.state === "failure") return at("needs you", `${f.shepherd.description}; then comment /shepherd`);
+  if (f.shepherd?.state === "failure") return at("needs you", `${f.shepherd.description}`);
 
-  if (f.shepherd?.state === "error") return at("needs you", "shepherd stopped on an error: open its run in Actions, then comment /shepherd");
+  if (f.shepherd?.state === "error") return at("needs you", "the review did not finish: open its run in Actions, then comment /review");
 
-  if (f.openThreads) return at("needs you", `resolve the ${f.openThreads} open review thread${f.openThreads === 1 ? "" : "s"}, or comment /shepherd to have shepherd work through them`);
+  if (f.openThreads) return at("needs you", `resolve the ${f.openThreads} open review thread${f.openThreads === 1 ? "" : "s"}`);
 
-  if (!onHead) return at("reviewing", f.gate ? "wait for the gate to review the new head, or comment /gate" : "comment /shepherd to start, or /gate for a review only");
+  if (!onHead) return at("reviewing", f.gate ? "wait for shepherd to review the new head, or comment /review" : "comment /review to start a review");
 
   return at("ready", "merge it");
 }

@@ -2,7 +2,7 @@
 title: "Use Shepherd with pstack"
 ---
 
-[pstack](https://github.com/cursor/plugins/tree/main/pstack) shapes how an agent writes a change: its `poteto-mode` skill routes a task to a playbook and holds the agent to a set of engineering principles. Shepherd starts once the change exists: it reviews it, fixes the findings, repairs CI and hands the result to the gate for the approval verdict. Install both to cover the change from first edit to approval.
+[pstack](https://github.com/cursor/plugins/tree/main/pstack) shapes how an agent writes a change: its `poteto-mode` skill routes a task to a playbook and holds the agent to a set of engineering principles. Shepherd starts once the change exists: it reviews it, fixes the findings, repairs CI, and its review in GitHub Actions gives the verdict. Install both to cover the change from first edit to approval.
 
 ## Install side by side
 
@@ -19,7 +19,7 @@ Both packs ship a skill named `swarm`. pstack's runs parallel workers over slice
 
 ## Review against pstack's principles
 
-The `pstack` lens turns the principles that pstack's agents follow into review rules: fix the root cause, keep checks at the boundary, let types and data structures carry the domain, collapse one-caller layers, delete the old API with its last caller, make steps idempotent, write tests that can fail, and prove what the PR claims. Swarm reviews against them, and the gate reads them as a rule pack through `rules_from: { shepherd: {} }`.
+The `pstack` lens turns the principles that pstack's agents follow into review rules: fix the root cause, keep checks at the boundary, let types and data structures carry the domain, collapse one-caller layers, delete the old API with its last caller, make steps idempotent, write tests that can fail, and prove what the PR claims. Swarm reviews against them, and the review in CI reads them as a rule pack through `rules_from: { shepherd: {} }` under `review:`.
 
 ```bash
 bunx @jagreehal/shepherd lens new pstack --from pstack   # a copy your team owns and trims
@@ -33,7 +33,7 @@ extends:
   - github:jagreehal/shepherd/packs/pstack.yml@<sha>
 ```
 
-Its gate is `note`: the rules are judgement calls, so the gate records a broken one without refusing the PR. Raise it to `escalate` once the team agrees.
+Its gate is `note`: the rules are judgement calls, so the review records a broken one without refusing the PR. Raise it to `escalate` once the team agrees.
 
 `shepherd init` tells you when pstack is installed and the lens is not yet in your policy.
 
@@ -49,13 +49,13 @@ A pstack skill written for an agent doing the work, not reviewing it, has no `##
 
 ## Where the two meet
 
-| Step | pstack | Shepherd and the gate |
+| Step | pstack | Shepherd |
 | --- | --- | --- |
 | Write the change | `poteto-mode` playbooks, principles | |
 | Review it | `interrogate` on demand | `swarm` on every round, lenses including `pstack` |
 | Work the review threads | `babysit` playbook | `triage`, which never touches a thread a person is in |
 | Repair CI | `babysit` playbook | `ci-repair` |
-| Approve | | The gate's verdict, with the fact it rests on |
+| Approve | | The CI review's verdict, with the fact it rests on; a person approves |
 | Land | `shipping` playbook | you merge |
 
 Pick one owner for a PR's review threads and CI. When `/shepherd` runs on a PR, leave pstack's `babysit` off it, so two loops do not push to the same branch.

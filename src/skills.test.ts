@@ -137,7 +137,6 @@ describe("skill pack", () => {
     expect(stop).toBeGreaterThan(-1);
     expect(stop).toBeLessThan(incident.indexOf("## Step 2:"));
     expect(incident.slice(stop)).toContain("open no issue, branch or PR and write no test");
-    expect(readFileSync(path.join(ROOT, "templates", "shepherd-incident.yml"), "utf8")).toContain("::error::a possible security failure needs private handling");
   });
 
   test("garden turns an escape review let through into a held-out eval case", () => {
@@ -667,11 +666,6 @@ describe("a person's verdict holds up the green status", () => {
   const filter = (file: string) => /jq -s '(add \/\/ \[\][^']*)'/.exec(readFileSync(path.join(ROOT, file), "utf8"))?.[1] ?? "";
   const review = (login: string, state: string, type = "User", body = "") => ({ user: { login, type }, state, body });
   const blocking = (reviews: object[][]) => JSON.parse(execFileSync("jq", ["-s", filter("skills/shepherd/SKILL.md")], { input: reviews.map((r) => JSON.stringify(r)).join("\n"), encoding: "utf8" }));
-
-  test("the skill and the publish job read reviews with one filter", () => {
-    expect(filter("skills/shepherd/SKILL.md")).not.toBe("");
-    expect(filter("templates/shepherd.yml")).toBe(filter("skills/shepherd/SKILL.md"));
-  });
 
   test("the latest binding verdict stands, across pages", () => {
     expect(blocking([[review("ann", "CHANGES_REQUESTED")], [review("ann", "COMMENTED")]])).toEqual(["ann"]);

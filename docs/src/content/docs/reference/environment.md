@@ -2,13 +2,11 @@
 title: "Environment and credentials"
 ---
 
-Your local coding agent uses its own provider authentication. The supplied CI workflows run OpenCode and pass the secrets below to the steps that need them. For another provider, edit the workflow environment and model together.
+Your local coding agent uses its own provider authentication. The review in GitHub Actions reads the secrets and variables below.
 
 ## Model
 
-One model drives the loop and the gate, written `provider/model`: `anthropic/claude-opus-5`, `openai/gpt-5.5`, `opencode-go/deepseek-v4.1-flash`, `openrouter/moonshotai/kimi-k3`, `amazon-bedrock/eu.amazon.nova-pro-v1:0` (`bedrock/` works too). `shepherd workflows --model <id>` pins it as `models.loop` in `.shepherd/config.yml`, and the gate reads it from there. The `SHEPHERD_MODEL` variable overrides it for both; `model:` in `.shepherd/gate.yml` gives the gate its own.
-
-`google/` and `xai/` run only in the loop, and `openai-compatible/` (with `OPENAI_COMPATIBLE_BASE_URL`) only in the gate, so `shepherd workflows --model` refuses them; pin each side separately to use one.
+The review runs one model, written `provider/model`: `anthropic/claude-opus-5`, `openai/gpt-5.5`, `opencode-go/deepseek-v4.1-flash`, `openrouter/moonshotai/kimi-k3`, `amazon-bedrock/eu.amazon.nova-pro-v1:0` (`bedrock/` works too). `shepherd workflows --model <id>` pins it as `models.loop` in `.shepherd/config.yml`. `model:` under `review:` takes precedence over `models.loop`, and the `SHEPHERD_MODEL` variable over both.
 
 Each provider reads its key from its usual variable. Set the one your model needs as a secret.
 
@@ -19,45 +17,35 @@ Each provider reads its key from its usual variable. Set the one your model need
 | `opencode/`, `opencode-go/` | `OPENCODE_API_KEY` |
 | `openrouter/` | `OPENROUTER_API_KEY` |
 | `deepseek/`, `groq/`, `mistral/` | `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` |
-| `amazon-bedrock/` (or `bedrock/`) | `AWS_BEARER_TOKEN_BEDROCK`, plus `AWS_REGION`; the gate can use OIDC instead |
-| `openai-compatible/` (gate only) | `OPENAI_COMPATIBLE_API_KEY`, plus `OPENAI_COMPATIBLE_BASE_URL` |
-| `google/`, `xai/` (loop only) | `GOOGLE_GENERATIVE_AI_API_KEY`, `XAI_API_KEY` |
+| `amazon-bedrock/` (or `bedrock/`) | `AWS_BEARER_TOKEN_BEDROCK`, plus `AWS_REGION`; or OIDC with `AWS_ROLE_ARN` |
+| `openai-compatible/` | `OPENAI_COMPATIBLE_API_KEY`, plus `OPENAI_COMPATIBLE_BASE_URL` |
+| `gateway/` | `AI_GATEWAY_API_KEY` |
 
 ## Settings
 
-Every other setting lives in a reviewed file on the default branch, never in a variable: the loop's in `.shepherd/config.yml` (`ci.label`, `ci.notify_on`, `ci.max_commits`, `ci.push_deny`, `ci.incident_paths`, `ci.audit.plays`, `ci.audit.public`), the gate's in `.shepherd/gate.yml`. `shepherd config explain` and `shepherd gate config` print each with its source.
+Every other setting lives in `.shepherd/config.yml` on the default branch, never in a variable: the review's under `review:`, the local skills' at the top level. `shepherd gate config` prints each review setting with its source, and `shepherd config explain` the rest.
 
-`ci.push_deny` is a security control, so config can only widen it. Only the `SHEPHERD_PUSH_DENY` variable, which needs repository admin, replaces the built-in list; config patterns are still added to it.
+## Secrets and variables
 
-## Secrets and workflow environment
+The workflow passes these to the review step. The job's own `github.token` is the only GitHub credential.
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
-| `SHEPHERD_TOKEN` | Secret | Fine-grained GitHub PAT with contents, pull requests and commit statuses read/write. Only jobs that run no model see it. Without it, pushes start no workflows and the loop stalls |
-| Provider key | Secret | See the table above. Store it in the environment `shepherd workflows --environment <name>` names, so only the model job reads it |
-| `SHEPHERD_MODEL` | Variable | Optional `provider/model`, over the config files |
+| Provider key | Secret | See the table above. Store it in the environment `shepherd workflows --environment <name>` names, so only the review job reads it |
+| `SHEPHERD_MODEL` | Variable | Optional `provider/model` or tier name, over the config file |
+| `SHEPHERD_VERSION` | Variable | Optional CLI version, over the pin in the workflow |
 | `AWS_REGION` | Variable | The Bedrock region |
-| `SHEPHERD_PUSH_DENY` | Variable | Replaces the built-in deny list for pushed fixes |
-| `SHEPHERD_NOTIFY_WEBHOOK` | Secret | Slack Incoming Webhook or any JSON endpoint, for the loop and the gate |
-| `SHEPHERD_HANDOFF`, `SHEPHERD_DEFAULT_BRANCH` | Set by the workflow | Internal |
-| `GH_TOKEN` | Step environment | GitHub identity used by `gh` |
-
-### Gate-only, all optional
-
-| Name | Kind | Purpose |
-| --- | --- | --- |
-| `AI_GATEWAY_API_KEY` | Secret | Key for `gateway/` model ids |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Runs the gate's review through the Claude Code CLI on a Claude plan (`backends: [claude]` in `.shepherd/gate.yml`) |
-| `CODEX_API_KEY` | Secret | Runs the gate's review through the Codex CLI (`backends: [codex]`) |
-| `TYPESAFE_API_KEY` | Secret | Adds advisory risk probabilities to the gate's evidence; never changes a verdict |
-| `ANTHROPIC_BASE_URL` | Variable | Sends Anthropic calls through a proxy |
 | `AWS_ROLE_ARN` | Variable | Bedrock through OIDC instead of a key (`shepherd gate init --aws-oidc`) |
+| `SHEPHERD_NOTIFY_WEBHOOK` | Secret | Slack Incoming Webhook or any JSON endpoint for review verdicts |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | Runs the review through the Claude Code CLI on a Claude plan (`backends: [claude]` under `review:`) |
+| `CODEX_API_KEY` | Secret | Runs the review through the Codex CLI (`backends: [codex]`) |
+| `TYPESAFE_API_KEY` | Secret | Adds advisory risk probabilities to the review's evidence; never changes a verdict |
+| `ANTHROPIC_BASE_URL` | Variable | Sends Anthropic calls through a proxy |
+| `GH_TOKEN` | Step environment | The job's `github.token`, used by `gh` |
 
-A push made with the repository `GITHUB_TOKEN` does not trigger the next workflow. Configure `SHEPHERD_TOKEN` for a CI loop that pushes fixes. Private organisation packs need a read identity with access to the policy repository. The supplied model job uses a repository-scoped token, so multi-repository pack access requires a separately reviewed read-only credential setup; do not pass the publishing token to the model.
+`shepherd workflows` pins `SHEPHERD_VERSION` in the workflow to the version that wrote it, as `${{ vars.SHEPHERD_VERSION || '<version>' }}`: a `SHEPHERD_VERSION` repository variable overrides the pin, so a bump needs no workflow edit. Only people who can change repository settings can set it.
 
-The PR model job sets `SHEPHERD_HANDOFF` to a temporary directory for commit/status handoff. You do not need to set it for local use.
-
-`shepherd workflows` pins `SHEPHERD_VERSION` in each job that installs the CLI to the version that wrote the file, as `${{ vars.SHEPHERD_VERSION || '<version>' }}`: a `SHEPHERD_VERSION` repository variable overrides the pin, so a bump needs no workflow edit. Only people who can change repository settings can set it. They set `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_DISABLE_AUTOUPDATE` for the runner. Those are workflow controls rather than team policy fields. A different harness needs its own equivalent configuration and skill-loading setup.
+Private organisation packs need a read identity with access to the policy repository. The supplied job uses a repository-scoped token, so multi-repository pack access needs a separately reviewed read-only credential.
 
 ## Traces
 
@@ -68,7 +56,7 @@ The PR model job sets `SHEPHERD_HANDOFF` to a temporary directory for commit/sta
 | `OTEL_SERVICE_NAME` | Trace service name; default `shepherd` |
 | `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SERVER_URL` | Runner-supplied run context and PR URLs |
 
-See [iteration traces](/shepherd/operations/traces/). The CLI reports stage timings; the harness reports model usage.
+See [traces](/shepherd/operations/traces/). The CLI reports stage timings; the harness reports model usage.
 
 ## Garden inputs and credentials
 

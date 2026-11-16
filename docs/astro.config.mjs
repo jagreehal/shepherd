@@ -53,10 +53,6 @@ export default defineConfig({
       {
         "label": "Investigate an incident",
         "slug": "guides/incidents"
-      },
-      {
-        "label": "Run a scheduled security audit",
-        "slug": "guides/security-audit"
       }
     ]
   },
@@ -92,10 +88,6 @@ export default defineConfig({
   {
     "label": "Integrations",
     "items": [
-      {
-        "label": "Approve PRs with the gate",
-        "slug": "integrations/gate"
-      },
       {
         "label": "Use Shepherd with pstack",
         "slug": "integrations/pstack"

@@ -108,6 +108,7 @@ export const ConfigSchema = z
     branding: BrandingSchema.optional(), // how posted comments look; never what marks them as automated
     ci: CiSchema.optional(), // CI settings; a repository variable overrides each
     recipes: z.record(z.string().regex(NAME), z.object({ steps: z.array(z.enum(STEPS)).min(1) }).strict()).optional(),
+    review: z.record(z.string(), z.json()).optional(), // the reviewer's policy; the reviewer validates it (shepherd gate config)
   })
   .strict();
 
