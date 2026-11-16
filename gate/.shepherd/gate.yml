@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@0.20.0/gate/.shepherd/gate.schema.json
+# yaml-language-server: $schema=https://unpkg.com/@jagreehal/shepherd@0.21.0/gate/.shepherd/gate.schema.json
 # shepherd's review policy: review: in .shepherd/config.yml (or an older .shepherd/gate.yml).
 #
 # Read from the repository's DEFAULT BRANCH, never from the PR head, so a PR
