@@ -173,7 +173,7 @@ const OPENCODE = { opencode: "https://opencode.ai/zen/v1", "opencode-go": "https
 export function languageModel(id: string, session: string): LanguageModel {
   dropBlankProviderEnv(); // again here, for callers other than cli.ts (tests, smoke-live)
   const { provider, model } = parseModelId(id);
-  const headers = { "x-opencode-session": session, "User-Agent": "shepherd-gate (pr-review)" };
+  const headers = { "x-opencode-session": session, "User-Agent": "shepherd (pr-review)" };
   const apiKey = apiKeyFor(provider);
 
   switch (provider) {
@@ -608,7 +608,7 @@ export async function beginReviewSpan(started: string): Promise<void> {
   await startTelemetry();
   const { getTracer, runWithSpan, SpanStatusCode } = await import("autotel");
 
-  reviewSpan = { span: getTracer("shepherd-gate").startSpan("gate.review", { startTime: new Date(started) }), runWithSpan, error: SpanStatusCode.ERROR };
+  reviewSpan = { span: getTracer("shepherd").startSpan("gate.review", { startTime: new Date(started) }), runWithSpan, error: SpanStatusCode.ERROR };
 }
 
 /** Run `fn` with the review span active, so the spans it opens are its children. */

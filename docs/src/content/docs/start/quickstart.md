@@ -49,7 +49,7 @@ shepherd doctor
 shepherd config explain
 ```
 
-Fix lines marked `fail`. A missing gate workflow is a warning: you can review and fix without the gate, but the PR loop cannot obtain its approval verdict. Other warnings include a CLI not on `PATH` and model IDs the harness cannot verify. Read each suggested action.
+Fix lines marked `fail`. A missing `shepherd.yml` workflow is a warning: you can review and fix from your agent without it, but no PR gets a verdict in CI. Other warnings include a CLI not on `PATH` and model IDs the harness cannot verify. Read each suggested action.
 
 ## 4. Review a PR
 
@@ -63,11 +63,11 @@ Replace `42` with your test PR number. Under review-only policy, expect a comple
 
 If your harness uses skill names without slash commands, ask it to load the `shepherd` skill and review PR 42. The skill's instructions remain the same.
 
-Once the workflows are merged, you can run the same review in GitHub Actions from the terminal instead:
+Once `shepherd.yml` is merged, every PR gets a review in GitHub Actions. To review a head again from the terminal:
 
 ```bash
-shepherd review 42   # comments /shepherd on the PR and prints the run's URL
-shepherd status 42   # reviewing, fixing, waiting for CI, needs you or ready, and what to do next
+shepherd review 42   # comments /review on the PR
+shepherd status 42   # the review, the shepherd status, CI and open threads, and what to do next
 ```
 
 ## 5. Choose the next mode
@@ -82,4 +82,4 @@ Change `fixes.mode` in `.shepherd/config.yml`, validate and preview the change, 
 
 ## Next steps
 
-[Customize Shepherd for your team](/shepherd/start/customize/) with your own review rules, add [recipes](/shepherd/configuration/team-policy/), set up [the gate](/shepherd/integrations/gate/), or enable [GitHub Actions](/shepherd/integrations/github-actions/). Use [troubleshooting](/shepherd/operations/troubleshooting/) if an expected step does not run.
+[Customize Shepherd for your team](/shepherd/start/customize/) with your own review rules, add [recipes](/shepherd/configuration/team-policy/), or enable [GitHub Actions](/shepherd/integrations/github-actions/). Use [troubleshooting](/shepherd/operations/troubleshooting/) if an expected step does not run.

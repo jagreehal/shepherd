@@ -53,7 +53,7 @@ deny:
   migrations:
     description: Database and schema migrations.
     match:
-      paths: ['migrations/', 'schema_change', 'drizzle/', 'prisma/migrations']
+      paths: ['migrations/', 'schema_change', 'drizzle/', 'prisma/migrations', 'db/migration/', 'db/changelog', 'liquibase', 'flyway']
   infra_cicd:
     description: Infrastructure, CI, and deployment artifacts.
     match:
@@ -70,11 +70,11 @@ deny:
   deps_toolchain:
     description: Lockfiles and toolchain/build files. Manifests (package.json) without a lockfile change are flagged for the reviewer instead.
     match:
-      paths: ['pnpm-lock\.yaml', 'package-lock\.json', 'yarn\.lock', 'bun\.lock', 'uv\.lock', 'poetry\.lock', 'Cargo\.lock', 'Gemfile\.lock', 'go\.sum', 'requirements[-\w]*\.(txt|in)', 'Makefile', '\.tool-versions', '\.nvmrc']
+      paths: ['pnpm-lock\.yaml', 'package-lock\.json', 'yarn\.lock', 'bun\.lock', 'uv\.lock', 'poetry\.lock', 'Cargo\.lock', 'Gemfile\.lock', 'go\.sum', 'gradle\.lockfile', 'gradle/libs\.versions\.toml', 'gradle-wrapper\.properties', 'packages\.lock\.json', 'Directory\.Packages\.props', 'global\.json', 'composer\.lock', 'mix\.lock', 'Package\.resolved', 'rust-toolchain', 'requirements[-\w]*\.(txt|in)', 'Makefile', '\.tool-versions', '\.nvmrc']
   gate_policy:
     description: gate's own policy, engine, and gate inputs. The gate cannot approve edits to itself.
     match:
-      paths: ['\.shepherd/(gate\.yml|review-guidance\.md|steering\.md|rules/)', 'gate/src/', 'CODEOWNERS', 'AGENT_APPROVALS\.md', '\.github/workflows/shepherd-gate(-edited|-actions)?\.ya?ml']
+      paths: ['\.shepherd/(config\.yml|gate\.yml|review-guidance\.md|steering\.md|rules/)', 'gate/src/', 'CODEOWNERS', 'AGENT_APPROVALS\.md']
 
 # T0: docs/tests/config only. Still LLM-reviewed, lighter bar.
 allow:
@@ -114,7 +114,7 @@ tiers:
 scrutiny:
   quality_gates:
     description: Lint, type-check, test and coverage configuration.
-    paths: ['\.oxlintrc', 'oxlint\.config', 'eslint\.config', '\.eslintrc', 'biome\.json', 'vitest\.config', 'vitest\.workspace', 'vite\.config', 'jest\.config', 'playwright\.config', 'codecov', '\.nycrc', 'ruff\.toml', 'pytest\.ini', 'mypy\.ini', '\.pre-commit-config', 'lefthook', '\.husky/', 'tools/oxlint/', '\.semgrepignore', '\.gitleaks\.toml', '\.gitleaksignore', '\.bandit', '\.golangci', '\.hadolint\.ya?ml', '\.shellcheckrc', '\.rubocop', '\.trivyignore']
+    paths: ['\.oxlintrc', 'oxlint\.config', 'eslint\.config', '\.eslintrc', 'biome\.json', 'vitest\.config', 'vitest\.workspace', 'vite\.config', 'jest\.config', 'playwright\.config', 'codecov', '\.nycrc', 'ruff\.toml', 'pytest\.ini', 'mypy\.ini', '\.pre-commit-config', 'lefthook', '\.husky/', 'tools/oxlint/', '\.semgrepignore', '\.gitleaks\.toml', '\.gitleaksignore', '\.bandit', '\.golangci', 'clippy\.toml', 'rustfmt\.toml', 'deny\.toml', 'checkstyle', 'spotbugs', 'pmd', 'detekt', 'jacoco', 'Directory\.Build\.props', '\.globalconfig', '\.editorconfig', '\.hadolint\.ya?ml', '\.shellcheckrc', '\.rubocop', '\.trivyignore']
     instruction: REFUSE if a rule was disabled or downgraded, an ignore pattern widened, a coverage threshold lowered, a strict flag turned off, a test made skip/only, a hook removed, or a scanner rule or path excluded. Tightening is fine.
   review_agents:
     description: Configuration and house rules that review and fix agents follow on later PRs.

@@ -26,7 +26,7 @@ export const reviewers = (): Backend[] => z.array(Backend).min(1).parse(setting(
 export const VerdictSchema = z.object({
   verdict: z.enum(["APPROVE", "REFUSE", "ESCALATE"]),
   reasoning: z.string().describe("1-2 sentences: your judgment call, not a code review. Plain language, no tier codes."),
-  risk: z.enum(["low", "medium", "high"]),
+  risk: z.enum(["low", "medium", "high"]).describe("What merging this head as it stands could break, counting the issues you found. high: data loss, a security hole, a wrong charge, or callers broken. medium: a contained bug, or a risk you could not verify. low: contained, reversible, or style only."),
   issues: z.array(z.string()).describe("Blocking issues only: each one is a reason for this verdict that the author must fix. Start with file:line and a short title. For a bug, give the input, what the code does and what it should. End with the fix."),
   notes: z.array(z.string()).default([]).describe("Non-blocking observations: refuted concerns, follow-ups, things worth knowing. Never repeat an issue here."),
   next_steps: z.string().describe("Empty on APPROVE. Otherwise what the author does next: who to ask, which comment to address."),
@@ -61,7 +61,7 @@ When you REFUSE or ESCALATE, next_steps names a concrete route: a person or team
 Respond with the JSON verdict only, no prose around it, exactly these keys:
 {"verdict": "APPROVE" | "REFUSE" | "ESCALATE",
  "reasoning": "1-2 sentences, your judgment call, plain language, no tier codes",
- "risk": "low" | "medium" | "high",
+ "risk": "low" | "medium" | "high": what merging this head as it stands could break, counting your issues (high: data loss, security, a wrong charge, broken callers; medium: a contained bug or an unverified risk; low: contained, reversible, style),
  "issues": ["one blocking issue per string: file:line and a short title; for a bug, the input, what the code does and what it should; then the fix; empty array if none"],
  "notes": ["non-blocking observations: refuted concerns, follow-ups; empty array if none"],
  "next_steps": "empty string on APPROVE; otherwise what the author does next",
@@ -445,6 +445,12 @@ export type Reviewed = LLMVerdict & { run?: RunRecord; egress?: EgressDecisions;
 
 export type Opinion = Reviewed & { backend: Backend };
 
+/**
+ * The merge risk a review shows: the model rates what merging the head as it stands could break. A refusal or an
+ * escalation still reads at least medium, since merging it ships something unresolved; high is for what the code does.
+ */
+export const mergeRisk = (verdict: string, risk: LLMVerdict["risk"]): LLMVerdict["risk"] => ((verdict === "REFUSED" || verdict === "ESCALATE") && risk === "low" ? "medium" : risk);
+
 /** A second opinion is worth its cost only where it can change the outcome: an approval that isn't plainly low-risk. */
 export const secondOpinionNeeded = (llm: LLMVerdict, flagged: boolean): boolean => llm.verdict === "APPROVE" && (llm.risk !== "low" || flagged);
 
@@ -619,10 +625,10 @@ export const parseVerdict = (raw: string): LLMVerdict => {
  * the verdict is REFUSED whatever the model said, an approval included, and its words sit under a heading that says
  * they cannot approve.
  */
-export function withAdvice(denial: string, advice: LLMVerdict) {
+export function withAdvice(denial: string, advice: LLMVerdict): string {
   const findings = [...advice.issues.map((i) => `- ${i}`), ...advice.notes.map((n) => `- ${n} (not blocking)`)];
 
-  return { verdict: "REFUSED" as const, body: [denial, "", `**Advisory review (cannot approve)**: the model read the change anyway and said ${advice.verdict}.`, "", advice.reasoning, ...(findings.length ? ["", ...findings] : [])].join("\n") };
+  return [denial, "", `**Advisory review (cannot approve)**: the model read the change anyway and said ${advice.verdict}.`, "", advice.reasoning, ...(findings.length ? ["", ...findings] : [])].join("\n");
 }
 
 /**

@@ -170,7 +170,7 @@ For each failure:
 3. Find the real local command: the team policy's `checks` first (Step 2),
    then the repo's config.
 4. Set aside **gate checks** before classifying: the gate's check (the job from
-   `.github/workflows/shepherd-gate.yml`, usually named `review`) and any other
+   `.github/workflows/shepherd.yml`: its `review` and `settle` jobs) and any other
    approval or policy gate. A gate's failure is its verdict, not a CI failure.
    Record it as `gate` with the verdict's reason, and never change code to get
    past it: no placeholder for a flagged credential, no moved or split files, no

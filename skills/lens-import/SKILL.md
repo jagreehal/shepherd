@@ -182,6 +182,6 @@ paths and scopes; example checks and validation results. Link the full report
 instead of dumping a large inventory. Name unresolved sources.
 
 Explain that PR reviews use lenses after they merge onto the default branch.
-Suggest `/swarm --preview` before merging. The gate can inherit them with
-`rules_from: { shepherd: {} }` in `.shepherd/gate.yml`; explain that option
-without editing the gate's configuration unless requested.
+Suggest `/swarm --preview` before merging. The CI review reads every lens in
+`.shepherd/config.yml` too, with each lens's `gate` deciding whether a breach
+refuses or escalates.

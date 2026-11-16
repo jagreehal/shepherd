@@ -43,9 +43,8 @@ export type GithubSetup = { repo: string; secrets: Secret[] };
 export type SetupOutcome = { lines: string[]; todo: string[] };
 
 /**
- * The repository-side steps, each safe to repeat and none fatal: each secret set from the environment (sent on
- * stdin, never in arguments), and Actions allowed to approve PRs (the gate's approval counts only then). Committing
- * the setup files stays with the user, as any other change does.
+ * The repository-side step, safe to repeat and never fatal: each secret set from the environment, sent on stdin and
+ * never in arguments. Committing the setup files stays with the user, as any other change does.
  */
 export function githubSetup(gh: Gh, s: GithubSetup): SetupOutcome {
   const lines: string[] = [];
@@ -57,15 +56,6 @@ export function githubSetup(gh: Gh, s: GithubSetup): SetupOutcome {
       lines.push(`secret    ${name} ${value ? "could not be set" : "is not in your environment"}`);
       todo.push(`gh secret set ${name} --repo ${s.repo}`);
     }
-  }
-
-  const current = gh(["api", `repos/${s.repo}/actions/permissions/workflow`, "--jq", ".default_workflow_permissions"]);
-  const allow = current.ok ? gh(["api", "-X", "PUT", `repos/${s.repo}/actions/permissions/workflow`, "-f", `default_workflow_permissions=${current.out.trim() || "read"}`, "-F", "can_approve_pull_request_reviews=true"]) : current;
-
-  if (allow.ok) lines.push("setting   Actions may approve pull requests");
-  else {
-    lines.push("setting   needs a repository admin");
-    todo.push('a repository admin: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"');
   }
 
   return { lines, todo };

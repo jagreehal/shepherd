@@ -45,7 +45,7 @@ const SETTINGS = {
   label: { key: "label", env: [], from: (p: Settings) => p.label, fallback: "" },
   notify_on: { key: "notify.on", env: [], from: (p: Settings) => p.notify?.on?.join(","), fallback: "REFUSED,ESCALATE,ERROR" },
   telemetry_endpoint: { key: "telemetry.endpoint", env: ["OTEL_EXPORTER_OTLP_ENDPOINT"], from: (p: Settings) => p.telemetry?.endpoint, fallback: "" },
-  telemetry_service: { key: "telemetry.service", env: ["OTEL_SERVICE_NAME"], from: (p: Settings) => p.telemetry?.service, fallback: "shepherd-gate" },
+  telemetry_service: { key: "telemetry.service", env: ["OTEL_SERVICE_NAME"], from: (p: Settings) => p.telemetry?.service, fallback: "shepherd" },
   advise_on_deny: { key: "advise_on_deny", env: [], from: (p: Settings) => p.advise_on_deny?.toString(), fallback: "false" },
 };
 

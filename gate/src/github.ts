@@ -3,9 +3,11 @@
 // fails here with a message, not three functions later as an undefined property.
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
-import { AUTOMATED_HEADER, CARD_MARKER, renderCard } from "./actions.ts";
 import type { Anchored } from "./inline.ts";
 import type { PRFile } from "./policy.ts";
+
+/** Opens every comment shepherd posts, so triage and other reviewers read it as automated even when it posts through a person's account. */
+export const AUTOMATED_HEADER = "> 🤖 Automated comment by **shepherd**, not written by a human";
 
 // A hung call must fail rather than wait for the job to be killed: a killed run skips every catch,
 // including the one that falls through to dismissing a stale approval.
@@ -130,13 +132,15 @@ export const ThreadNode = z.object({
   isResolved: z.boolean(),
   isOutdated: z.boolean(),
   path: z.string(),
+  line: z.number().nullable().default(null), // where it sits on the head; null once the code under it changed
+  originalLine: z.number().nullable().default(null), // where it was posted
   comments: z.object({ totalCount: z.number(), nodes: z.array(z.object({ author: z.object({ login: z.string(), __typename: z.string() }).nullable(), body: z.string(), createdAt: z.string() })) }),
 });
 
 const ThreadPage = z.object({ data: z.object({ repository: z.object({ pullRequest: z.object({ reviewThreads: z.object({ nodes: z.array(ThreadNode) }) }) }) }) });
 
 // REST lists inline comments without their thread's resolution, so threads come from GraphQL.
-const THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path comments(first:50){totalCount nodes{author{login __typename} body createdAt}}}}}}}`;
+const THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line originalLine comments(first:50){totalCount nodes{author{login __typename} body createdAt}}}}}}}`;
 
 const IssueNode = z.object({
   number: z.number(),
@@ -302,7 +306,7 @@ export function fetchPR(number: number, cwd: string, exclude: string[] = []): PR
         // Our own findings, whatever login posted them, as for reviews below: an App token's login is not `exclude`.
         .filter((c) => !exclude.includes(c.user) && !isOwnBot(c.user, c.body)),
     ),
-    discussion: notOurs(paginated(CommentRow, `${base}/issues/${number}/comments`, cwd)).filter((c) => !c.body.includes(CARD_MARKER)).map((c) => ({
+    discussion: notOurs(paginated(CommentRow, `${base}/issues/${number}/comments`, cwd)).map((c) => ({
       user: c.user.login,
       body: c.body,
       created: c.created_at,
@@ -453,7 +457,8 @@ export function latestVerdict(reviews: ReviewRecord[]): { verdict: Verdict | "DI
 
   const shas = reviewedShas(r);
 
-  return { verdict: v === "APPROVED" && r.state !== "APPROVED" ? "DISMISSED" : v, head: shas?.head ?? r.commit_id, base: shas?.base ?? "", evidenceUnseen: evidenceUnseen(r) };
+  // An approval GitHub dismissed was a real APPROVE review: one posted as a comment cannot be dismissed.
+  return { verdict: v === "APPROVED" && r.state === "DISMISSED" ? "DISMISSED" : v, head: shas?.head ?? r.commit_id, base: shas?.base ?? "", evidenceUnseen: evidenceUnseen(r) };
 }
 
 /** Whether the run that posted `r` started after `iso`: the later-started run owns the newer verdict. */
@@ -525,7 +530,7 @@ export function supersededBody(r: ReviewRecord, latestId: number): string | null
 
 /**
  * The older reviews of ours to fold under `latestId`, by id; null when a run that started after `started` has posted,
- * since its verdict is the current one and this run must neither fold it nor rewrite the card over it.
+ * since its verdict is the current one and this run must not fold it.
  */
 export function foldTargets(reviews: ReviewRecord[], latestId: number, botLogin: string, started: string): number[] | null {
   const ours = reviews.filter((r) => r.id !== latestId && isOurs(r, botLogin));
@@ -548,56 +553,12 @@ export function foldSuperseded(pr: PR, latestId: number, botLogin: string, start
   }
 }
 
-const OwnComment = z.object({ id: z.number(), user: Login, body: z.string() });
-
-const VERDICT_HEADING = /^## (.*?: (APPROVED|REFUSED|ESCALATE|ERROR))\b/;
-
-/**
- * The card for the newest verdict of ours on the PR (by run start), or null when there is none. Derived from the
- * reviews alone, so every run computes the same card and whichever writes last leaves the newest verdict showing.
- */
-export function cardFor(reviews: ReviewRecord[], botLogin: string, shepherd: boolean): string | null {
-  const runStart = (r: ReviewRecord) => [...r.body.matchAll(new RegExp(RUN_MARKER, "g"))].at(-1)?.[1] ?? "";
-  const newest = reviews.filter((r) => isOurs(r, botLogin) && !r.body.startsWith(SUPERSEDED)).sort((a, b) => runStart(a).localeCompare(runStart(b))).at(-1);
-  const heading = newest ? VERDICT_HEADING.exec(newest.body.split("\n", 1)[0] ?? "") : null;
-
-  if (!newest || !heading) return null;
-
-  // SAFETY: VERDICT_HEADING's second group only matches one of the four verdicts.
-  const verdict = heading[2] as Verdict;
-
-  // A dismissed approval was withdrawn (a push, a draft, a lost label), and the card says so.
-  const title = newest.state === "DISMISSED" ? `${heading[1]!} (withdrawn)` : heading[1]!;
-
-  return `${renderCard({ heading: title, verdict, head: reviewedHead(newest), reviewId: newest.id, shepherd })}\n${runMarker(runStart(newest))}`;
-}
-
-/**
- * Bring the PR's gate card in line with the newest verdict. A run can write over a newer run's card in the gap
- * between reading it and writing, and two first runs can each post one, so every write is followed by a re-read:
- * the loop ends when exactly one card matches the newest verdict. Duplicates go, the oldest card stays.
- */
-export function publishCard(prNumber: number, botLogin: string, shepherd: boolean, cwd: string): void {
-  const pr = { repo: repoSlug(cwd), number: prNumber };
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const desired = cardFor(listReviews(pr.repo, pr.number, cwd), botLogin, shepherd);
-    const [card, ...extra] = paginated(OwnComment, `repos/${pr.repo}/issues/${pr.number}/comments`, cwd).filter((c) => c.user.login === botLogin && c.body.startsWith(CARD_MARKER));
-
-    for (const c of extra) gh(["api", "-X", "DELETE", `repos/${pr.repo}/issues/comments/${c.id}`], cwd);
-
-    if (!desired || (card?.body === desired && !extra.length)) return;
-
-    if (card) gh(["api", "-X", "PATCH", `repos/${pr.repo}/issues/comments/${card.id}`, "-f", `body=${desired}`], cwd);
-    else gh(["api", "-X", "POST", `repos/${pr.repo}/issues/${pr.number}/comments`, "-f", `body=${desired}`], cwd);
-  }
-}
-
 /** The JSON gate posts for a review: pinned to the reviewed commit, credentials redacted, each anchored finding carrying the run marker. */
 export function reviewPayload(headSha: string, verdict: Verdict, body: string, comments: Anchored[], started: string) {
   return {
     commit_id: headSha,
-    event: verdict === "APPROVED" ? "APPROVE" : "COMMENT",
+    // Never an APPROVE: the `shepherd` check carries the verdict, and a person approves the PR.
+    event: "COMMENT",
     body: scrub(body),
     comments: comments.map((c) => ({ path: c.path, line: c.line, side: "RIGHT", body: `${AUTOMATED_HEADER}\n\n${scrub(c.body)}\n\n${runMarker(started)}` })),
   };
@@ -638,31 +599,47 @@ export function postVerdict(pr: PR, verdict: Verdict, body: string, opts: PostOp
   return posted.id;
 }
 
-/** Open threads of our earlier findings nobody else has joined, by id: the verdict of the run that started at `started` replaces them. */
-export function retiredThreads(threads: Thread[], botLogin: string, started: string): string[] {
-  const ours = (c: Thread["comments"]["nodes"][number]) => threadLogin(c) === botLogin || isOwnBot(threadLogin(c), c.body);
+/** How far apart, in lines, a finding and a thread can sit and still be the same place. */
+const NEAR = 3;
 
-  const earlier = (body: string) => {
-    const at = [...body.matchAll(new RegExp(RUN_MARKER, "g"))].at(-1)?.[1];
-
-    return at !== undefined && at < started;
-  };
-
-  // The query fetches the first 50 comments, so a longer thread stays open: a later reply could be someone else's.
-  const whole = (t: Thread) => t.comments.totalCount === t.comments.nodes.length;
-
-  return threads.flatMap((t) => (!t.isResolved && whole(t) && t.comments.nodes.every(ours) && t.comments.nodes.some((c) => earlier(c.body)) ? [t.id] : []));
-}
+/** What a review does with the PR's threads: the findings it posts, our threads it resolves, and what stays open. */
+export type ThreadPlan = { post: Anchored[]; retire: string[]; open: number };
 
 /**
- * Resolves the threads a new verdict replaces. Each run reviews from scratch, so a finding that still holds comes back
- * in this run's review, and repositories that require resolved conversations can merge. A thread with anyone else's
- * reply stays open. Best effort, like folding.
+ * Settles shepherd's own threads against this review. A thread of ours resolves once the code under or near it changed
+ * since the last review (`changed`, the new-side lines that push touched): whatever the model raises there now posts
+ * fresh, on the new code. On untouched code, a finding near an open thread of ours is that thread again: it posts
+ * nothing new and the thread stays, so the model's rewording, or a change of verdict, never reposts it. `open` counts the threads left that are ours or that a person wrote in,
+ * plus the ones this review posts; other tools' threads are theirs.
  */
-export function retireOwnThreads(pr: PR, botLogin: string, started: string, cwd: string): void {
-  for (const id of retiredThreads(reviewThreads(pr.repo, pr.number, cwd), botLogin, started)) {
-    gh(["api", "graphql", "-f", "query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}", "-f", `id=${id}`], cwd);
-  }
+export function planThreads(threads: Thread[], anchors: Anchored[], changed: Map<string, Set<number>> | null, botLogin: string): ThreadPlan {
+  const ours = (t: Thread) => ownThread(t, botLogin);
+  const person = (t: Thread) => t.comments.nodes.some((c) => c.author === null || c.author.__typename !== "Bot") || t.comments.totalCount > t.comments.nodes.length;
+  const at = (t: Thread) => t.line ?? t.originalLine;
+  const near = (t: Thread, path: string, line: number) => t.path === path && at(t) !== null && Math.abs(at(t)! - line) <= NEAR; // SAFETY: at(t) is checked non-null first
+  const open = threads.filter((t) => !t.isResolved);
+  const touched = (t: Thread) => t.isOutdated || (t.line !== null && [...(changed?.get(t.path) ?? [])].some((n) => Math.abs(n - t.line!) <= NEAR)); // SAFETY: t.line is checked non-null first
+  const retire = open.flatMap((t) => (ours(t) && touched(t) ? [t.id] : []));
+  const same = (t: Thread, a: Anchored) => ours(t) && !touched(t) && near(t, a.path, a.line);
+  const post = anchors.filter((a) => !open.some((t) => same(t, a)));
+
+  return { post, retire, open: open.filter((t) => !retire.includes(t.id) && (ours(t) || person(t))).length + post.length };
+}
+
+/** A thread only shepherd wrote in, read whole: the query reads 50 comments, so a longer one may hold anyone's reply. */
+export const ownThread = (t: Thread, botLogin: string) =>
+  t.comments.totalCount === t.comments.nodes.length && t.comments.nodes.length > 0 && t.comments.nodes.every((c) => threadLogin(c) === botLogin || isOwnBot(threadLogin(c), c.body));
+
+/** Resolves a thread, after reading it again: anyone who replied since the plan was made keeps it open. */
+export function resolveIfOurs(id: string, botLogin: string, cwd: string): boolean {
+  const t = call(z.object({ data: z.object({ node: ThreadNode }) }), ["api", "graphql", "-f", "query=query($id:ID!){node(id:$id){... on PullRequestReviewThread{id isResolved isOutdated path line originalLine comments(first:50){totalCount nodes{author{login __typename} body createdAt}}}}}", "-f", `id=${id}`], cwd).data.node;
+
+  if (t.isResolved) return true;
+
+  if (!ownThread(t, botLogin)) return false;
+  gh(["api", "graphql", "-f", "query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}", "-f", `id=${id}`], cwd);
+
+  return true;
 }
 
 /** Deterministic redaction of anything that could be a credential before it reaches GitHub. */
@@ -733,17 +710,35 @@ export function sweepTargets(reviews: ReviewRecord[], botLogin: string, liveHead
  * nothing, so a stale one is logged and left.
  */
 /** Returns true when the verdict just posted is still current; false when it went stale (and an approval was dismissed). */
-export function reconcilePosted(pr: PR, reviewId: number, verdict: Verdict, opts: PostOptions): boolean {
+export function reconcilePosted(pr: PR, opts: PostOptions): boolean {
   if (unchanged(pr, opts.cwd) && !newerVerdictExists(pr, opts)) return true;
-
-  if (verdict !== "APPROVED") {
-    console.log("the comment just posted is stale; it grants nothing and stays");
-
-    return false;
-  }
-
-  console.log("dismissing the approval just posted");
-  gh(["api", "-X", "PUT", `repos/${pr.repo}/pulls/${pr.number}/reviews/${reviewId}/dismissals`, "-f", "message=Superseded while gate was posting"], opts.cwd);
+  console.log("the review just posted is stale; it is a comment, grants nothing, and stays");
 
   return false;
+}
+
+/** The `shepherd` commit status: the verdict on a head, which a branch rule can require. */
+export type Check = { state: "success" | "failure" | "pending" | "error"; description: string };
+
+export function setCheck(repo: string, sha: string, check: Check, cwd: string): void {
+  gh(["api", `repos/${repo}/statuses/${sha}`, "-f", "context=shepherd", "-f", `state=${check.state}`, "-f", `description=${check.description.split(/\s+/).join(" ").slice(0, 139)}`], cwd);
+}
+
+/**
+ * The check for a posted verdict. An approval is `success` only while no thread stays open that is shepherd's or that
+ * a person wrote in; every other verdict says what the author does next.
+ */
+/** How the check opens on an escalation. The workflow's decide job matches it, so it is a contract: a test pins both. */
+export const PERSON_DECIDES = "a person decides";
+
+export function checkFor(verdict: Verdict, reason: string, open: number): Check {
+  const why = reason.split("\n").find((l) => l.trim()) ?? "";
+
+  if (verdict === "APPROVED") return open ? { state: "failure", description: `approved; ${open} open thread(s) to resolve` } : { state: "success", description: "approved; no open thread" };
+
+  if (verdict === "REFUSED") return { state: "failure", description: `changes needed: ${why}` };
+
+  if (verdict === "ESCALATE") return { state: "failure", description: `${PERSON_DECIDES}: ${why}` };
+
+  return { state: "error", description: "the review did not finish; comment /review to run it again" };
 }

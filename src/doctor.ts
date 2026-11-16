@@ -24,8 +24,8 @@ const attempt = <T>(f: () => T): T | Error => {
 const SKILL_DIRS = (home: string, repo: string) => [...skillDirs(home, repo), path.join(home, ".config/opencode/skills")];
 
 /**
- * True when a workflow runs the gate on pull requests: a step that runs `shepherd gate` from the package, or from a
- * checkout of shepherd's repository. The word "gate" alone is not enough.
+ * True when a workflow runs shepherd's review on pull requests: a step that runs `shepherd gate` from the package, or
+ * from a checkout of shepherd's repository. The word "gate" alone is not enough.
  */
 export function runsGate(text: string): boolean {
   const parsed = Workflow.safeParse(attempt(() => parse(text)));
@@ -49,6 +49,30 @@ const Workflow = z.object({
 });
 
 const CLAUDE_MODELS = /^(haiku|sonnet|opus|fable)$|^claude-/;
+
+/**
+ * The directories among `/.shepherd/` and `/.github/` that CODEOWNERS leaves without an owner. GitHub applies the last
+ * line that matches, and a line with no owner removes ownership: `* @team` then an ownerless `/.github/workflows/`
+ * leaves the workflows unowned.
+ */
+export function uncoveredByOwners(codeowners: string): string[] {
+  const rules = codeowners.split("\n").flatMap((l) => {
+    const [pattern, ...owners] = l.trim().split(/\s+/);
+
+    return pattern && !pattern.startsWith("#") ? [{ path: pattern.replace(/^\//, "").replace(/\/?\*\*$/, "").replace(/\/$/, ""), owned: owners.length > 0 }] : [];
+  });
+
+  return [".shepherd", ".github"].flatMap((d) => {
+    let covered = false;
+
+    for (const r of rules) {
+      if (r.path === "*" || r.path === "" || r.path === d) covered = r.owned;
+      else if (r.path.startsWith(`${d}/`) && !r.owned) covered = false; // part of it left without an owner
+    }
+
+    return covered ? [] : [`/${d}/`];
+  });
+}
 
 export function doctor(bundleRoot: string, home: string, repo: string, personal: Config | null): Check[] {
   const checks: Check[] = [];
@@ -133,12 +157,24 @@ export function doctor(bundleRoot: string, home: string, repo: string, personal:
   const gate = (workflows instanceof Error ? [] : workflows.split("\n").filter(Boolean)).find((f) => runsGate(read(f) ?? ""));
 
   if (!gate) {
-    add("gate workflow", "warn", "no default-branch workflow runs the gate on pull requests: shepherd can review and fix, but nothing gives the approval verdict", "shepherd workflows, then add the model key");
+    add("review workflow", "warn", "no default-branch workflow runs shepherd's review on pull requests, so nothing sets the shepherd check", "shepherd workflows, then add the model key");
 
     return checks;
   }
 
-  add("gate workflow", "ok", `${gate} runs the gate on pull requests`);
+  add("review workflow", "ok", `${gate} runs shepherd's review on pull requests`);
+  // Shepherd's workflows are guarded by people: CODEOWNERS on both directories, and a branch rule that requires them.
+  const owners = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"].map((f) => read(f)).find((t) => t !== null) ?? null;
+  const uncovered = owners === null ? ["/.shepherd/", "/.github/"] : uncoveredByOwners(owners);
+
+  if (uncovered.length) add("code owners", "warn", `${owners === null ? "no CODEOWNERS file" : "CODEOWNERS does not cover"}: ${uncovered.join(" and ")} can change without a named person's review`, `add to .github/CODEOWNERS: ${uncovered.map((d) => `${d} @your-team`).join(", ")}`);
+  else add("code owners", "ok", "CODEOWNERS covers /.shepherd/ and /.github/");
+  const branch = attempt(() => run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], repo).trim());
+  // A ruleset is readable with read access; classic protection needs admin, so either saying yes is enough.
+  const required = branch instanceof Error ? null : [`repos/{owner}/{repo}/rules/branches/${branch}`, `repos/{owner}/{repo}/branches/${branch}/protection`].some((api) => /true/.test(String(attempt(() => run("gh", ["api", api, "--jq", '[.. | objects | (.require_code_owner_review?, .require_code_owner_reviews?) | select(. != null)] | any'], repo)))));
+
+  if (!required) add("code owner review", "warn", `"Require review from Code Owners" is off for the default branch${branch instanceof Error ? ", or gh cannot read it" : " (or gh cannot read it)"}: CODEOWNERS only suggests reviewers until it is on`, "turn on Require review from Code Owners in the default branch's rule or ruleset");
+  else add("code owner review", "ok", "the default branch requires a code owner's review");
   // The first review fails on a missing key, so check for it before anyone opens a PR. An environment's secrets are
   // not listed here, hence a warning.
   const loop = policy.models.loop?.value ?? "";
@@ -150,19 +186,17 @@ export function doctor(bundleRoot: string, home: string, repo: string, personal:
     else add("model key", "warn", `${key} is not a repository secret, so ${loop} cannot run (fine if a GitHub environment holds it)`, `gh secret set ${key}`);
   }
 
-  const last = attempt(() => run("gh", ["run", "list", "--workflow", path.basename(gate), "--limit", "30", "--json", "conclusion,status,url,databaseId", "--jq", "[.[] | select(.conclusion != \"skipped\")][0] // empty | [.status, .conclusion, .url, .databaseId] | @tsv"], repo).trim());
+  const last = attempt(() => run("gh", ["run", "list", "--workflow", path.basename(gate), "--limit", "30", "--json", "conclusion,status,url", "--jq", "[.[] | select(.conclusion != \"skipped\")][0] // empty | [.status, .conclusion, .url] | @tsv"], repo).trim());
 
-  if (last instanceof Error) add("gate runs", "warn", "cannot read its runs through gh", "check gh can read this repository's Actions");
-  else if (!last) add("gate runs", "warn", "configured, but no recent run did anything (all skipped, or none)", "open a PR, or comment /gate on one, and check the run");
+  if (last instanceof Error) add("review runs", "warn", "cannot read its runs through gh", "check gh can read this repository's Actions");
+  else if (!last) add("review runs", "warn", "configured, but no recent run did anything (all skipped, or none)", "open a PR, or comment /review on one, and check the run");
   else {
-    const [status, conclusion, url, id] = last.split("\t");
-    // gate exits 1 on a refusal or an escalation: the run failed, but gate worked and gave its verdict.
-    const verdict = conclusion === "failure" ? /\b(REFUSED|ESCALATE): /.exec(String(attempt(() => run("gh", ["run", "view", id!, "--log-failed"], repo))))?.[1] : undefined;
+    const [status, conclusion, url] = last.split("\t");
 
-    if (conclusion === "success") add("gate runs", "ok", "its latest run approved");
-    else if (verdict) add("gate runs", "ok", `its latest run gave a verdict (${verdict}): ${url}`);
-    else if (conclusion === "action_required") add("gate runs", "warn", `its latest run is waiting for a maintainer to approve it: ${url}`, "approve the run in the Actions tab (GitHub holds runs from first-time contributors and bots), or open a PR from a branch of this repository");
-    else add("gate runs", "warn", `its latest run is ${conclusion || status}: ${url}`, "read the run log; a missing backend secret is the usual cause (gate README, Backends)");
+    // A refusal or an escalation is a verdict on the shepherd check; the run fails only when the review did not finish.
+    if (conclusion === "success") add("review runs", "ok", `its latest run finished: ${url}`);
+    else if (conclusion === "action_required") add("review runs", "warn", `its latest run is waiting for a maintainer to approve it: ${url}`, "approve the run in the Actions tab (GitHub holds runs from first-time contributors and bots), or open a PR from a branch of this repository");
+    else add("review runs", "warn", `its latest run is ${conclusion || status}: ${url}`, "read the run log; a missing model key or a wrong SHEPHERD_MODEL is the usual cause");
   }
 
   return checks;

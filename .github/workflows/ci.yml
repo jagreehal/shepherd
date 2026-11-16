@@ -25,3 +25,13 @@ jobs:
           # SHEPHERD_IT_PRIVATE_LENS (owner/repo/<lens dir>@<sha on its default branch>); without the token it skips.
           GH_TOKEN: ${{ secrets.SHEPHERD_IT_TOKEN || github.token }}
           SHEPHERD_IT_PRIVATE_LENS: ${{ secrets.SHEPHERD_IT_TOKEN && vars.SHEPHERD_IT_PRIVATE_LENS || '' }}
+      # The published package is one bundled file with no dependencies: pack it and run it with nothing installed.
+      - name: The package runs with no dependencies installed
+        run: |
+          dir=$(mktemp -d)
+          npm pack --pack-destination "$dir" --silent
+          tar xzf "$dir"/*.tgz -C "$dir"
+          jq -e '.dependencies == null' "$dir/package/package.json"
+          git init -q "$dir/repo" && cd "$dir/repo"
+          ../package/dist/shepherd.js workflows >/dev/null
+          test -f .github/workflows/shepherd.yml && test -f .shepherd/config.yml

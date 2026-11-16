@@ -8,7 +8,7 @@
 // The verdict is the output; --post puts it on GitHub as a real approval or a comment.
 import "./env.ts"; // first: drops blank provider variables before any provider SDK module loads
 import { execFileSync } from "node:child_process";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
@@ -16,9 +16,10 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
-import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, refusedRounds, retireOwnThreads, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, publishCard, repoSlug, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Verdict } from "./github.ts";
+import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Verdict } from "./github.ts";
 import {
   DEFAULTS_DIR,
+  denial,
   detectOwnership,
   inFlightBots,
   inFlightChecks,
@@ -30,6 +31,9 @@ import {
   useLocalPolicy,
   SHEPHERD_VERSION,
   loadPolicy,
+  CONFIG_FILE,
+  hasReview,
+  parsePolicy,
   manifestScriptEdits,
   manifestsWithoutLockfile,
   parseCodeowners,
@@ -52,17 +56,16 @@ import {
 } from "./policy.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
-import { anchoredIssues } from "./inline.ts";
+import { addedLines, anchoredIssues, inlineBody } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { explainFailure, failureText } from "./provider-errors.ts";
 import { catalogPrice } from "./prices.ts";
 import { beginReviewSpan, endReviewSpan, inReviewSpan, keyEnvFor, keySource, parseModelId, reviewMeasurements, summarizeRun, type ReviewAttributes } from "./llm.ts";
 import { configSummary, effectiveConfig, setting, useSettings, type Settings } from "./config.ts";
 import { egressRefusals } from "./isolated-cli.ts";
-import { advisable, assured, type Backend, combine, converged, diffCut, fenceFor, firstThatFits, inert, oneLine, readAll, type Combined, review, reviewers, secondOpinionNeeded, shortened, withAdvice, type LLMVerdict, type Opinion, type Reviewed } from "./reviewer.ts";
+import { advisable, assured, type Backend, combine, converged, diffCut, fenceFor, firstThatFits, inert, mergeRisk, oneLine, readAll, type Combined, review, reviewers, secondOpinionNeeded, shortened, withAdvice, type LLMVerdict, type Opinion, type Reviewed } from "./reviewer.ts";
 import { flagged, riskSignals, type Signals } from "./signals.ts";
 import { approvedOn, stackedParent, wrongBase, type StackDeps, type WrongBase } from "./stack.ts";
-import { CARD_MARKER, ticked } from "./actions.ts";
 import { evidenceSummary, ghStoryDeps, loadStoryEvidence, storyEvidenceRecord, weakenedCount, type StoryEvidence } from "./stories.ts";
 
 const VERSION = SHEPHERD_VERSION;
@@ -71,9 +74,7 @@ const STARTED = new Date().toISOString(); // stamped into every posted review so
 
 const CommentEvent = z.object({
   action: z.string().optional(),
-  comment: z.object({ user: z.object({ login: z.string() }), author_association: z.string(), body: z.string().default("") }),
-  sender: z.object({ login: z.string() }),
-  changes: z.object({ body: z.object({ from: z.string() }).optional() }).optional(),
+  comment: z.object({ user: z.object({ login: z.string() }), author_association: z.string() }),
 });
 
 const VERDICT_OF: Record<LLMVerdict["verdict"], Verdict> = { APPROVE: "APPROVED", REFUSE: "REFUSED", ESCALATE: "ESCALATE" };
@@ -121,7 +122,7 @@ if (process.argv[2] === "config") {
     policy = own.model ? own : shepherdModel(own, (rel) => readTrusted(root, rel));
   } catch (e) {
     read = `unreadable, so defaults only:\n${e instanceof Error ? e.message : e}`;
-    process.exitCode = 1; // a broken gate.yml fails the command, so CI can check an edit before it merges
+    process.exitCode = 1; // a broken policy fails the command, so CI can check an edit before it merges
   }
 
   const config = effectiveConfig(policy);
@@ -150,11 +151,12 @@ const { values: opts, positionals } = args({
     post: { type: "boolean", default: false },
     label: { type: "string" },
     json: { type: "string" },
+    settle: { type: "string" }, // review: write the threads to resolve and the check here, for a job with no model keys
     verbose: { type: "boolean", short: "v", default: false },
     "aws-oidc": { type: "boolean", default: false }, // init: Bedrock through OIDC in the workflows
     environment: { type: "string" }, // init: the GitHub environment whose secrets the review job reads
-    model: { type: "string" }, // init: the reviewer model, written into .shepherd/gate.yml
-    region: { type: "string" }, // init: the AWS region for Bedrock, written into .shepherd/gate.yml
+    model: { type: "string" }, // init: the reviewer model, written under review: in .shepherd/config.yml
+    region: { type: "string" }, // init: the AWS region for Bedrock, written under review: in .shepherd/config.yml
     strict: { type: "boolean", default: false }, // init: write the policy that sends auth, secrets, migrations, infra, billing, API and toolchain changes to a human
     upgrade: { type: "boolean", default: false }, // init: rewrite existing workflows from this gate's templates, keeping their choices
     "policy-dir": { type: "string" }, // a local run: read .shepherd/ files from this directory instead of the default branch
@@ -169,20 +171,55 @@ if (positionals[0] === "init") {
   // Setup, not review: the working tree names the key, since the default branch has not seen it yet. Same order as a
   // review, after --model: SHEPHERD_MODEL, then the gate policy's `model:`, then the loop's models.loop, then the default.
   const local = (rel: string) => (existsSync(path.join(repoRoot, rel)) ? readFileSync(path.join(repoRoot, rel), "utf8") : null);
-  const policyModel = PolicyModel.safeParse(parseYaml(local(".shepherd/gate.yml") ?? "") ?? {}).data?.model;
+  const config = local(CONFIG_FILE);
+  // The reviewer's policy: review: in config.yml, else an older gate.yml.
+  const inConfig = config !== null && hasReview(config);
+  const policyText = inConfig ? (PolicyModel.safeParse(parseYaml(config).review).success ? config : null) : local(".shepherd/gate.yml");
+  const policyModel = inConfig ? PolicyModel.safeParse(parseYaml(config).review ?? {}).data?.model : PolicyModel.safeParse(parseYaml(policyText ?? "") ?? {}).data?.model;
   // SAFETY: shepherdModel reads only `model` and `policyFiles` from the policy, and both are optional.
   const model = opts.model ?? (process.env.SHEPHERD_MODEL?.trim() || undefined) ?? policyModel ?? shepherdModel({} as Policy, local).model ?? setting("model");
   // A new policy gets today's list price for that model, dated, so the $ budget works from the first review.
-  const policyExists = existsSync(path.join(repoRoot, ".shepherd/gate.yml"));
+  const policyExists = inConfig || existsSync(path.join(repoRoot, ".shepherd/gate.yml"));
   const priced = policyExists ? null : await catalogPrice(model);
 
   // Existing files are kept: the repo's policy is the repo's. --upgrade rewrites the workflows only, from this
   // gate's templates, keeping the environment, OIDC and region each was written with unless a flag changes one.
-  for (const rel of [".shepherd/gate.yml", ".shepherd/review-guidance.md", ".github/workflows/shepherd-gate.yml", ".github/workflows/shepherd-gate-edited.yml", ".github/workflows/shepherd-gate-actions.yml"]) {
+  // The policy goes under review: in the one config file, comments and all. A repository keeps its own; --upgrade moves
+  // an older gate.yml in, and removes it only once config.yml holds every line of it.
+  const legacyPolicy = path.join(repoRoot, ".shepherd/gate.yml");
+
+  const withReview = (policy: string) => {
+    const block = `review:\n${policy.split("\n").filter((l) => !l.startsWith("# yaml-language-server") && l.trim() !== "---").map((l) => (l ? `  ${l}` : l)).join("\n").trimEnd()}\n`;
+
+    return config === null ? block : `${config.trimEnd()}\n\n${block}`;
+  };
+
+  const writeReview = (text: string) => {
+    mkdirSync(path.join(repoRoot, ".shepherd"), { recursive: true });
+    writeFileSync(path.join(repoRoot, CONFIG_FILE), text);
+  };
+
+  if (inConfig) console.log(`kept    review: in ${CONFIG_FILE}`);
+  else if (existsSync(legacyPolicy) && opts.upgrade) {
+    const moved = withReview(readFileSync(legacyPolicy, "utf8"));
+
+    // Parse the moved policy before anything is written: one that does not read back leaves both files as they were.
+    parsePolicy(moved, CONFIG_FILE, ["review"]);
+    writeReview(moved);
+    unlinkSync(legacyPolicy);
+    console.log(`moved   .shepherd/gate.yml to review: in ${CONFIG_FILE}`);
+  } else if (existsSync(legacyPolicy)) console.log(`kept    .shepherd/gate.yml: run \`shepherd gate init --upgrade\` to move it under review: in ${CONFIG_FILE}`);
+  else {
+    writeReview(withReview(policyWithSettings(readFileSync(opts.strict ? path.join(DEFAULTS_DIR, "templates/policy-strict.yml") : path.join(DEFAULTS_DIR, ".shepherd/gate.yml"), "utf8"), { model: opts.model, region: opts.region, pricing: priced ? { [priced.key]: priced.price } : undefined })));
+    console.log(`${config === null ? "created" : "added  "} review: in ${CONFIG_FILE}`);
+  }
+
+  for (const rel of [".shepherd/review-guidance.md", ".github/workflows/shepherd.yml"]) {
     const dest = path.join(repoRoot, rel);
-    const src = path.join(DEFAULTS_DIR, rel.startsWith(".github") ? `templates/${path.basename(rel)}` : rel);
+    // The one workflow is shepherd's, at the bundle root; the policy defaults are the gate's.
+    const src = rel.startsWith(".github") ? path.join(DEFAULTS_DIR, "..", "templates", "shepherd.yml") : path.join(DEFAULTS_DIR, rel);
     const workflow = rel.startsWith(".github");
-    const ownJob = rel.endsWith("/shepherd-gate.yml"); // shepherd-gate-edited.yml only calls shepherd-gate.yml; shepherd-gate-actions.yml holds no keys
+    const ownJob = workflow;
 
     if (existsSync(dest) && !(workflow && opts.upgrade)) {
       console.log(`kept    ${rel}${workflow ? " (exists): run `shepherd gate init --upgrade` to update it" : ""}`);
@@ -202,17 +239,21 @@ if (positionals[0] === "init") {
     mkdirSync(path.dirname(dest), { recursive: true });
 
     if (rel.startsWith(".github")) writeFileSync(dest, installWorkflow(readFileSync(src, "utf8"), { awsOidc: opts["aws-oidc"], environment: ownJob ? opts.environment : undefined, region: opts.region }));
-    else if (rel === ".shepherd/gate.yml") writeFileSync(dest, policyWithSettings(readFileSync(opts.strict ? path.join(DEFAULTS_DIR, "templates/policy-strict.yml") : src, "utf8"), { model: opts.model, region: opts.region, pricing: priced ? { [priced.key]: priced.price } : undefined }));
     else copyFileSync(src, dest);
     console.log(`created ${rel}`);
   }
 
+  // Workflows from before shepherd was one reviewer: shepherd.yml does their work now, and two reviewers would post.
+  const legacy = ["shepherd-gate.yml", "shepherd-gate-edited.yml", "shepherd-gate-actions.yml", "shepherd-incident.yml", "shepherd-audit.yml"].filter((f) => existsSync(path.join(repoRoot, ".github/workflows", f)));
+
+  if (legacy.length) console.log(`\nDelete ${legacy.map((f) => `.github/workflows/${f}`).join(", ")}: .github/workflows/shepherd.yml replaces ${legacy.length === 1 ? "it" : "them"}.`);
+
   const key = opts["aws-oidc"] ? "nothing: under OIDC set the AWS_ROLE_ARN variable instead, naming a role that can invoke Bedrock" : `your provider key as the ${keyEnvFor(model)} secret`;
 
-  console.log(`\nNext: add ${key}, enable 'Allow GitHub Actions to create and approve pull requests', and merge. The model is SHEPHERD_MODEL, else \`model:\` in .shepherd/gate.yml, else the loop's models.loop; every other setting lives in .shepherd/gate.yml. Run \`shepherd gate config\` to see what is in effect.`);
+  console.log(`\nNext: add ${key}, then merge. The model is SHEPHERD_MODEL, else review.model, else models.loop, in .shepherd/config.yml; every other setting lives under review: there. Run \`shepherd gate config\` to see what is in effect.`);
 
-  if (priced) console.log(`Priced ${priced.key} at $${priced.price.inputPer1M} in / $${priced.price.outputPer1M} out per 1M tokens (${priced.price.source}, ${priced.price.as_of}) in .shepherd/gate.yml: edit it to your region's or contract's rate.`);
-  else if (!policyExists) console.log(`No list price found for ${model}: add one under pricing: in .shepherd/gate.yml (with as_of and source), or the $ budget stays inactive and only the token ceiling applies.`);
+  if (priced) console.log(`Priced ${priced.key} at $${priced.price.inputPer1M} in / $${priced.price.outputPer1M} out per 1M tokens (${priced.price.source}, ${priced.price.as_of}) in .shepherd/config.yml: edit it to your region's or contract's rate.`);
+  else if (!policyExists) console.log(`No list price found for ${model}: add one under review.pricing in .shepherd/config.yml (with as_of and source), or the $ budget stays inactive and only the token ceiling applies.`);
 
   if (opts.environment) console.log(`The review job runs in the "${opts.environment}" environment: create it (no protection rules) and put the model key there as an environment secret, not repository secrets.`);
   console.log(`\nThe gate reads its policy from the default branch, so whoever can merge there decides what it approves. Suggested .github/CODEOWNERS entries (replace @your-team):\n\n/.shepherd/  @your-team\n/.github/   @your-team\n\nThen turn on "Require review from Code Owners" for the default branch.\n`);
@@ -241,7 +282,7 @@ if (positionals[0] === "rule") {
     console.log(`created ${rel}`);
   }
 
-  console.log(`\nAdd to .shepherd/gate.yml, then merge: gate reads both from the default branch.\n\nrules:\n  ${template}:\n    skill: .shepherd/rules/${template}\n    applies_to: ['src/**']   # optional; without it the rules apply to every changed file\n    on_break: escalate       # refuse, escalate or note`);
+  console.log(`\nAdd under review: in .shepherd/config.yml, then merge: shepherd reads both from the default branch.\n\n  rules:\n    ${template}:\n      skill: .shepherd/rules/${template}\n      applies_to: ['src/**']   # optional; without it the rules apply to every changed file\n      on_break: escalate       # refuse, escalate or note`);
   process.exit(0);
 }
 
@@ -265,24 +306,22 @@ if (!prNumber) {
   process.exit(2);
 }
 
-// A `/gate` comment counts only from someone who could merge. The workflow's `if` sees author_association
+// A `/review` comment counts only from someone who could merge. The workflow's `if` sees author_association
 // alone, which reads write access through a team, and a private org member, as CONTRIBUTOR, so the effective
 // permission is checked here, before anything changes: a comment never moves the head, so ignoring one strands nothing.
-// A tick of "Review again" on the gate card is an edit of our own comment: the person is the sender, and the
-// box must be one this edit ticked, so an unrelated edit of the card never re-runs a review.
 if (opts.post && process.env.GITHUB_EVENT_NAME === "issue_comment" && process.env.GITHUB_EVENT_PATH) {
   const event = CommentEvent.parse(JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")));
-  const edited = event.action === "edited";
-  const who = edited ? event.sender.login : event.comment.user.login;
-  const association = effectiveAssociation(edited ? "NONE" : event.comment.author_association, () => permissionOf(repoSlug(repoRoot), who, repoRoot));
+  const who = event.comment.user.login;
+  const association = effectiveAssociation(event.comment.author_association, () => permissionOf(repoSlug(repoRoot), who, repoRoot));
 
-  if (edited && !(event.comment.user.login.endsWith("[bot]") && event.comment.body.startsWith(CARD_MARKER) && ticked(event.changes?.body?.from ?? "", event.comment.body).includes("rereview"))) {
-    console.log("an edit that ticked no \"Review again\" box on the gate card; ignoring it");
+  // An edit is not a request: only a new comment asks for a review.
+  if (event.action !== "created") {
+    console.log(`a comment ${event.action ?? "event"}, not a new request; ignoring it`);
     process.exit(0);
   }
 
   if (!TRUSTED_ASSOCIATIONS.has(association)) {
-    console.log(`${edited ? "Review again" : "/gate"} from ${who} (${association}), who cannot merge; ignoring it`);
+    console.log(`/review from ${who} (${association}), who cannot merge; ignoring it`);
     process.exit(0);
   }
 }
@@ -334,6 +373,9 @@ if (opts.post) {
 
       if (opts.json) writeFileSync(opts.json, scrubJson(evidence));
 
+      // The approval carries to this head: the diff it reviewed is unchanged.
+      setCheck(retention.pr.repo, retention.pr.headSha, checkFor("APPROVED", "", planThreads(reviewThreads(retention.pr.repo, retention.pr.number, repoRoot), [], null, me).open), repoRoot);
+
       if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### gate: APPROVED on #${retention.pr.number}, kept\n\nApproval #${retention.approval.reviewId} kept: the PR diff is unchanged.\n`);
       await beginReviewSpan(STARTED); // retention kept only after trustedPolicy loaded the policy's settings
       await endReviewSpan(reviewAttributes(retention.pr, "APPROVED", { "gate.retention": "kept" }), false);
@@ -350,21 +392,23 @@ if (opts.post) {
   // Fail-closed: if any later step crashes, the prior approval is already gone.
   dismissOwnApprovals(prNumber, me, repoRoot);
 
-  // Every way out from here (a verdict, a withdrawal skip, a crash) leaves the card showing the newest verdict.
-  // publishCard makes synchronous gh calls under the call timeout, so it runs at exit.
-  process.on("exit", () => {
-    try {
-      publishCard(prNumber, me, existsSync(path.join(repoRoot, ".github/workflows/shepherd.yml")), repoRoot);
-    } catch (e) {
-      console.error(`could not update the gate card: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  });
 }
 
 let pr = fetchPR(prNumber, repoRoot, [me]);
 
+// The check goes pending before the review, so a green one never stands over a head nobody reviewed.
+if (opts.post) setCheck(pr.repo, pr.headSha, { state: "pending", description: "shepherd is reviewing this head" }, repoRoot);
+
+// Until the review posts, its settlement is an error: a run that stops anywhere before then leaves the check `error`.
+if (opts.post && opts.settle) writeFileSync(opts.settle, JSON.stringify({ head: pr.headSha, retire: [], check: checkFor("ERROR", "", 0), verdict: "ERROR" }));
+
 const skip = (why: string) => {
   console.log(`${why}; nothing to review`);
+
+  if (opts.settle) rmSync(opts.settle, { force: true });
+
+  // The check went pending above: a skipped head says why it was not reviewed, never that a review is running.
+  if (opts.post) setCheck(pr.repo, pr.headSha, { state: "pending", description: `not reviewed: ${why}` }, repoRoot);
   process.exit(0);
 };
 
@@ -614,17 +658,16 @@ if (opts["dry-run"]) {
   console.log(`gate verdict: ${gateVerdict} (dry run, no LLM call)`);
   process.exit(gateVerdict === "PASSED" ? 0 : 1);
 } else if (gateVerdict === "DENIED") {
-  verdict = "REFUSED";
   const failed = gated.gates.filter((g) => !g.passed);
 
-  body = failed.every((g) => g.gate === "base") ? `Not reviewed: ${failed[0]!.message}. Retarget it and gate reviews the PR's own change.` : `Gates denied: ${failed.map((g) => g.message).join("; ")}. A human reviewer has to take it from here.`;
+  ({ verdict, body } = denial(failed));
 
-  // advise_on_deny: the person the refusal hands over to gets the model's findings too. The verdict comes from
-  // withAdvice, which is REFUSED whatever the model said, so no path from here reaches an approval.
+  // advise_on_deny: the person the denial hands over to gets the model's findings too. The verdict stays the gates':
+  // the model's advice never reaches an approval.
   if (/^(true|1)$/i.test(setting("advise_on_deny")) && advisable(failed)) {
     try {
       advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef), exploreRoot, opts.verbose));
-      ({ verdict, body } = withAdvice(body, advisory));
+      body = withAdvice(body, advisory);
     } catch (e) {
       console.error(`advisory review failed, refusing without it: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`);
     }
@@ -741,9 +784,16 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 
 if (opts.post) {
   const post = { cwd: repoRoot, botLogin: me, started: STARTED, triggerLabel: opts.label };
+  // Each line comment says what it does to the verdict, in the review's own glyph.
+  const grade = verdict === "REFUSED" ? `${branded.REFUSED} **Blocks approval**` : `${branded.ESCALATE} **Needs a person**`;
   // A stacked review reads the delta over its parent, and GitHub anchors comments to the PR's own diff.
-  const anchors = verdict === "APPROVED" || verdict === "ERROR" || pr.stack ? [] : anchoredIssues(llm?.issues ?? [], pr.diff).map((a) => ({ ...a, body: inert(withoutComments(a.body)) }));
-  const posted = postVerdict(pr, verdict, fitBody(pr, verdict, body, llm, opinion, gated.gates), post, anchors);
+  const anchors = verdict === "APPROVED" || verdict === "ERROR" || pr.stack ? [] : anchoredIssues(llm?.issues ?? [], pr.diff).map((a) => ({ ...a, body: inlineBody(a.body, grade, (t) => inert(withoutComments(t))) }));
+  // Read before posting: a finding that is an open thread's again posts nothing new, and the thread stays.
+  const plan = planThreads(reviewThreads(pr.repo, pr.number, repoRoot), anchors, delta ? addedLines(delta.diff) : null, me);
+  // A gate denial or an ERROR reviewed nothing new, so it settles no thread.
+  const retire = llm && verdict !== "ERROR" ? plan.retire : [];
+  const check = checkFor(verdict, body, plan.open + plan.retire.length - retire.length);
+  const posted = postVerdict(pr, verdict, fitBody(pr, verdict, body, llm, opinion, gated.gates), post, plan.post);
   // Terminal sweep: an older run's approval can land after this run's startup sweep. Dismiss every
   // approval of ours that is off the live head, or on it but from a run that started before this
   // one; a run that started later owns the newer verdict and its approval is kept. Then confirm the
@@ -751,20 +801,33 @@ if (opts.post) {
   dismissOwnApprovals(prNumber, me, repoRoot, { keep: posted, olderThan: STARTED });
 
   // A verdict that went stale while posting belongs to a newer run or head: it notifies nobody.
-  if (posted !== null && reconcilePosted(pr, posted, verdict, post)) {
-    // Presentation only: the verdict has posted. The card follows at exit.
+  if (posted !== null && reconcilePosted(pr, post)) {
+    // Presentation only: the verdict has posted.
     try {
       foldSuperseded(pr, posted, me, STARTED, repoRoot);
-
-      // A completed review replaces the findings before it. A gate denial or an ERROR keeps them.
-      if (llm && verdict !== "ERROR") retireOwnThreads(pr, me, STARTED, repoRoot);
     } catch (e) {
       console.error(`could not tidy older reviews: ${e instanceof Error ? e.message : String(e)}`);
     }
 
+    if (opts.settle) {
+      // In CI a job with no model keys resolves the threads and sets the check: this one only reads code.
+      writeFileSync(opts.settle, JSON.stringify({ head: pr.headSha, retire, check, verdict }));
+    } else {
+      // Run locally with --post: resolve here, each thread read again; one a person joined stays open, and counts.
+      const kept = retire.filter((id) => {
+        try {
+          return !resolveIfOurs(id, me, repoRoot);
+        } catch {
+          return true;
+        }
+      }).length;
+
+      setCheck(pr.repo, pr.headSha, kept && verdict === "APPROVED" ? checkFor(verdict, body, plan.open + kept) : check, repoRoot);
+    }
+
     const url = `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${pr.repo}/pull/${pr.number}`;
     await notify(process.env.SHEPHERD_NOTIFY_WEBHOOK, { event: "gate.verdict", repo: pr.repo, pr: pr.number, url, title: pr.title, head_sha: pr.headSha, verdict, held: gateVerdict === "DENIED", reason: scrub(body) }, notifyOn(setting("notify_on")));
-  }
+  } else if (opts.settle) rmSync(opts.settle, { force: true }); // a newer run or head owns the check
 }
 
 const measurements = reviewMeasurements([llm, opinion, advisory].flatMap((r) => r ? [r.run] : []), verdict === "ERROR");
@@ -792,7 +855,9 @@ await endReviewSpan(
   verdict === "ERROR",
 );
 
-process.exit(verdict === "APPROVED" ? 0 : 1);
+// Posting, the shepherd check carries the verdict: the job fails only when the review did not finish. Run locally,
+// the exit code is the verdict, for scripts.
+process.exit(opts.post ? (verdict === "ERROR" ? 1 : 0) : verdict === "APPROVED" ? 0 : 1);
 
 // A pinned pack in another repository comes through gh, so a private one needs a GH_TOKEN that can read it.
 // GitHub serves any commit in a fork network through the parent repository, so the commit must also be on the
@@ -948,7 +1013,11 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
   const parts = [`${branded.heading(verdict)} <sub>· head \`${pr.headSha.slice(0, 7)}\`</sub>`, "", inert(reasoning)];
 
   // Risk sits under the verdict: a reader triages by it.
-  if (llm && verdict !== "ERROR") parts.push("", `**Merge risk:** ${{ low: "🟢", medium: "🟡", high: "🔴" }[llm.risk]} ${llm.risk}`);
+  if (llm && verdict !== "ERROR") {
+    const risk = mergeRisk(verdict, llm.risk);
+
+    parts.push("", `**Merge risk:** ${{ low: "🟢", medium: "🟡", high: "🔴" }[risk]} ${risk}`);
+  }
 
   if (llm?.next_steps) parts.push("", `**Next:** ${inert(llm.next_steps)}`);
 
@@ -973,7 +1042,7 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
     ...section(`<strong>Gates:</strong> ${branded.pass} ${gates.length - failed}${failed ? ` · ${branded.fail} ${failed}` : ""}`, ["| gate | result |", "|---|---|", ...gates.map((g) => `| ${g.gate} | ${g.passed ? branded.pass : branded.fail} ${inert(g.message)} |`)]),
     ...section(`<strong>Reviewer:</strong> ${run}${llm ? ` → ${llm.verdict}` : ""}${opinion ? ` · second opinion → ${opinion.verdict}` : ""}`, [
       ...(opinion ? [`Second opinion: ${opinion.run ? summarizeRun(opinion.run) : opinion.backend} → ${opinion.verdict} (${opinion.risk} risk)`, ""] : []),
-      `shepherd gate ${VERSION} · head \`${pr.headSha.slice(0, 7)}\` · base \`${pr.baseRef}@${pr.baseSha.slice(0, 7)}\`${pr.stack ? ` · stacked on #${pr.stack.parent} \`${pr.stack.parentHead.slice(0, 7)}\`` : ""} · policy \`${policySource(`origin/${pr.defaultBranch}`).policy}\` · risk ${llm?.risk ?? "n/a"}`,
+      `shepherd ${VERSION} · head \`${pr.headSha.slice(0, 7)}\` · base \`${pr.baseRef}@${pr.baseSha.slice(0, 7)}\`${pr.stack ? ` · stacked on #${pr.stack.parent} \`${pr.stack.parentHead.slice(0, 7)}\`` : ""} · policy \`${policySource(`origin/${pr.defaultBranch}`).policy}\` · risk ${llm?.risk ?? "n/a"}`,
     ]),
     ...markers(pr, verdict),
   );
@@ -1015,7 +1084,11 @@ function policySource(trustedRef: string) {
     /* no trusted ref: a local run reviews under the bundled defaults */
   }
 
-  return { ref: trustedRef, commit, policy: blob(".shepherd/gate.yml"), guidance: blob(".shepherd/review-guidance.md"), steering: blob(".shepherd/steering.md") };
+  // The policy sits under review: in config.yml, or in an older gate.yml.
+  const config = readTrusted(repoRoot, CONFIG_FILE, trustedRef);
+  const policy = config !== null && hasReview(config) ? blob(CONFIG_FILE) : blob(".shepherd/gate.yml");
+
+  return { ref: trustedRef, commit, policy, guidance: blob(".shepherd/review-guidance.md"), steering: blob(".shepherd/steering.md") };
 }
 
 /** The fields every evidence record starts with, on the kept-approval path and the review path alike. */
@@ -1041,7 +1114,8 @@ function fetchRefs(pr: PR): void {
 function gatesFor(pr: PR, policy: Policy, trustedRef: string) {
   const manifests = manifestsWithoutLockfile(pr.files.map((f) => f.filename));
   const sizeBudgets = resolveSizeOverrides(policy, pr.files.map((f) => f.filename), (rel) => readTrusted(repoRoot, rel, trustedRef));
-  const gated = runGates(policy, { ...pr, manifestScriptEdits: manifestScriptEdits(repoRoot, pr.stack?.parentHead ?? pr.baseSha, pr.headSha, manifests), sizeBudgets });
+  const base = pr.stack?.parentHead ?? pr.baseSha;
+  const gated = runGates(policy, { ...pr, manifestScriptEdits: manifestScriptEdits(repoRoot, base, pr.headSha, manifests), sizeBudgets });
 
   return { manifests, sizeBudgets, gated };
 }

@@ -80,7 +80,7 @@ prevent duplicate counts.
 
 ## Datadog
 
-Garden reads spans that the gate and shepherd sent through Datadog's OTLP intake
+Garden reads spans that the CI review and the local loop sent through Datadog's OTLP intake
 (`OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.<site>` with
 `OTEL_EXPORTER_OTLP_HEADERS=dd-api-key=<key>`). Set three variables:
 
@@ -115,13 +115,13 @@ The JSON adds a `telemetry` summary per PR and fixed inspection signals:
 | `trace_stage_failed` | A recorded stage failed or never finished |
 | `trace_retries` | At least 3 recorded retries on the PR |
 | `trace_approval_wait` | At least 5 minutes, and half the observed iteration time, waiting for approval |
-| `trace_review_cost` | At least $5 of known the gate review cost on the PR |
+| `trace_review_cost` | At least $5 of known review cost on the PR |
 
 Use `--trace-retries`, `--trace-wait-ms` and `--trace-cost-usd` to change the
 inspection thresholds. The report includes their effective values, coverage
 limits, unavailable reads and the trace IDs behind each PR's samples.
 `coverage.untouchedPrs` counts PRs with trace samples that shepherd did not
-work on, such as a PR the gate reviewed alone; the report scores shepherd's runs,
+work on, such as a PR only the CI review saw; the report scores shepherd's runs,
 so their samples stay out of the per-PR summaries. Sampling
 or retention can omit runs, so the report never claims a complete history.
 `unpricedReviews` distinguishes missing or incomplete prices from zero cost.

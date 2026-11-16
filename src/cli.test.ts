@@ -1,14 +1,15 @@
 // The adoption path end to end, through the real CLI: a repository with an origin, a throwaway HOME.
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import Ajv from "ajv";
 import { ConfigSchema, configJsonSchema } from "./config.ts";
-import { runsGate } from "./doctor.ts";
-import { branchWorkflow, pinWorkflow, upgradeWorkflow } from "./install.ts";
+import { runsGate, uncoveredByOwners } from "./doctor.ts";
+import { checkFor, PERSON_DECIDES } from "../gate/src/github.ts";
 import path from "node:path";
 import { parse, stringify } from "yaml";
+import { z } from "zod";
 
 const CLI = path.resolve(import.meta.dir, "cli.ts");
 
@@ -90,7 +91,11 @@ describe("adoption", () => {
 
     expect(init.code).toBe(0);
     expect(init.out).toContain("preset review-only");
-    expect(init.out).toContain("created .github/workflows/shepherd-gate.yml"); // one command writes the loop and the gate
+    expect(init.out).toContain("created .github/workflows/shepherd.yml"); // one command writes the one workflow
+    // One config file: the reviewer's policy sits under review: next to the lenses, and no gate.yml is written.
+    expect(init.out).toContain("review: in .shepherd/config.yml");
+    expect(existsSync(path.join(dir, ".shepherd/gate.yml"))).toBe(false);
+    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toMatch(/^review:\n(?: {2}.*\n|\n)* {2}version: 1$/m);
     expect(init.out).toContain("shepherd doctor");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("mode: suggest");
 
@@ -190,8 +195,8 @@ describe("adoption", () => {
     expectKept(fresh.run, fresh.dir);
   });
 
-  test("name models once as tiers, pin roles to them, and CI reads the result from the default branch", () => {
-    const { run, merge } = repo();
+  test("name models once as tiers and pin roles to them", () => {
+    const { run } = repo();
 
     expect(run("init").code).toBe(0);
     expect(run("models", "tier", "fast", "opencode/deepseek-v4.1-flash-free").code).toBe(0);
@@ -202,39 +207,6 @@ describe("adoption", () => {
 
     expect(shown).toContain("tier    smart");
     expect(shown).toContain("amazon-bedrock/eu.amazon.nova-micro-v1:0");
-    merge();
-    const plan = JSON.parse(run("ci-models").out);
-
-    expect(plan.model).toBe("amazon-bedrock/eu.amazon.nova-micro-v1:0");
-    expect(plan.key_envs).toEqual(["AWS_BEARER_TOKEN_BEDROCK", "OPENCODE_API_KEY"]);
-    expect(plan.opencode.agent["shepherd-r0"].model).toBe("opencode/deepseek-v4.1-flash-free");
-    expect(plan.opencode.agent["shepherd-pin-security"].model).toBe("opencode/deepseek-v4.1-flash-free"); // reviewers: fast
-    expect(plan.opencode.enabled_providers).toEqual(["amazon-bedrock", "opencode"]); // the providers the team named, no others
-  });
-
-  test("suggest mode reviews on the gate engine only when no team lens needs the agent loop to run it", () => {
-    const engine = (config: string) => JSON.parse(repo({ ".shepherd/config.yml": config, ".shepherd/lenses/go/SKILL.md": "---\nname: go\ndescription: Go rules.\n---\n" }).run("ci-models").out).engine;
-
-    expect(engine("fixes: { mode: suggest }\n")).toBe("gate");
-    expect(engine("fixes: { mode: suggest }\nlenses: { go: { skill: .shepherd/lenses/go } }\n")).toBe("opencode");
-    expect(engine("fixes: { mode: push }\n")).toBe("opencode");
-  });
-
-  // OpenCode's own agents and its small model choose for themselves when nothing names one. CI names one for each and
-  // enables only the plan's providers.
-  test("with only a session model, CI pins OpenCode's own agents and small model to it and enables no other provider", () => {
-    const { run, merge } = repo();
-
-    expect(run("init", "--model", "bedrock:minimax.minimax-m2.5").code).toBe(0);
-    merge();
-    const { model, opencode } = JSON.parse(run("ci-models").out);
-
-    expect(model).toBe("amazon-bedrock/minimax.minimax-m2.5");
-    expect(opencode.model).toBe(model);
-    expect(opencode.small_model).toBe(model);
-    expect(opencode.enabled_providers).toEqual(["amazon-bedrock"]);
-
-    for (const name of ["build", "plan", "general", "explore", "title", "summary", "compaction"]) expect({ name, model: opencode.agent[name]?.model }).toEqual({ name, model });
   });
 
   // An agent's glob can skip dot-directories such as .shepherd/. explain hands each lens its directory, taken from the
@@ -429,37 +401,52 @@ describe("adoption", () => {
     expect(r.code).toBe(1);
   });
 
-  test("workflows copies the shepherd and incident workflows pinned to this version, and keeps a file you edited", () => {
+  test("workflows writes the one workflow pinned to this version, keeps a file you edited, and names the old ones to delete", () => {
     const { dir, run } = repo({ ".github/workflows/shepherd-incident.yml": "name: mine\n" });
     const { version } = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8"));
     const out = run("workflows").out;
 
-    expect(out).toContain("wrote     .github/workflows/shepherd.yml");
-    expect(out).toContain("kept      .github/workflows/shepherd-incident.yml (exists)");
+    expect(out).toContain("created .github/workflows/shepherd.yml");
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain(`SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }} `);
+    // A workflow from before shepherd was one reviewer would post a second review: the installer names it, never deletes it.
+    expect(out).toContain("Delete .github/workflows/shepherd-incident.yml: .github/workflows/shepherd.yml replaces it.");
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd-incident.yml"), "utf8")).toBe("name: mine\n");
+    expect(run("workflows").out).toContain("kept    .github/workflows/shepherd.yml (exists)");
   });
 
-  test("workflows --upgrade rewrites a kept workflow from the template, keeping its environment and CI list, and asks for SHEPHERD_TOKEN only when fixes push", () => {
+  test("--upgrade moves an older gate.yml under review: in config.yml, and removes it only once it reads back", () => {
+    const policy = readFileSync(path.resolve(import.meta.dir, "../gate/.shepherd/gate.yml"), "utf8").replace("max_lines: 800", "max_lines: 640");
+    const { dir, run } = repo({ ".shepherd/gate.yml": policy, ".shepherd/config.yml": "lenses: {}\n" });
+
+    expect(run("workflows").out).toContain("kept    .shepherd/gate.yml: run `shepherd gate init --upgrade` to move it");
+    expect(run("workflows", "--upgrade").out).toContain("moved   .shepherd/gate.yml to review: in .shepherd/config.yml");
+    expect(existsSync(path.join(dir, ".shepherd/gate.yml"))).toBe(false);
+    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toMatch(/^lenses: \{\}\n\nreview:\n[\s\S]* {4}max_lines: 640$/m);
+    expect(run("workflows", "--upgrade").out).toContain("kept    review: in .shepherd/config.yml");
+  });
+
+  test("--upgrade reads a gate.yml that opens with a document marker, and leaves both files alone when the move would not parse", () => {
+    const policy = readFileSync(path.resolve(import.meta.dir, "../gate/.shepherd/gate.yml"), "utf8");
+    const marked = repo({ ".shepherd/gate.yml": `---\n${policy}`, ".shepherd/config.yml": "lenses: {}\n" });
+
+    expect(marked.run("workflows", "--upgrade").out).toContain("moved   .shepherd/gate.yml to review: in .shepherd/config.yml");
+
+    const broken = repo({ ".shepherd/gate.yml": policy.replace("max_lines: 800", "max_lines: lots"), ".shepherd/config.yml": "lenses: {}\n" });
+
+    broken.run("workflows", "--upgrade");
+    expect(readFileSync(path.join(broken.dir, ".shepherd/config.yml"), "utf8")).toBe("lenses: {}\n");
+    expect(existsSync(path.join(broken.dir, ".shepherd/gate.yml"))).toBe(true);
+  });
+
+  test("workflows --upgrade rewrites the workflow from the template, keeping its environment", () => {
     const { dir, run } = repo();
-    const { version } = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../package.json"), "utf8"));
     const file = path.join(dir, ".github/workflows/shepherd.yml");
 
-    expect(run("workflows", "--environment", "ai-review").out).toContain("add SHEPHERD_TOKEN as a repository secret");
-    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, shepherd-gate\]/m, "$1[build, shepherd-gate]").replace(/SHEPHERD_VERSION: .*?(?= #|$)/gm, "SHEPHERD_VERSION: 0.0.1"));
-    expect(run("workflows").out).toContain("(exists): run `shepherd workflows --upgrade` to update it");
-
-    write(dir, { ".shepherd/config.yml": "fixes: { mode: suggest }\n" });
-    const out = run("workflows", "--upgrade").out;
-    const text = readFileSync(file, "utf8");
-
-    expect(out).toContain(`upgraded  .github/workflows/shepherd.yml to ${version} (kept environment ai-review, workflows [build, shepherd-gate])`);
-    expect(text).toContain(`SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }} `);
-    expect(text).toContain("    environment: ai-review #");
-    expect(text).toContain("workflows: [build, shepherd-gate]");
-    expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toBe("fixes: { mode: suggest }\n");
-    expect(out).not.toContain("add SHEPHERD_TOKEN");
-    expect(out).toContain("SHEPHERD_TOKEN is not needed until fixes.mode is push");
+    run("workflows", "--environment", "ai-review");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/SHEPHERD_VERSION: .*?(?= #|$)/gm, "SHEPHERD_VERSION: 0.0.1"));
+    expect(run("workflows", "--upgrade").out).toContain("upgraded .github/workflows/shepherd.yml");
+    expect(readFileSync(file, "utf8")).not.toContain("SHEPHERD_VERSION: 0.0.1");
+    expect(readFileSync(file, "utf8")).toContain("environment: ai-review");
   });
 
   test("setup names the key for the gate policy's own model before the loop's", () => {
@@ -475,30 +462,14 @@ describe("adoption", () => {
     expect(r.stdout).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret");
   });
 
-  test("workflows --model names the session model in the team policy, and --environment scopes the model keys", () => {
+  test("workflows --model names the reviewer's model in the team policy, and --environment scopes the model keys", () => {
     const { dir, run } = repo();
-    const out = run("workflows", "--model", "bedrock:minimax.minimax-m2.5", "--environment", "ai-review", "--label", "shepherd", "--aws-region", "eu-west-1").out;
+    const out = run("workflows", "--model", "bedrock:minimax.minimax-m2.5", "--environment", "ai-review").out;
 
     expect(out).toContain("pinned    models.loop: bedrock:minimax.minimax-m2.5 in .shepherd/config.yml");
-    expect(out).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret"); // the gate's hint follows the new loop model
-    expect(out).toContain("as secrets of the ai-review environment");
+    expect(out).toContain("Next: add your provider key as the AWS_BEARER_TOKEN_BEDROCK secret");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toContain("loop: bedrock:minimax.minimax-m2.5");
-    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("    environment: ai-review #");
-    expect(out).toContain("set       ci.label: shepherd, ci.aws_region: eu-west-1");
-    // Every setting with its source, and a secret only as set or unset.
-    const explained = run("config", "explain", "--working-tree").out;
-
-    expect(explained).toMatch(/ci\.label\s+shepherd\s+config/);
-    expect(explained).toMatch(/ci\.max_commits\s+20\s+default/);
-    expect(explained).toMatch(/SHEPHERD_TOKEN\s+(set|unset)\s+secret/);
-
-    const rerun = repo();
-
-    rerun.run("workflows");
-    expect(rerun.run("workflows", "--environment", "ai-review").out).toContain("scoped    .github/workflows/shepherd.yml to the ai-review environment");
-    expect(readFileSync(path.join(rerun.dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("    environment: ai-review #");
-    write(rerun.dir, { ".github/workflows/shepherd-incident.yml": "name: mine\n" });
-    expect(rerun.run("workflows", "--environment", "ai-review").out).toContain("shepherd-incident.yml (exists): add `environment: ai-review` to its model job by hand");
+    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain("environment: ai-review");
 
     const fresh = repo();
 
@@ -514,52 +485,122 @@ describe("adoption", () => {
     expect(r.stderr).toContain("inside GitHub Actions the workflow already runs it");
   });
 
-  test("the incident workflow runs only for CI on the default branch, and keeps a filter the team set on upgrade", () => {
-    const template = readFileSync(path.resolve(import.meta.dir, "../templates/shepherd-incident.yml"), "utf8");
-    const on = (text: string) => parse(text).on.workflow_run;
+  test("the workflow holds no personal token: the model's job cannot change code, and the job that can holds no keys", () => {
+    const text = readFileSync(path.resolve(import.meta.dir, "../templates/shepherd.yml"), "utf8");
+    const wf = parse(text);
+    const { review, settle } = wf.jobs;
 
-    expect(on(branchWorkflow(template, ["main"])).branches).toEqual(["main"]);
-    // No default branch to name: no filter, and the job condition skips runs from other branches.
-    expect(on(branchWorkflow(template)).branches).toBeUndefined();
-    // Quoted, so globs survive, YAML keywords stay strings, and a hostile name stays one list item.
-    expect(on(branchWorkflow(template, ["main", "release/**", "true", "null", "123"])).branches).toEqual(["main", "release/**", "true", "null", "123"]);
-    expect(on(branchWorkflow(template, ["x]\n  evil: 1"])).branches).toEqual(["x]\n  evil: 1"]);
-    expect(branchWorkflow(template, ["main"])).not.toContain("<default>");
+    expect(text).not.toContain("SHEPHERD_TOKEN");
+    expect(text).not.toMatch(/pull_request_target|workflow_run|schedule:/);
+    expect(Object.keys(wf.jobs)).toEqual(["review", "settle"]);
+    // The job with the model keys reads code; contents write lives only in settle, which has no secret, no checkout
+    // and no action: only the gh on the runner.
+    expect(wf.permissions.contents).toBe("read");
+    expect(review.permissions).toBeUndefined();
+    expect(settle.permissions.contents).toBe("write");
+    // An ERROR exits non-zero after writing its settlement: both still run, so the check leaves pending.
+    expect(review.steps.find((s: { id?: string }) => s.id === "settle").if).toBe("${{ !cancelled() }}");
+    expect(settle.if).toContain("!cancelled()");
+    expect(JSON.stringify(settle)).not.toContain("secrets.");
+    expect(settle.steps.every((s: { uses?: string }) => s.uses === undefined)).toBe(true);
+    expect(review.steps.find((s: { uses?: string }) => s.uses?.startsWith("actions/checkout"))?.with?.["persist-credentials"]).toBe(false);
+    // The model runs nothing, so no step builds, installs or runs the PR's code.
+    expect(JSON.stringify(wf)).not.toMatch(/npm (ci|install|run)|pnpm |yarn |bun (install|run)|make /);
 
-    const teamSet = branchWorkflow(template, ["main", "release/**", "true"]);
-    const upgraded = upgradeWorkflow(template, teamSet, "9.9.9", undefined, "trunk").text;
-
-    expect(on(upgraded).branches).toEqual(["main", "release/**", "true"]);
-    // And again: the quoted copy reads back as strings on the next upgrade.
-    expect(on(upgradeWorkflow(template, upgraded, "9.9.9", undefined, "trunk").text).branches).toEqual(["main", "release/**", "true"]);
-    expect(on(upgradeWorkflow(template, branchWorkflow(template), "9.9.9", undefined, "trunk").text).branches).toEqual(["trunk"]);
+    for (const [, ref] of text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) if (!ref!.startsWith("actions/")) expect(ref).toMatch(/@[0-9a-f]{40}$/);
   });
 
-  test("pinWorkflow sets every SHEPHERD_VERSION pin in both templates, not just the first", () => {
-    for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
-      const text = readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
+  test("the review job hands settle checked values, and the check's words arrive whole", () => {
+    type Settlement = { head: string; retire: string[]; verdict: string; check: { state: string; description: string } };
 
-      const pins = pinWorkflow(text, "9.9.9").match(/SHEPHERD_VERSION: .*?\}\}/g) ?? [];
+    const step = parse(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd.yml"), "utf8")).jobs.review.steps.find((x: { id?: string }) => x.id === "settle");
 
-      expect(pins.length).toBe(text.match(/SHEPHERD_VERSION: /g)?.length ?? -1);
-      expect(new Set(pins)).toEqual(new Set(["SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '9.9.9' }}"]));
-      // A bare pin from an older release upgrades to the variable form too.
-      expect(pinWorkflow("SHEPHERD_VERSION: 0.3.0 # pinned\n", "9.9.9")).toBe("SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '9.9.9' }} # pinned\n");
-    }
+    const outputs = (settlement: Settlement) => {
+      const dir = mkdtempSync(path.join(tmpdir(), "shepherd-out-"));
+
+      dirs.push(dir);
+      write(dir, { "settle.json": JSON.stringify(settlement), out: "" });
+      const run = spawnSync("bash", ["-eo", "pipefail", "-c", z.string().parse(step.run)], { env: { ...process.env, RUNNER_TEMP: dir, GITHUB_OUTPUT: path.join(dir, "out") }, encoding: "utf8" });
+
+      return { code: run.status, out: readFileSync(path.join(dir, "out"), "utf8") };
+    };
+
+    const head = "a".repeat(40);
+
+    expect(outputs({ head, retire: ["PRRT_x"], verdict: "ERROR", check: checkFor("ERROR", "", 0) }).out).toContain("description=the review did not finish; comment /review to run it again\n");
+    expect(outputs({ head, retire: [], verdict: "REFUSED", check: { state: "failure", description: "changes needed: a\tb\u0001c é" } }).out).toContain("description=changes needed: abc é\n");
+    expect(outputs({ head: "x; rm -rf /", retire: [], verdict: "REFUSED", check: { state: "failure", description: "x" } }).code).not.toBe(0); // checked before it is an output
   });
 
-  test("both workflow templates put the pinned CLI on PATH, so no skill step reaches an unpinned bunx", () => {
-    for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
-      const text = readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
+  test("settle reads the PR as it is: it resolves only shepherd's own threads, counts the open ones, and an escalation turns green only on an approval of this head from someone who can push", () => {
+    const script = z.string().parse(parse(readFileSync(path.resolve(import.meta.dir, "../templates/shepherd.yml"), "utf8")).jobs.settle.steps[0].run);
+    const bot = { login: "github-actions", __typename: "Bot" };
+    const sam = { login: "sam", __typename: "User" };
+    const ours = { author: bot, body: "x <!-- gate-run:1 -->" };
+    const node = (nodes: object[]) => JSON.stringify({ data: { node: { isResolved: false, comments: { totalCount: nodes.length, nodes } } } });
+    const threads = (...open: object[][]) => JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: open.map((nodes) => ({ isResolved: false, comments: { totalCount: nodes.length, nodes } })) } } } } });
+    const shepherdReview = (verdict: string, head = "abc") => ({ user: { login: "github-actions[bot]", type: "Bot" }, state: "COMMENTED", commit_id: head, body: `## 🙋 shepherd: ${verdict} <sub>x</sub>\n<!-- gate-run:1 -->` });
+    const approval = (login: string, head = "abc", state = "APPROVED") => ({ user: { login, type: "User" }, state, commit_id: head, body: "" });
 
-      expect(text).toContain('bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"');
-      expect(text).toContain('echo "$HOME/.bun/bin" >> "$GITHUB_PATH"');
-      expect(text).not.toMatch(/bunx\s+"?@jagreehal\/shepherd/);
+    type World = { node?: Record<string, string>; open?: string; reviews?: object[]; perm?: Record<string, string>; now?: string };
 
-      // Third-party actions run on a commit SHA, and the write token never sits in job-level env where they could read it.
-      for (const [, ref] of text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)) if (!ref!.startsWith("actions/")) expect(ref).toMatch(/@[0-9a-f]{40}$/);
-      expect(text).not.toMatch(/^ {6}GH_TOKEN: \$\{\{ secrets\.SHEPHERD_TOKEN/m);
-    }
+    const settle = (world: World, env: Record<string, string>) => {
+      const dir = mkdtempSync(path.join(tmpdir(), "shepherd-settle-"));
+
+      dirs.push(dir);
+      write(dir, { ...Object.fromEntries(Object.entries(world.node ?? {}).map(([id, json]) => [`node/${id}`, json])), open: world.open ?? threads(), reviews: JSON.stringify(world.reviews ?? []), now: world.now ?? "failure x", ...Object.fromEntries(Object.entries(world.perm ?? {}).map(([u, p]) => [`perm/${u}`, p])) });
+      // gh: each read serves its fixture, already filtered as the step's --jq would; a resolve and the status are recorded.
+      write(dir, { "bin/gh": `#!/bin/sh\ncase "$*" in *resolveReviewThread*) echo "$*" | grep -o 'id=[A-Za-z0-9_]*' >> ${dir}/resolved ;; *reviewThreads*) cat ${dir}/open ;; *PullRequestReviewThread*) id=$(echo "$*" | grep -o 'id=[A-Za-z0-9_]*' | cut -d= -f2); cat ${dir}/node/$id ;; *commits/*/statuses*) cat ${dir}/now ;; *pulls/*/reviews*) cat ${dir}/reviews ;; *collaborators/*) u=$(echo "$*" | sed 's|.*collaborators/\\([^/]*\\)/permission.*|\\1|'); cat ${dir}/perm/$u 2>/dev/null || echo read ;; *statuses/*) echo "$*" > ${dir}/status ;; esac\n` });
+      chmodSync(path.join(dir, "bin/gh"), 0o755);
+      spawnSync("bash", ["-eo", "pipefail", "-c", script], { cwd: dir, env: { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, GITHUB_REPOSITORY: "o/r", PR: "7", HEAD_SHA: "abc", RETIRE: "", VERDICT: "", STATE: "", DESCRIPTION: "", ...env }, encoding: "utf8" });
+      const read = (f: string) => (existsSync(path.join(dir, f)) ? readFileSync(path.join(dir, f), "utf8") : "");
+
+      return { resolved: read("resolved"), status: read("status") };
+    };
+
+    const approved = { VERDICT: "APPROVED", STATE: "success", DESCRIPTION: "approved; no open thread" };
+
+    // After a review: shepherd's own thread resolves; a person's reply keeps one open, and the approval waits on it.
+    const clean = settle({ node: { PRRT_a: node([ours]) } }, { ...approved, RETIRE: "PRRT_a" });
+
+    expect(clean.resolved).toContain("id=PRRT_a");
+    expect(clean.status).toContain("state=success");
+    const joined = settle({ node: { PRRT_a: node([ours, { author: sam, body: "not yet" }]) }, open: threads([ours, { author: sam }]) }, { ...approved, RETIRE: "PRRT_a" });
+
+    expect(joined.resolved).toBe("");
+    expect(joined.status).toContain("approved; 1 open thread(s) to resolve");
+    expect(settle({ open: threads([{ author: { login: "coderabbitai", __typename: "Bot" } }]) }, approved).status).toContain("state=success"); // another tool's thread is its own
+    // A refusal keeps its own state and words, and an approval never changes it.
+    expect(settle({ reviews: [approval("sam")], perm: { sam: "admin" } }, { VERDICT: "REFUSED", STATE: "failure", DESCRIPTION: "changes needed: x" }).status).toContain("description=changes needed: x");
+
+    // An escalation: an approval of this head from someone who can push, given during the review or after it.
+    const escalated = { VERDICT: "ESCALATE", STATE: "failure", DESCRIPTION: `${PERSON_DECIDES}: touches auth` };
+
+    expect(settle({ reviews: [approval("sam")], perm: { sam: "write" } }, escalated).status).toContain("description=approved by sam");
+    expect(settle({ reviews: [approval("sam")], perm: { sam: "write" }, open: threads([ours]) }, escalated).status).toContain("approved by sam; 1 open thread(s) to resolve");
+    expect(settle({ reviews: [approval("sam")], perm: { sam: "read" } }, escalated).status).toContain(`description=${PERSON_DECIDES}: touches auth`);
+    expect(settle({ reviews: [approval("sam", "old")], perm: { sam: "write" } }, escalated).status).toContain(`${PERSON_DECIDES}: touches auth`);
+    expect(settle({ reviews: [approval("sam"), approval("sam", "abc", "DISMISSED")], perm: { sam: "write" } }, escalated).status).toContain(`${PERSON_DECIDES}: touches auth`);
+
+    // On a person's review the verdict comes from shepherd's own review of this head, and a review in flight settles itself.
+    expect(settle({ reviews: [shepherdReview("ESCALATE"), approval("sam")], perm: { sam: "write" } }, {}).status).toContain("description=approved by sam");
+    expect(settle({ reviews: [shepherdReview("REFUSED"), approval("sam")], perm: { sam: "admin" } }, {}).status).toBe("");
+    expect(settle({ reviews: [shepherdReview("ESCALATE"), approval("sam")], perm: { sam: "write" }, now: "pending reviewing" }, {}).status).toBe("");
+    expect(settle({ reviews: [shepherdReview("ESCALATE"), approval("sam", "abc", "DISMISSED")], now: "success approved by sam" }, {}).status).toContain(`${PERSON_DECIDES}: no approval of this head`);
+    expect(settle({ reviews: [shepherdReview("APPROVED")], open: threads([{ author: sam }]) }, {}).status).toContain("approved; 1 open thread(s) to resolve");
+    expect(script).toContain(`"${PERSON_DECIDES}: `);
+    expect(checkFor("ESCALATE", "touches auth", 0).description).toStartWith(`${PERSON_DECIDES}: `);
+  });
+
+  test("doctor reads which of shepherd's directories CODEOWNERS leaves uncovered", () => {
+    expect(uncoveredByOwners("/.shepherd/ @t\n/.github/ @t\n")).toEqual([]);
+    expect(uncoveredByOwners("* @t\n")).toEqual([]);
+    expect(uncoveredByOwners(".github/** @t\n# /.shepherd/ @t\n")).toEqual(["/.shepherd/"]);
+    expect(uncoveredByOwners("/.shepherd/\n/src/ @t\n")).toEqual(["/.shepherd/", "/.github/"]); // a pattern with no owner covers nothing
+    // The last matching line wins, and a line with no owner removes ownership.
+    expect(uncoveredByOwners("* @team\n/.github/workflows/\n")).toEqual(["/.github/"]);
+    expect(uncoveredByOwners("* @team\n/.shepherd/\n/.github/ @ops\n")).toEqual(["/.shepherd/"]);
+    expect(uncoveredByOwners("/.github/\n* @team\n")).toEqual([]);
   });
 
   test("doctor names what is missing and how to fix it", () => {
@@ -571,7 +612,7 @@ describe("adoption", () => {
     expect(by("skills")).toMatchObject({ status: "fail", fix: expect.stringContaining("shepherd install") });
     expect(by("model haiku")?.status).toBe("ok");
     expect(by("model mystery")?.status).toBe("warn");
-    expect(by("gate workflow")?.status).toBe("warn");
+    expect(by("review workflow")?.status).toBe("warn");
 
     write(dir, { ".github/workflows/shepherd-gate.yml": "name: gate\non: pull_request\njobs:\n  review:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bunx \"@jagreehal/shepherd@1\" gate \"$PR\" --post\n" });
     run("install", "--project");
@@ -581,8 +622,10 @@ describe("adoption", () => {
     const after = JSON.parse(run("doctor", "--json").out);
 
     expect(after.find((c: { check: string }) => c.check === "skills")?.status).toBe("ok");
-    expect(after.find((c: { check: string }) => c.check === "gate workflow")?.status).toBe("ok");
-    expect(after.find((c: { check: string }) => c.check === "gate runs")?.status).toBe("warn"); // no GitHub here
+    expect(after.find((c: { check: string }) => c.check === "review workflow")?.status).toBe("ok");
+    expect(after.find((c: { check: string }) => c.check === "review runs")?.status).toBe("warn"); // no GitHub here
+    expect(after.find((c: { check: string }) => c.check === "code owners")).toMatchObject({ status: "warn", detail: expect.stringContaining("no CODEOWNERS file") });
+    expect(after.find((c: { check: string }) => c.check === "code owner review")?.status).toBe("warn");
   }, 60_000);
 
   test("acceptance fails, apart from any violation, when the agent did not finish", () => {

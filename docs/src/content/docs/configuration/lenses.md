@@ -34,7 +34,7 @@ Swarm wraps the skill in a review-only brief. The skill's `## Review` section is
 
 shepherd reads the repository's policy file from the default branch, so a PR cannot pick its own reviewers. Run `/swarm --preview` to try a lens from your working tree before you merge it: it reports which files each lens matched and what it found, and posts nothing. `lens list` checks each lens (a description and, for a lens under `.shepherd/lenses/`, a `## Review` with unique rule ids) and exits non-zero on a problem.
 
-Give each rule an id, `- **<id>**: <rule>`. Add a severity tag when a rule names a security or data-loss defect: `- **<id>** [refuse]: <rule>`. Swarm rates a `[refuse]` rule with its full rubric instead of the MEDIUM cap for guidance, and the gate refuses a PR that breaks it. A lens entry can keep a subset of rules with `only` or drop some with `disable`, both rule id globs, and a repository can set either on a pack's lens by name. [Compose reviews for your stack](/shepherd/configuration/stacks/) shows the bundled catalogue and how layers combine, and `/lens-import` converts any other skill into this format.
+Give each rule an id, `- **<id>**: <rule>`. Add a severity tag when a rule names a security or data-loss defect: `- **<id>** [refuse]: <rule>`. Swarm rates a `[refuse]` rule with its full rubric instead of the MEDIUM cap for guidance, and the review in CI refuses a PR that breaks it. A lens entry can keep a subset of rules with `only` or drop some with `disable`, both rule id globs, and a repository can set either on a pack's lens by name. [Compose reviews for your stack](/shepherd/configuration/stacks/) shows the bundled catalogue and how layers combine, and `/lens-import` converts any other skill into this format.
 
 A `--global` lens is a personal preview. Swarm prints its findings locally and never posts them, so you can try a lens on real PRs before you commit it for the team.
 
@@ -58,25 +58,26 @@ Its `## Fix` section has triage reach for the repository's existing logger and t
 
 A repository with no tracer or logger yet gets every finding escalated. Add the tracer and logger first, then let the lens hold every later PR to the standard.
 
-## The same pack in the gate
+## The same pack in the CI review
 
-A lens is a `SKILL.md` with id'd rules under `## Review`. The gate reads the same file as a rule pack, so one pack steers the review that fixes code and the gate that approves it:
+A lens is a `SKILL.md` with id'd rules under `## Review`. The review in CI reads the same file as a rule pack, so one pack steers the skills that fix code and the review that gives the verdict:
 
 ```mermaid
 flowchart LR
     P[.shepherd/lenses/observability/SKILL.md] --> L[shepherd lens:<br/>findings, then triage fixes<br/>following its Fix section]
-    P --> R[gate rule pack:<br/>the reviewer refuses, escalates<br/>or notes a broken rule]
+    P --> R[CI rule pack:<br/>the reviewer refuses, escalates<br/>or notes a broken rule]
 ```
 
 ```yaml
-# .shepherd/gate.yml
-rules:
-  observability:
-    skill: .shepherd/lenses/observability
-    applies_to: ['src/**']
-    on_break: escalate
+# .shepherd/config.yml
+review:
+  rules:
+    observability:
+      skill: .shepherd/lenses/observability
+      applies_to: ['src/**']
+      on_break: escalate
 ```
 
-To declare every lens once, set `rules_from: { shepherd: {} }` in `.shepherd/gate.yml` instead: the gate then reads every shepherd lens as a rule pack, with each lens's `gate` as its `on_break`.
+You rarely need this: the review already reads every lens in `.shepherd/config.yml` as a rule pack, with each lens's `gate` as its `on_break` (`escalate` when unset). Set `rules_from: { shepherd: { on_break: refuse } }` under `review:` to change that default.
 
-Both read the pack from the default branch, so a PR cannot change the rules it is judged by. The gate also sends any PR that edits a configured pack to a human, since the pack's rules are trusted context for every later review.
+Both read the pack from the default branch, so a PR cannot change the rules it is judged by. The review also sends any PR that edits a configured pack to a human, since the pack's rules are trusted context for every later review.

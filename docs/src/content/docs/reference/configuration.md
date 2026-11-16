@@ -2,7 +2,7 @@
 title: "Configuration reference"
 ---
 
-Set repository policy in `.shepherd/config.yml`. The schema rejects unknown fields. An older repository can use `.shepherd/lenses.yml`, but keep only one of the two files.
+Set repository policy in `.shepherd/config.yml`. The schema rejects unknown fields. The review in CI reads its own policy from the `review:` key; the other fields govern the skills and the lenses both use. An older repository can use `.shepherd/lenses.yml`, but keep only one of the two files.
 
 ## Fields
 
@@ -11,32 +11,28 @@ Set repository policy in `.shepherd/config.yml`. The schema rejects unknown fiel
 | `extends` | List of local paths or pinned GitHub pack references; absent | Load packs in the listed order before repository settings |
 | `tiers` | Map of name to model ID | Name a model once; `ladder` and `models` may use the name, and swapping the model swaps it everywhere |
 | `ladder` | Non-empty list of model IDs or tier names; harness default | Route work from the cheapest suitable model upward |
-| `models` | Map of runner, lens or role group to model ID or tier | Pin work to a model. Role groups: `reviewers` (router and every lens), `fixers` (triage, simplify, ci-repair, incident), `validators` (verifier, validator). `loop` is the CI session model. A runner or lens pin beats its group |
+| `models` | Map of runner, lens or role group to model ID or tier | Pin work to a model. Role groups: `reviewers` (router and every lens), `fixers` (triage, simplify, ci-repair, incident), `validators` (verifier, validator). `loop` is the review model in CI, unless `review.model` names one. A runner or lens pin beats its group |
 | `lenses` | Map of lens names; empty | Add reviewers alongside the built-in lenses |
 | `lenses.<name>.skill` | Non-empty string; required once layers merge | Installed skill name, repository path or resolved pinned-pack lens; a layer may omit it to change a lens an earlier layer defined |
 | `lenses.<name>.applies_to` | List of globs; absent | Match changed paths; without it the router chooses whether to run the lens |
 | `lenses.<name>.description` | Non-empty string; skill description | Describe the lens for routing |
 | `lenses.<name>.only` | Non-empty list of rule id globs; absent | Review only the matching rules |
 | `lenses.<name>.disable` | Non-empty list of rule id globs; absent | Skip the matching rules |
-| `lenses.<name>.gate` | `refuse`, `escalate`, or `note`; absent | Set the gate's `on_break` for the lens's untagged rules when the gate inherits it |
+| `lenses.<name>.gate` | `refuse`, `escalate`, or `note`; absent | Set the CI review's `on_break` for the lens's untagged rules (`escalate` when absent) |
 | `checks` | Map of names to `{ command: string }`; empty | Set the machine checks; an empty map leaves command discovery to the skills |
 | `fixes.mode` | `suggest`, `local`, or `push`; built-in `push` | Limit code changes, commits, pushes and resolutions |
 | `escalate.paths` | Non-empty list of globs; absent | Reserve changes to matching files for a person |
 | `escalate.reason` | Non-empty string; `team policy: a person changes <path>` | Explain why the agent deferred a change |
-| `ci.label` | String; absent | Handoff label: shepherd takes only PRs carrying it |
+| `ci.notify_on` | List of `success`, `failure`, `pending`, `error`; all but `pending` | States `shepherd notify` sends from the local `/shepherd` loop |
 | `ci.aws_region` | String; absent | Bedrock region for a `bedrock:` model. `AWS_REGION` overrides |
-| `ci.notify_on` | List of `success`, `failure`, `pending`, `error`; all but `pending` | States that notify |
-| `ci.max_commits` | Integer 1 to 200; `20` | Shepherd commits on one PR before it stops for a person |
-| `ci.push_deny` | Non-empty list of extended regexes; absent | Paths a CI fix may not touch, **added** to the built-in list and to every pack's; never narrows it |
-| `ci.incident_paths` | Extended regex; `^src/` | Every path an incident fix changes must match |
-| `ci.audit.plays` | List of play names; the four default plays | Plays the scheduled audit runs |
-| `ci.audit.public` | Boolean; `false` | Run the audit on a public repository, publishing its report |
+| `ci.label`, `ci.max_commits`, `ci.push_deny`, `ci.incident_paths`, `ci.audit` | Accepted for existing files | The review in CI does not act on them. |
+| `review` | Map; absent | The review's policy: `model`, `deny`, `allow`, `rules`, `rules_from`, `size_gate`, `tiers`, `scrutiny`, `familiarity`, `pricing`, `provider`, `guard`, `label`, `notify`, `branding`, `reviewer_bots` and the rest. `shepherd gate config` validates it and prints every setting with its source. Without it, an older `.shepherd/gate.yml` is read; `shepherd workflows --upgrade` moves that file here |
 | `branding.name` | String up to 40 characters; `Shepherd` | The name in posted headers (`**<name> swarm**`), escaped |
 | `branding.avatar` | `https` URL; absent | A 16px image after the header prefix. The comment's profile picture is still the posting account's ([branding](/shepherd/configuration/team-policy/#branding)) |
 | `branding.emoji.<key>` | One token up to 16 characters, no spaces or markdown; today's glyphs | `critical`, `high`, `medium`, `low`, `nit`, `blocked`, `changes_needed`, `approve_with_nits`, `looks_good`, `resolved` |
 | `recipes` | Map of names to `{ steps: [...] }`; built-in recipes | Compose supported stages in a named order |
 
-Map keys for models, lenses, checks and recipes use lower-case names beginning with a letter, followed by letters, digits or hyphens. Model IDs pass to your harness as written; a Claude Code alias and an OpenCode `provider/model` ID are not interchangeable. `opencode-agents` also accepts the gate's canonical `provider:model` IDs and writes them the OpenCode way, so `bedrock:<id>` becomes `amazon-bedrock/<id>`.
+Map keys for models, lenses, checks and recipes use lower-case names beginning with a letter, followed by letters, digits or hyphens. Model IDs pass to your harness as written; a Claude Code alias and an OpenCode `provider/model` ID are not interchangeable. `opencode-agents` also accepts the reviewer's canonical `provider:model` IDs and writes them the OpenCode way, so `bedrock:<id>` becomes `amazon-bedrock/<id>`.
 
 ## Precedence and defaults
 

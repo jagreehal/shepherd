@@ -1,20 +1,20 @@
 # shepherd: rules for agents changing this repo
 
-Read [README.md](README.md) first. The skills in `skills/` are the product;
-`src/` is only the installer. Each rule below protects the person whose PR
+Read [README.md](README.md) first. In CI shepherd is one reviewer that holds no
+token; the skills in `skills/` are its local side. Each rule below protects the person whose PR
 shepherd works on, or the reviewers reading what it posts. Hold new skill text
 to all of them.
 
 ## What shepherd may do on GitHub
 
 - **Every posted comment carries the header**
-  `> 🤖 Automated comment by **Shepherd swarm**, not written by a human`.
-  Comments post through the author's own account, so the header is the only
-  signal that they are automated. `triage` detects the `🤖 Automated comment by`
-  text, and any gate that weighs reviews should too; a test pins it in swarm and
-  triage.
-- **Swarm posts reviews with `event=COMMENT` only.** Approval belongs to a
-  human or the gate.
+  `> 🤖 Automated comment by **<name>**, not written by a human`: **shepherd**
+  for the CI reviewer, **Shepherd swarm** for the local skills. A comment can
+  post through the author's own account, so the header is the only signal that
+  it is automated. `triage` detects the `🤖 Automated comment by` text, and so
+  does anything that weighs reviews; a test pins it in swarm and triage.
+- **Every review posts with `event=COMMENT`.** A person approves the PR; the
+  `shepherd` check carries the reviewer's verdict.
 - **Triage never posts.** Its only GitHub mutations are commits and resolving
   all-automated threads. The report is the audit trail.
 - **A thread with any human in it is never fixed, resolved, or replied to** by a
@@ -45,16 +45,29 @@ to all of them.
 - **A behaviour change carries its test, and a thread resolves only when
   everything it names is fixed.** Passing tests prove nothing about behaviour
   no test covers.
-- **The loop's state lives on the PR.** Every iteration sets
-  the `shepherd` commit status on the head: `success` only when the gate approved
-  and nothing is left open, no person's latest review requesting changes,
-  `failure` naming what the author must do when the
-  loop can do no more, `pending` otherwise. A green PR with shepherd stopped
-  short must never be possible. This is shepherd's only status write.
-- **Only an approval of the head answers the bots' threads.** Publish then
-  resolves the gate's threads from earlier runs and swarm's threads on changed
-  code, only where bots alone wrote them, reading each again just before it
-  resolves it. `success` comes from the count taken afterwards, never before.
+- **The verdict lives on the PR.** Every review sets the `shepherd` commit
+  status on the head it reviewed: `pending` before the model runs, `success`
+  only when the verdict is an approval and no thread of shepherd's or a person's is open,
+  `failure` naming what the author does next otherwise, `error` when the review
+  did not finish. It is set last, after the review posts and its threads are
+  settled. An escalation turns `success` only when a person who can push
+  approved the head the review read and no thread of shepherd's or a person's
+  is open; a refusal never does. `settle` reads approvals and threads from
+  GitHub each time it runs, never from the event alone.
+- **A thread resolves once the code under it changed.** A shepherd thread
+  resolves when the push changed the code under or near it, and what the
+  review raises there now posts fresh, on the new code. On untouched code, a
+  finding of the same grade near an open shepherd thread posts nothing new and
+  the thread stays; a finding the model does not repeat there stays open for a
+  person. A thread anyone else wrote in stays open. Open shepherd threads hold
+  an approval back.
+- **A review shows what merging does.** Merge risk is what merging the head
+  as it stands could break: high for data loss, security, money or broken
+  callers. A refusal or an escalation reads at least medium.
+- **House rules are notes; lenses are gates.** `AGENTS.md`, `CLAUDE.md`,
+  `REVIEW.md` and `CONTRIBUTING.md` from the default branch reach the reviewer
+  as conventions: a breach is a note and never changes the verdict. A rule a
+  team wants enforced is a lens with a `gate`.
 - **A base conflict is resolved by a merge, never a rebase,** and only where
   no decision hides in it: nothing under `escalate.paths` or a deferred thread,
   nothing risky, no choice of what the product does. A resolution changes the
@@ -66,11 +79,27 @@ to all of them.
 - **A security failure on a public repository stays private.** Incident opens
   no issue, branch or PR for one and writes no test: a reproducing test is a
   working exploit.
-- **In CI the model holds no write credential.** Handoff mode commits and
-  never pushes; a job with no model pushes the bundle after its fast-forward
-  and path checks. Never name `SHEPHERD_TOKEN` anywhere in the model's job (a secret any
-  step uses sits in the job's runner memory), persist a checkout token, or
-  grant `contents: write`; `src/workflow.test.ts` pins this.
+- **In CI the model holds no token.** The reviewer gets read, grep and glob
+  over the checkout and nothing else: it runs no shell and never executes PR
+  code. Shepherd's own process makes every GitHub write with the job's
+  `github.token`, after the model returns. The job that holds the model keys
+  has `contents: read`; resolving threads and setting the final check happen
+  in a second job with `contents: write`, no keys and nothing installed, which
+  reads each thread again before it resolves it. No personal access token, no
+  persisted checkout token, no step that builds or runs the PR;
+  `src/cli.test.ts` pins this. Fixes in CI come back only as a tool
+  shepherd's process runs for the model, never as a token the model holds.
+- **Shepherd's package is the trust root.** The review job can still set the
+  check, so whatever it installs could fake a verdict. Shepherd publishes as
+  one bundled file with no runtime dependencies: `bunx` fetches nothing else.
+  Never add a `dependencies` entry; CI packs the package and runs it with
+  nothing installed. Keep "Allow GitHub Actions to create and approve pull
+  requests" off on any repository shepherd reviews.
+- **Shepherd's config goes to a person.** The policy is read from the
+  default branch, so a PR never loosens its own review, and `gate_policy`
+  escalates any edit to `.shepherd/config.yml`: the file the policy was read
+  from always counts, whatever its deny paths say. Workflows are guarded by
+  CODEOWNERS on `/.github/`, which `shepherd doctor` checks.
 - **Local mode touches nothing on GitHub.** `--local` never pushes, posts,
   resolves, sets a status, or commits: fixes stay in the working tree for the
   developer. It reports "local checks passed", never merge-ready.

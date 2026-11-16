@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { anchoredIssues, commentableLines, issueAnchor } from "./inline.ts";
+import { anchoredIssues, commentableLines, inlineBody, issueAnchor } from "./inline.ts";
 
 const diff = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -50,4 +50,19 @@ test("only an issue on a commentable line is anchored: a rename by its new name,
     { path: "src/a.ts", line: 11, body: "src/a.ts:11 inside" },
     { path: "moved.ts", line: 1, body: "moved.ts:1 renamed" },
   ]);
+});
+
+test("a line comment opens with its grade and a short title, and drops the file:line its anchor already shows", () => {
+  const grade = "❌ **Blocks approval**";
+  const same = (t: string) => t;
+
+  expect(inlineBody("src/index.ts:34 - Removed zero-division check; divide(1,0) returns Infinity instead of throwing RangeError", grade, same)).toBe("❌ **Blocks approval** · **Removed zero-division check**\n\ndivide(1,0) returns Infinity instead of throwing RangeError");
+  expect(inlineBody("`src/index.ts:35`: Removed division by zero check, breaking contract", grade, same)).toBe("❌ **Blocks approval** · **Removed division by zero check, breaking contract**");
+  expect(inlineBody("**src/a.ts:12-14** wrong total. The sum skips the last row.", grade, same)).toBe("❌ **Blocks approval** · **wrong total**\n\nThe sum skips the last row.");
+
+  // A first clause too long to scan keeps the whole text and no title; model text always goes through `clean`.
+  const long = `src/a.ts:1 ${"word ".repeat(30)}end`;
+
+  expect(inlineBody(long, grade, same)).toBe(`❌ **Blocks approval**\n\n${"word ".repeat(30)}end`);
+  expect(inlineBody("src/a.ts:1 @team look; see <!-- x -->", grade, (t) => `[${t}]`)).toBe("❌ **Blocks approval** · **[@team look]**\n\n[see <!-- x -->]");
 });

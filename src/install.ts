@@ -3,88 +3,9 @@
 // may be the user's own skill that happens to share a name.
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parse } from "yaml";
-import { z } from "zod";
 
 export const MARKER = ".shepherd-installed";
 
-/** A bare pin (`SHEPHERD_VERSION: 0.3.0`) or the variable-with-fallback form, so --upgrade moves either to the latter. */
-const VERSION_PIN = /SHEPHERD_VERSION: (?:\$\{\{ vars\.SHEPHERD_VERSION \|\| '[^']*' \}\}|\S+)/g;
-
-/**
- * A workflow template with every `SHEPHERD_VERSION:` pin set to `version`, so each job runs the CLI that wrote it.
- * A `SHEPHERD_VERSION` repository variable overrides it, so a bump needs no workflow edit.
- */
-export const pinWorkflow = (text: string, version: string) =>
-  text.replaceAll(VERSION_PIN, () => `SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }}`);
-
-/** Run the model job in a GitHub environment, so model keys stored as its secrets reach that job and no other. */
-export function environmentWorkflow(text: string, name: string): string {
-  // The name lands in YAML: refuse anything that could end the scalar or start a new key.
-  if (!/^[\w.-]+$/.test(name)) throw new Error(`--environment "${name}": use letters, digits, ".", "_" and "-"`);
-
-  return text.replaceAll(/^( +)# environment: <name>.*$/gm, `$1environment: ${name} # the model keys are this environment's secrets: no other job reads them`);
-}
-
-/**
- * The incident workflow's `branches: [<default>]` filled with the default branch, so CI on other branches starts no
- * run. Without a name the filter goes, and every CI run starts one that its job condition skips, as before.
- */
-export const branchWorkflow = (text: string, branches: string[] = []) =>
-  branches.length
-    ? // Always quoted: a JSON string is a YAML scalar that stays a string (`true`, `123`) and cannot end the list.
-      text.replaceAll("branches: [<default>]", `branches: [${branches.map((b) => JSON.stringify(b)).join(", ")}]`)
-    : text.replaceAll(/^ +branches: \[<default>\].*\n/gm, "");
-
-/**
- * A workflow rewritten from its current template, keeping what the installer or the team chose in the old copy: the
- * model job's environment and the `workflows:` list naming their CI. Everything else is the template's.
- */
-export function upgradeWorkflow(template: string, existing: string, version: string, environment?: string, defaultBranch?: string) {
-  const kept: string[] = [];
-
-  // Read as YAML, not by pattern: a quoted environment or a multiline workflows list is just as valid, and losing
-  // either takes the model's keys away or stops reviews. Anything this cannot carry over refuses the upgrade.
-  const old = z
-    .object({
-      on: z.object({ workflow_run: z.object({ workflows: z.array(z.string()).min(1), branches: z.array(z.string()).optional() }).optional() }).optional(),
-      jobs: z.record(z.string(), z.object({ environment: z.union([z.string(), z.object({ name: z.string() }).transform((e) => e.name)]).optional() })),
-    })
-    .safeParse(parse(existing));
-
-  if (!old.success) throw new Error(`cannot read its environment and workflows list (${old.error.issues[0]?.path.join(".")}): update it by hand`);
-
-  const envs = [...new Set(Object.values(old.data.jobs).flatMap((j) => (j.environment === undefined ? [] : [j.environment])))];
-
-  if (!environment && envs.length > 1) throw new Error(`its jobs use different environments (${envs.join(", ")}): update it by hand`);
-
-  const env = environment ?? envs[0];
-  let text = pinWorkflow(template, version);
-
-  if (env) {
-    text = environmentWorkflow(text, env);
-    kept.push(`environment ${env}`);
-  }
-
-  const workflows = old.data.on?.workflow_run?.workflows;
-
-  if (workflows && /^ +workflows: \[.*\]\s*$/m.test(text)) {
-    const list = `[${workflows.map((w) => (/^[\w.-]+$/.test(w) ? w : JSON.stringify(w))).join(", ")}]`;
-
-    text = text.replace(/^( +workflows: )\[.*\]\s*$/m, `$1${list}`);
-    kept.push(`workflows ${list}`);
-  }
-
-  // A branch filter the team set wins over the detected default branch.
-  const branches = old.data.on?.workflow_run?.branches;
-
-  if (branches) kept.push(`branches [${branches.join(", ")}]`);
-  text = branchWorkflow(text, branches ?? (defaultBranch ? [defaultBranch] : []));
-
-  return { text, kept };
-}
-
-// Command files are single files, so they carry the marker as a comment line instead.
 const COMMAND_MARKER = "<!-- shepherd-installed -->";
 
 export type Outcome = { name: string; dest: string; action: "installed" | "replaced" | "skipped" | "removed" };

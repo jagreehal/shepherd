@@ -429,7 +429,7 @@ resolution changed behaviour, add it to Step 2d's section.
 
 Skip this step with `gate=absent` when the repo has no gate workflow on the
 default branch. Check with `git cat-file -e
-origin/<default>:.github/workflows/shepherd-gate.yml`, never a glob or a file search:
+origin/<default>:.github/workflows/shepherd.yml`, never a glob or a file search:
 those can skip `.github/`, and a missed gate reads as `absent`.
 
 Guard first:
@@ -439,45 +439,48 @@ gh pr view <number> --json isDraft,headRefOid
 ```
 
 - `headRefOid != H2`: someone pushed under you. Skip; the next iteration re-baselines.
-- Draft: mark ready; the gate skips drafts silently.
+- Draft: mark ready; the review skips drafts, and the check reads `not reviewed: PR is a draft`.
 
 **Label mode** (the gate policy sets `label:`): when
 `gate_applied_for_sha != H2`, `gh pr edit <number> --add-label <label>` and set
 `gate_applied_for_sha = H2`. **All-PRs mode:** the gate runs on every push; there
 is nothing to apply.
 
-Read the verdict every time, capped so full bodies never enter context. This
-call also refreshes `updatedAt` for the state line:
+Read the verdict every time from the `shepherd` check on `H2`, the head you
+pushed. The check carries the review's verdict; every review posts as a COMMENT.
 
 ```bash
-gh pr view <number> --json reviewDecision,latestReviews,updatedAt \
-  --jq '{reviewDecision, updatedAt, gate: ([.latestReviews[] | select(.body | contains("<!-- gate-run:"))
-    | {state, head: (.body | capture("gate-reviewed:head=(?<h>[0-9a-f]+)").h // null), body: .body[:400]}][0])}'
+gh api "repos/{owner}/{repo}/commits/<H2>/statuses" \
+  --jq '[.[] | select(.context == "shepherd")][0] | {state, description}'
 ```
 
-**Is the verdict for `H2`?** the gate marks each review with the head it covers.
-When the latest verdict's `head` is not `H2`, look for a gate run on `H2`:
+- `pending`: a review is queued or running. `not reviewed: …` means the PR is a
+  draft or lacks the label; mark it ready or apply the label.
+- `success`: report `approved` with the description (`approved; no open
+  thread`, or `approved by <person>` after an escalation).
+- `failure`: `changes needed: …` is `refused`; `a person decides: …` is
+  `escalate`; `approved; N open thread(s) to resolve` is `pending` until those
+  threads are resolved. For the reasons behind a refusal or an escalation, read the
+  newest review whose body contains `<!-- gate-run:`, capped so a full body
+  never enters context:
 
-```bash
-gh run list --workflow shepherd-gate.yml --commit <H2> --json status,conclusion --jq '[.[] | {status, conclusion}]'
-```
-
-- A run is queued or in progress: report `pending`.
-- A run succeeded without posting a new review: the gate kept its standing
-  approval because the PR's diff did not change (retention). Report
-  `approved` when `reviewDecision` is `APPROVED`, and say it was retained.
-- No run, or only cancelled or skipped ones: nothing will review `H2` on its
-  own. Ask once per head, when `gate_applied_for_sha != H2`: in label mode
-  remove and re-add the label; in all-PRs mode comment `/gate` followed by the
-  header on its own lines (the workflow only reads the first line). Set
+  ```bash
+  gh pr view <number> --json latestReviews \
+    --jq '[.latestReviews[] | select(.body | contains("<!-- gate-run:")) | .body[:1200]][0]'
+  ```
+- `error`: the review did not finish. Comment `/review` once per head.
+- No status on `H2`, and `gh run list --workflow shepherd.yml --commit <H2>`
+  shows no run or only cancelled and skipped ones: nothing will review `H2` on
+  its own. Ask once per head, when `gate_applied_for_sha != H2`: in label mode
+  remove and re-add the label; in all-PRs mode comment `/review` followed by the
+  header on its own lines (the workflow reads only the first line). Set
   `gate_applied_for_sha = H2` and report `pending`.
 
 Never report an older head's verdict as current.
 
-Report approved, refused, escalate, or pending, with the one-line reason.
-The gate keeps its approval across a base merge that leaves the PR's diff
-unchanged, so a ci-repair base update does not cost a re-review. Never try to
-get around the gate.
+Report approved, refused, escalate, or pending, with the one-line reason. A base
+merge is a push, so the review runs again on the new head. Never try to get
+around the gate.
 
 ## Step 5: Status, summary and hand-back
 
