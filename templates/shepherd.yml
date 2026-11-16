@@ -80,7 +80,7 @@ jobs:
       pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
-      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -145,7 +145,7 @@ jobs:
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned, as in iterate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -253,7 +253,7 @@ jobs:
       statuses: read
     env:
       PR: ${{ github.event.workflow_run.pull_requests[0].number || github.event.issue.number || github.event.pull_request.number || inputs.pr }}
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned: this runs with the repo's secrets, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
@@ -382,7 +382,7 @@ jobs:
       # Matched case-insensitively.
       DENY: ${{ vars.SHEPHERD_PUSH_DENY || '^\.github/|^\.gitmodules$|(^|/)\.gitattributes$|(^|/)\.(husky|githooks|devcontainer|vscode)/|(^|/)\.(npmrc|yarnrc|yarnrc\.yml|pnpmfile\.cjs)$|(^|/)(package\.json|bunfig\.toml|go\.mod|cargo\.toml|build\.rs|pyproject\.toml|setup\.(py|cfg)|requirements[^/]*\.txt|gemfile|composer\.json|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|[^/]*\.lockb?|[^/]*[._-]lock\.(json|ya?ml|hcl|toml)|[^/]*\.lockfile|npm-shrinkwrap\.json|go\.sum|package\.resolved|(gnu)?makefile|\.?justfile|taskfile(\.dist)?\.ya?ml)$|(^|/)\.pre-commit-config\.yaml$|(^|/)\.cargo/|(^|/)(pnpm-workspace\.yaml|pipfile|deno\.jsonc?)$' }}
       DENY_ADD: ${{ needs.gate.outputs.push_deny }} # ci.push_deny: only ever added to DENY
-      SHEPHERD_VERSION: 0.3.0 # pinned, as in iterate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned, as in iterate
     steps:
       # First, before any setup that could fail: a stopped iteration must never leave the gate's pending standing.
       - name: Report a stopped iteration

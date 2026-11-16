@@ -57,7 +57,7 @@ A push made with the repository `GITHUB_TOKEN` does not trigger the next workflo
 
 The PR model job sets `SHEPHERD_HANDOFF` to a temporary directory for commit/status handoff. You do not need to set it for local use.
 
-`shepherd workflows` pins `SHEPHERD_VERSION` in each job that installs the CLI to the version that wrote the file. They set `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_DISABLE_AUTOUPDATE` for the runner. Those are workflow controls rather than team policy fields. A different harness needs its own equivalent configuration and skill-loading setup.
+`shepherd workflows` pins `SHEPHERD_VERSION` in each job that installs the CLI to the version that wrote the file, as `${{ vars.SHEPHERD_VERSION || '<version>' }}`: a `SHEPHERD_VERSION` repository variable overrides the pin, so a bump needs no workflow edit. Only people who can change repository settings can set it. They set `OPENCODE_DISABLE_PROJECT_CONFIG` and `OPENCODE_DISABLE_AUTOUPDATE` for the runner. Those are workflow controls rather than team policy fields. A different harness needs its own equivalent configuration and skill-loading setup.
 
 ## Traces
 

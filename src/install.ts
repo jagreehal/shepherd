@@ -8,8 +8,15 @@ import { z } from "zod";
 
 export const MARKER = ".shepherd-installed";
 
-/** A workflow template with every `SHEPHERD_VERSION:` pin set to `version`, so each job runs the CLI that wrote it. */
-export const pinWorkflow = (text: string, version: string) => text.replaceAll(/SHEPHERD_VERSION: \S+/g, `SHEPHERD_VERSION: ${version}`);
+/** A bare pin (`SHEPHERD_VERSION: 0.3.0`) or the variable-with-fallback form, so --upgrade moves either to the latter. */
+const VERSION_PIN = /SHEPHERD_VERSION: (?:\$\{\{ vars\.SHEPHERD_VERSION \|\| '[^']*' \}\}|\S+)/g;
+
+/**
+ * A workflow template with every `SHEPHERD_VERSION:` pin set to `version`, so each job runs the CLI that wrote it.
+ * A `SHEPHERD_VERSION` repository variable overrides it, so a bump needs no workflow edit.
+ */
+export const pinWorkflow = (text: string, version: string) =>
+  text.replaceAll(VERSION_PIN, () => `SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }}`);
 
 /** Run the model job in a GitHub environment, so model keys stored as its secrets reach that job and no other. */
 export function environmentWorkflow(text: string, name: string): string {
