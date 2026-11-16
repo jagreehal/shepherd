@@ -40,8 +40,9 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | `shepherd models ladder <model-or-tier>...` | `--global`; set the ladder in cheapest-first order |
 | `shepherd models pin <runner-lens-or-group> <model-or-tier>` | `--global`; pin named work, or a role group (`reviewers`, `fixers`, `validators`), to a model or tier |
 | `shepherd models tier <name> <model>` | `--global`; name a model once, for the ladder and pins |
-| `shepherd ci-models` | Print, as JSON, the CI session model, the key variable its provider reads, the OpenCode agents for the ladder and pins, and the `engine` the loop runs (`gate` under `fixes.mode: suggest` with no team lenses, `opencode` otherwise), from the default branch. The workflows run it |
-| `shepherd ci-review <pr>` | Review the PR with the gate's engine and print the round that publish posts. In the CI loop it also writes `status.json`: `failure` for a refusal or escalation, `success` once the gate's posted approval covers the head with green checks and no open thread, `pending` otherwise. The workflow runs it when `engine` is `gate` |
+| `shepherd ci-models` | Print, as JSON, the CI session model, the key variable its provider reads, the OpenCode agents for the ladder and pins, and the `engine` the loop runs (`gate` under `fixes.mode: suggest` with no team lenses, where the gate's review is the review, `opencode` otherwise), from the default branch. The workflows run it |
+| `shepherd ci-review <pr>` | Set the loop's status from the gate's posted review, under `fixes.mode: suggest` with no team lenses. It runs no model and posts nothing. In the CI loop it writes `status.json`: `failure` naming what the author must do when the gate refuses or escalates, `success` once the gate's approval covers the head with green checks and no open thread, `pending` otherwise. The workflow runs it when `engine` is `gate` |
+| `shepherd ci-retire <pr>` | Once the gate approves the head, resolve the gate's threads from earlier runs and shepherd's threads on code the PR has since changed. A thread with anyone else in it stays open. Publish runs it with `SHEPHERD_TOKEN` |
 | `shepherd opencode-agents` | `--file <lenses.yml>`; print model agents for OpenCode 1.x |
 
 ## Local records: terminal

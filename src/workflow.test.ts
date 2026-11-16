@@ -13,7 +13,7 @@ const Workflow = z.object({
   jobs: z.object({
     publish: z.object({
       env: z.record(z.string(), z.string()),
-      steps: z.array(z.object({ name: z.string().optional(), run: z.string().optional() })),
+      steps: z.array(z.object({ name: z.string().optional(), run: z.string().optional(), env: z.record(z.string(), z.string()).optional() })),
     }),
     iterate: z.object({
       steps: z.array(z.object({ name: z.string().optional(), run: z.string().optional(), env: z.record(z.string(), z.string()).optional() })),
@@ -284,7 +284,7 @@ describe("publish: an iteration that failed or timed out", () => {
 describe("publish: the status the model asked for", () => {
   const statusScript = template.jobs.publish.steps.find((s) => s.name === "Set the shepherd status")?.run ?? "";
 
-  function run(statusJson: string | null, pushed = "", refused = "", handoff: Record<string, string> = {}) {
+  function run(statusJson: string | null, pushed = "", refused = "", handoff: Record<string, string> = {}, hasPat = "true") {
     const root = mkdtempSync(path.join(tmpdir(), "shepherd-status-"));
 
     roots.push(root);
@@ -303,11 +303,58 @@ describe("publish: the status the model asked for", () => {
     const r = spawnSync("bash", ["-eo", "pipefail", "-c", statusScript], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HEAD_SHA: "abc", PUSHED: pushed, REFUSED: refused, GITHUB_OUTPUT: path.join(root, "output"), GITHUB_REPOSITORY: "acme/x" },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HEAD_SHA: "abc", PUSHED: pushed, REFUSED: refused, GITHUB_OUTPUT: path.join(root, "output"), GITHUB_REPOSITORY: "acme/x", HAS_PAT: hasPat },
     });
 
     return { code: r.status, args: readFileSync(path.join(root, "gh-args"), "utf8"), description: readFileSync(path.join(root, "description.txt"), "utf8").trim() };
   }
+
+  test("a status waiting on answered threads stays pending for publish to resolve them, and fails without the token that can", () => {
+    const resolving = JSON.stringify({ state: "pending", description: "the gate approved; resolving 2 answered thread(s)" });
+
+    expect(run(resolving).args).toContain("state=pending");
+    expect(run(resolving, "", "", {}, "false").args).toContain("state=failure");
+    expect(run(resolving, "", "", {}, "false").description).toContain("set SHEPHERD_TOKEN");
+  });
+
+  test("after resolving, the status is set from the count taken then, and only when it was waiting on those threads", () => {
+    const script = template.jobs.publish.steps.find((s) => s.name === "Set the status the resolved threads allow")?.run ?? "";
+
+    const after = (description: string, retire: string) => {
+      const root = mkdtempSync(path.join(tmpdir(), "shepherd-retire-"));
+      const bin = path.join(root, "bin");
+
+      roots.push(root);
+      mkdirSync(bin);
+      writeFileSync(path.join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${root}/gh-args"\n`);
+      chmodSync(path.join(bin, "gh"), 0o755);
+      writeFileSync(path.join(root, "description.txt"), description);
+      writeFileSync(path.join(root, "retire.json"), retire);
+      writeFileSync(path.join(root, "output"), "");
+      spawnSync("bash", ["-eo", "pipefail", "-c", script], { cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HEAD_SHA: "abc", GITHUB_REPOSITORY: "acme/x", GITHUB_OUTPUT: path.join(root, "output") } });
+      const output = readFileSync(path.join(root, "output"), "utf8");
+
+      // Notify reads the state this step exports, so it reports the status set last.
+      if (existsSync(path.join(root, "gh-args"))) expect(output).toContain(`state=${/state=(\w+)/.exec(readFileSync(path.join(root, "gh-args"), "utf8"))?.[1]}`);
+      else expect(output).toBe("");
+
+      return existsSync(path.join(root, "gh-args")) ? readFileSync(path.join(root, "gh-args"), "utf8") : "";
+    };
+
+    const status = (state: string, description: string, head = "abc") => JSON.stringify({ gate: "APPROVED", resolved: 2, head, status: { state, description } });
+
+    expect(after("the gate approved; resolving 2 answered thread(s)", status("success", "the gate approved this head; checks green and no open thread"))).toContain("state=success");
+    // A person replied before the thread was resolved: the count taken after says so.
+    expect(after("the gate approved; resolving 2 answered thread(s)", status("failure", "the gate approved; resolve the 1 open review thread(s)"))).toContain("state=failure");
+    // Any other pending (CI still running) is not this step's to change, and nor is a state outside the three.
+    expect(after("waiting on lint", status("success", "x"))).toBe("");
+    expect(after("the gate approved; resolving 2 answered thread(s)", status("success", "x", "def"))).toBe(""); // counted on a newer head
+    expect(after("the gate approved; resolving 2 answered thread(s)", status("error", "x"))).toBe("");
+
+    const notify = template.jobs.publish.steps.find((s) => s.name === "Notify");
+
+    expect(notify?.env?.STATE).toStartWith("${{ steps.restatus.outputs.state || steps.status.outputs.state");
+  });
 
   test("a known state and one line of text pass through", () => {
     const r = run(JSON.stringify({ state: "failure", description: "gate refused: retry loop" }));

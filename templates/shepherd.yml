@@ -275,7 +275,7 @@ jobs:
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           export PATH="$HOME/.bun/bin:$PATH" && echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
           [ "$(command -v shepherd)" = "$HOME/.bun/bin/shepherd" ] || { echo "shepherd is not the pinned CLI"; exit 1; }
-          # fixes.mode suggest with no team lenses runs no agent (the gate's engine reviews): OpenCode is installed only when needed.
+          # fixes.mode suggest with no team lenses runs no agent (the gate's review is the review): OpenCode is installed only when needed.
           if [ "$(shepherd ci-models | jq -r .engine)" = opencode ]; then
             shepherd install   # skills to ~/.claude/skills, where opencode finds them
             # OpenCode 1.x: its installer refuses 2.x releases, which have their own (opencode.ai/v2/install).
@@ -321,11 +321,10 @@ jobs:
           plan=$(shepherd ci-models)
           model=$(jq -r .model <<<"$plan")
           echo "session model: $model ($(jq -r .source <<<"$plan"))"
-          # fixes.mode suggest, no team lenses: no agent. The gate's engine reviews with read, grep and glob and no
-          # shell, so it cannot comment, push or start another agent. It writes the round publish posts and status.json
-          # from its verdict and the head's checks, on the gate's model.
+          # fixes.mode suggest, no team lenses: the gate's posted review is the review. No model runs here and nothing
+          # posts; ci-review writes status.json from the gate's verdict and the head's checks.
           if [ "$(jq -r .engine <<<"$plan")" = gate ]; then
-            shepherd ci-review "$PR" > "$SHEPHERD_HANDOFF/round.json"
+            shepherd ci-review "$PR"
             exit 0
           fi
           # Only the keys the plan's models read reach the model, and a blank one (an unset secret) would hide the
@@ -482,6 +481,9 @@ jobs:
               state, desc = "error", "the iteration produced no review; comment /shepherd to retry"
           elif sys.argv[3]:
               state, desc = "failure", f"fixes not pushed, a person should look: {' '.join(sys.argv[3].split())}"
+          elif state == "pending" and desc.startswith("the gate approved; resolving") and os.environ.get("HAS_PAT") != "true":
+              # Only SHEPHERD_TOKEN can resolve the threads the approval answered: without it a person resolves them.
+              state, desc = "failure", "the gate approved; resolve the answered review threads, or set SHEPHERD_TOKEN so shepherd can"
           elif sys.argv[2]:
               state, desc = "pending", f"pushed {sys.argv[2]} commit(s) for review; {desc}"
           elif state == "pending":
@@ -510,19 +512,46 @@ jobs:
           fi
           gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
           echo "state=$state" >> "$GITHUB_OUTPUT"
-      # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
-      # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
-      # gate or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
-      # The renderers, when the iteration handed off its round: the summary and inline review are then built in code.
-      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/round.json') != ''
+      # The CLI: it resolves the threads an approval answers, and renders a handed-off round as code.
+      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0: pinned, this job holds the write token
-        continue-on-error: true # without the CLI the step below falls back to findings.md
-      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && hashFiles('handoff/round.json') != ''
+        continue-on-error: true # without the CLI, posting falls back to findings.md
+      - if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true'
         shell: bash
         continue-on-error: true
         run: |
           bun add -g "@jagreehal/shepherd@$SHEPHERD_VERSION"
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      # Once the gate approves this head, the bots' threads on earlier heads are answered. Resolving a thread needs
+      # contents write, which only SHEPHERD_TOKEN has here; a thread with a person in it stays open.
+      - name: Resolve the threads the gate's approval answers
+        id: retire
+        if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && env.HAS_PAT == 'true'
+        continue-on-error: true
+        working-directory: repo
+        env:
+          GH_TOKEN: ${{ secrets.SHEPHERD_TOKEN }}
+        run: shepherd ci-retire "$PR" | tee ../retire.json
+      # A status left pending on the answered threads is set again from the count taken after resolving them. If
+      # resolving failed it stays pending, and the sweep runs the iteration again.
+      - name: Set the status the resolved threads allow
+        id: restatus
+        if: steps.retire.outcome == 'success' && steps.status.outputs.state == 'pending'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.push.outputs.head }}
+        run: |
+          grep -q '^the gate approved; resolving' description.txt || exit 0
+          # Someone pushed since: the count is for another head, and the next iteration sets that one.
+          [ "$(jq -r '.head // ""' retire.json)" = "$HEAD_SHA" ] || exit 0
+          state=$(jq -r '.status.state // ""' retire.json)
+          case "$state" in success|pending|failure) ;; *) exit 0 ;; esac
+          jq -r '.status.description' retire.json | tr -d '\000-\037' | cut -c1-139 > description.txt
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f context=shepherd -f state="$state" -f description="$(cat description.txt)" >/dev/null
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      # Under suggest, posting is the review. If the iteration ended without its summary on the PR, post the findings it
+      # handed off. findings.md is model output: capped, its markers and HTML comments escaped (it must not pass for a
+      # gate or shepherd comment), mentions and images defused, and built into the body in Python, never by the shell.
       - name: Post findings the iteration did not
         if: env.ITERATED == 'success' && steps.push.outputs.stale != 'true' && (hashFiles('handoff/findings.md') != '' || hashFiles('handoff/round.json') != '')
         env:
@@ -616,7 +645,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.push.outputs.head || needs.gate.outputs.head }}
-          STATE: ${{ steps.status.outputs.state || steps.stopped.outputs.state }}
+          STATE: ${{ steps.restatus.outputs.state || steps.status.outputs.state || steps.stopped.outputs.state }} # the last status set
           SHEPHERD_NOTIFY_WEBHOOK: ${{ secrets.SHEPHERD_NOTIFY_WEBHOOK }}
           SHEPHERD_NOTIFY_ON: ${{ needs.gate.outputs.notify_on }} # ci.notify_on or the variable
         run: shepherd notify --pr "$PR" --repo "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --state "$STATE" --file description.txt

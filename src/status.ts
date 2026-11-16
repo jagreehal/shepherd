@@ -21,6 +21,8 @@ export type PrFacts = {
   changesRequested: string[];
   /** Unresolved review threads, whoever opened them. */
   openThreads: number;
+  /** Of those, the bots' own threads the gate's approval of this head answers: publish resolves them. */
+  answeredThreads?: number;
   /** Checks on the head: Actions workflow runs, other apps' check runs and commit statuses (CI outside Actions). */
   runs: Run[];
 };
