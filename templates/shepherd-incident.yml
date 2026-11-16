@@ -54,7 +54,7 @@ jobs:
       issues: write
       actions: read
     env:
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned: this runs with the repo's secrets, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
@@ -148,7 +148,7 @@ jobs:
     outputs:
       incident_paths: ${{ steps.settings.outputs.incident_paths }}
     env:
-      SHEPHERD_VERSION: 0.3.0 # pinned, as in investigate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned, as in investigate
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4

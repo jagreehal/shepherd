@@ -1387,12 +1387,12 @@ describe("Bedrock through OIDC", () => {
     const { version } = JSON.parse(read("../../package.json"));
     const wf = parseYaml(installWorkflow(read("shepherd-gate.yml"), { environment: "ai-review" }));
 
-    expect(wf.jobs.review.env.SHEPHERD_VERSION).toBe(version);
+    expect(wf.jobs.review.env.SHEPHERD_VERSION).toBe(`\${{ vars.SHEPHERD_VERSION || '${version}' }}`);
     expect(wf.jobs.review.environment).toBe("ai-review");
     expect(parseYaml(installWorkflow(read("shepherd-gate.yml"))).jobs.review.environment).toBeUndefined();
     expect(() => installWorkflow(read("shepherd-gate.yml"), { environment: "x\n  evil: 1" })).toThrow("not a GitHub environment name");
-    // The bundled template names this version too (tools/sync-template-version.ts keeps it there on release).
-    expect(parseYaml(read("shepherd-gate.yml")).jobs.review.env.SHEPHERD_VERSION).toBe(version);
+    // The bundled template names this version too (tools/sync-gate-version.ts keeps it there on release).
+    expect(parseYaml(read("shepherd-gate.yml")).jobs.review.env.SHEPHERD_VERSION).toBe(`\${{ vars.SHEPHERD_VERSION || '${version}' }}`);
   });
 
   test("init --upgrade reads back the environment, OIDC and region a workflow was written with", () => {

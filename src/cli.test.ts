@@ -428,7 +428,7 @@ describe("adoption", () => {
 
     expect(out).toContain("wrote     .github/workflows/shepherd.yml");
     expect(out).toContain("kept      .github/workflows/shepherd-incident.yml (exists)");
-    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain(`SHEPHERD_VERSION: ${version} `);
+    expect(readFileSync(path.join(dir, ".github/workflows/shepherd.yml"), "utf8")).toContain(`SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }} `);
     expect(readFileSync(path.join(dir, ".github/workflows/shepherd-incident.yml"), "utf8")).toBe("name: mine\n");
   });
 
@@ -438,7 +438,7 @@ describe("adoption", () => {
     const file = path.join(dir, ".github/workflows/shepherd.yml");
 
     expect(run("workflows", "--environment", "ai-review").out).toContain("add SHEPHERD_TOKEN as a repository secret");
-    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, shepherd-gate\]/m, "$1[build, shepherd-gate]").replace(/SHEPHERD_VERSION: \S+/g, "SHEPHERD_VERSION: 0.0.1"));
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^( +workflows: )\[ci, shepherd-gate\]/m, "$1[build, shepherd-gate]").replace(/SHEPHERD_VERSION: .*?(?= #|$)/gm, "SHEPHERD_VERSION: 0.0.1"));
     expect(run("workflows").out).toContain("(exists): run `shepherd workflows --upgrade` to update it");
 
     write(dir, { ".shepherd/config.yml": "fixes: { mode: suggest }\n" });
@@ -446,7 +446,7 @@ describe("adoption", () => {
     const text = readFileSync(file, "utf8");
 
     expect(out).toContain(`upgraded  .github/workflows/shepherd.yml to ${version} (kept environment ai-review, workflows [build, shepherd-gate])`);
-    expect(text).toContain(`SHEPHERD_VERSION: ${version} `);
+    expect(text).toContain(`SHEPHERD_VERSION: \${{ vars.SHEPHERD_VERSION || '${version}' }} `);
     expect(text).toContain("    environment: ai-review #");
     expect(text).toContain("workflows: [build, shepherd-gate]");
     expect(readFileSync(path.join(dir, ".shepherd/config.yml"), "utf8")).toBe("fixes: { mode: suggest }\n");
@@ -498,14 +498,24 @@ describe("adoption", () => {
     expect(readFileSync(path.join(fresh.dir, ".shepherd/config.yml"), "utf8")).toMatch(/^# yaml-language-server: \$schema=.*\n# shepherd team policy[\s\S]*loop: bedrock:minimax\.minimax-m2\.5/);
   });
 
+  test("review refuses inside GitHub Actions, where its /shepherd comment would be the loop asking to run itself", () => {
+    const { dir } = repo();
+    const r = spawnSync("bun", [CLI, "review", "4"], { cwd: dir, env: { ...process.env, ...ID, HOME: path.join(dir, "..", "home"), GITHUB_ACTIONS: "true" }, encoding: "utf8" });
+
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("inside GitHub Actions the workflow already runs it");
+  });
+
   test("pinWorkflow sets every SHEPHERD_VERSION pin in both templates, not just the first", () => {
     for (const name of ["shepherd.yml", "shepherd-incident.yml"]) {
       const text = readFileSync(path.resolve(import.meta.dir, "../templates", name), "utf8");
 
-      const pins = pinWorkflow(text, "9.9.9").match(/SHEPHERD_VERSION: \S+/g) ?? [];
+      const pins = pinWorkflow(text, "9.9.9").match(/SHEPHERD_VERSION: .*?\}\}/g) ?? [];
 
-      expect(pins.length).toBe(text.match(/SHEPHERD_VERSION: \S+/g)?.length ?? -1);
-      expect(new Set(pins)).toEqual(new Set(["SHEPHERD_VERSION: 9.9.9"]));
+      expect(pins.length).toBe(text.match(/SHEPHERD_VERSION: /g)?.length ?? -1);
+      expect(new Set(pins)).toEqual(new Set(["SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '9.9.9' }}"]));
+      // A bare pin from an older release upgrades to the variable form too.
+      expect(pinWorkflow("SHEPHERD_VERSION: 0.3.0 # pinned\n", "9.9.9")).toBe("SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '9.9.9' }} # pinned\n");
     }
   });
 

@@ -105,7 +105,8 @@ model pushes what you hand it. An iteration then differs in six places:
   A model that wrote review Markdown itself once posted bare comments with no
   header, title or prompt. Under `suggest` the review is the whole output: a
   run that ends with findings and no `round.json` has failed. Threads still
-  resolve and triage still runs with the job's token as before.
+  resolve and triage still runs with the job's token as before. Never comment
+  `/shepherd` or run `shepherd review`: that asks the workflow to run you again.
 
 - **Commit, never push.** Commit on the PR branch as usual. Append the handoff
   addition from `references/dispatch.md` to every runner brief. After a runner,

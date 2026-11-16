@@ -1306,7 +1306,8 @@ export function installWorkflow(template: string, o: { awsOidc?: boolean; enviro
   if (o.region !== undefined && !/^[a-z]{2}(-[a-z]+)+-\d$/.test(o.region)) throw new Error(`--region: not an AWS region: ${o.region}`);
   // The OIDC step runs before gate reads its policy, so it gets the region written in, under the variable.
   const regional = o.region ? template.replace("aws-region: ${{ vars.AWS_REGION }}", `aws-region: \${{ vars.AWS_REGION || '${o.region}' }}`) : template;
-  const pinned = regional.replace(/^(\s*SHEPHERD_VERSION: )\S+/m, `$1${SHEPHERD_VERSION}`);
+  // A SHEPHERD_VERSION repository variable overrides the pin, so a bump needs no workflow edit.
+  const pinned = regional.replace(/^(\s*SHEPHERD_VERSION: )(?:\$\{\{ vars\.SHEPHERD_VERSION \|\| '[^']*' \}\}|\S+)/m, (_, lead: string) => `${lead}\${{ vars.SHEPHERD_VERSION || '${SHEPHERD_VERSION}' }}`);
   const placed = o.environment ? pinned.replace(/^( {4}runs-on: .*\n)/m, `$1    environment: ${o.environment} # holds the model key: only this job can read it\n`) : pinned;
 
   return o.awsOidc ? enableAwsOidc(placed) : placed;

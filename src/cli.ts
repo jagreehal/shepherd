@@ -750,6 +750,8 @@ if (command === "install") {
   console.log(`\nstage     ${s.stage}\nnext      ${s.next}`);
 } else if (command === "review" && sub) {
   // The loop runs in GitHub Actions, not here: a `/shepherd` comment starts it, as one typed on the PR would.
+  if (process.env.GITHUB_ACTIONS === "true") orExit(() => { throw new Error("shepherd review starts the loop from a terminal; inside GitHub Actions the workflow already runs it"); });
+
   const since = new Date(Date.now() - 5_000).toISOString();
   const posted = spawnSync("gh", ["pr", "comment", sub, "--body", "/shepherd"], { cwd: repoRoot, encoding: "utf8" });
 

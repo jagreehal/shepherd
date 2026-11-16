@@ -18,6 +18,8 @@ If you use `bunx`, include `@<version>` when reproducibility matters. Every work
 
 Run `shepherd workflows --upgrade` with the new version. It rewrites your workflow files from that release's templates and pins `SHEPHERD_VERSION`, keeping the model job's environment and your `workflows:` list; it stops with `update it by hand` on a file it cannot read. `shepherd init` keeps your `.shepherd/config.yml`. Review the diff, then run `shepherd doctor`.
 
+Where workflow edits are blocked, set the `SHEPHERD_VERSION` repository variable to the new version instead: every job installs that version over the pin written in the file. Delete the variable to return to the pin.
+
 Review custom policy separately from engine changes. Shepherd and the gate read repository policy from the default branch, so an unmerged policy edit does not govern a PR run.
 
 ## Check an upgrade

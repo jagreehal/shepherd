@@ -37,7 +37,7 @@ jobs:
       audit_plays: ${{ steps.settings.outputs.audit_plays }}
       aws_region: ${{ steps.settings.outputs.aws_region }}
     env:
-      SHEPHERD_VERSION: 0.3.0 # pinned, as in audit
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned, as in audit
     steps:
       # Settings from the default branch's .shepherd/config.yml (ci:), each overridden by its variable when set.
       - uses: actions/checkout@v4
@@ -73,7 +73,7 @@ jobs:
     permissions:
       contents: read
     env:
-      SHEPHERD_VERSION: 0.3.0 # pinned: this runs with the repo's secrets, so bumps are deliberate
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.3.0' }} # pinned: this runs with the repo's secrets, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
       PLAYBOOK_SHA: 65d4efd2cd0b081d52101e9708792b944e4ddebb # OWASP/secure-agent-playbook, pinned: the plays are instructions
       PLAYS: ${{ github.event.inputs.plays || needs.repo.outputs.audit_plays }}
     steps:
