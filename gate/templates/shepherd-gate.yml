@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20 # a hung model call must not burn a runner for six hours; a killed run is fail-closed (the approval is already retracted)
     env:
-      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.17.0' }} # pinned: the engine decides what gets auto-approved, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
+      SHEPHERD_VERSION: ${{ vars.SHEPHERD_VERSION || '0.18.0' }} # pinned: the engine decides what gets auto-approved, so bumps are deliberate; the SHEPHERD_VERSION variable overrides it
     steps:
       - uses: actions/checkout@v4
         with:
