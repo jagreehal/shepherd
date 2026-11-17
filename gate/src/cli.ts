@@ -579,7 +579,7 @@ if (gateVerdict === "PASSED" && !opts["dry-run"]) {
     const before = lastReviewed(reviews, me, pr.headSha);
 
     rounds = refusedRounds(reviews, me, pr.headSha);
-    history = priorRounds(reviews, me);
+    history = priorRounds(reviews, me, pr.headSha);
 
     if (before) {
       git(...GH_CREDENTIALS, "fetch", "-q", "origin", before.head, before.base);
