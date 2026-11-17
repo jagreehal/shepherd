@@ -23,6 +23,7 @@ import {
   detectOwnership,
   inFlightBots,
   inFlightChecks,
+  linkedRuleFlags,
   loadGuidance,
   installWorkflow,
   workflowChoices,
@@ -519,7 +520,7 @@ const rules = ruleFlags(policy, pr.files.map((f) => f.filename), (rel) => readTr
 
 for (const m of [...inherited, ...rules.missing]) console.error(`rule pack skipped (not on the default branch or the pinned commit, or no rules under ## Review): ${m}`);
 
-const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags];
+const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(repoRoot, trustedRef, pr.files.map((f) => f.filename))];
 
 // Jev risk signals: advisory, before the reviewer, skipped without TYPESAFE_API_KEY and on a dry run (which
 // promises gates only, nothing sent out). A failure here loses a signal, not the review, so it is logged and

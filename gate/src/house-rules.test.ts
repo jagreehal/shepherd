@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { houseRules, PolicySchema, ruleLinks, scrutinyFlags } from "./policy.ts";
+import { houseRules, linkedRuleFlags, PolicySchema, ruleLinks, scrutinyFlags } from "./policy.ts";
 
 test("the reviewer reads the repository's house rules from the default branch, once each, and never a PR's edit of them", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "gate-house-"));
@@ -32,6 +32,7 @@ test("the reviewer reads the repository's house rules from the default branch, o
   expect(rules).not.toContain("Anything goes");
   expect(rules).toContain("A house rule alone never changes the verdict");
   expect(rules).toContain("break a CODING_STANDARDS.md rule in standards");
+  expect(rules).toContain("A CODING_STANDARDS.md breach never goes in issues");
   expect(houseRules(repo, "no-such-ref")).toBeNull(); // no fallback to shepherd's own files
 
   // A monorepo: ui/ has its own standards, linking a shared doc; api/ has none.
@@ -58,6 +59,10 @@ test("the reviewer reads the repository's house rules from the default branch, o
   expect(api).toContain("## CODING_STANDARDS.md\n\nRoot standard.");
   expect(api).not.toContain("ui/CODING_STANDARDS.md");
   expect(api).not.toContain("docs/forms.md");
+  // A PR editing the linked doc is flagged for the reviewer, but only when a changed file's rules link to it.
+  expect(linkedRuleFlags(repo, "main", ["ui/forms/Login.tsx", "docs/forms.md"])[0]?.files).toEqual(["docs/forms.md"]);
+  expect(linkedRuleFlags(repo, "main", ["api/users.ts", "docs/forms.md"])).toEqual([]);
+  expect(linkedRuleFlags(repo, "main", ["ui/forms/Login.tsx"])).toEqual([]);
 });
 
 test("house-rule links resolve inside the repository only", () => {
