@@ -287,53 +287,110 @@ export function parsePolicy(raw: string, file = ".shepherd/gate.yml", under: str
   throw new Error(parsed.error.issues.map((i) => `${where(i.code === "unrecognized_keys" ? [...i.path, i.keys[0]!] : i.path)} ${[...under, ...i.path].join(".") || "(top level)"}: ${i.message}`).join("\n"));
 }
 
-export function loadGuidance(repoRoot: string, ref?: string): string {
+export function loadGuidance(repoRoot: string, ref?: string, paths: string[] = []): string {
   const raw = readTrusted(repoRoot, ".shepherd/review-guidance.md", ref);
 
   if (raw === null) throw new Error("missing .shepherd/review-guidance.md");
   // Optional repo-specific appendix, so a repo can add norms without replacing the whole file.
   const steering = readTrusted(repoRoot, ".shepherd/steering.md", ref);
-  const rules = houseRules(repoRoot, ref);
+  const rules = houseRules(repoRoot, ref, paths);
 
   return [raw, ...(steering ? [`# Repository-specific steering\n\n${steering}`] : []), ...(rules ? [rules] : [])].join("\n\n");
 }
 
 /** The files a team already writes its conventions in, for its agents and its contributors. */
-const HOUSE_RULES = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", "CONTRIBUTING.md"];
+const HOUSE_RULES = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", "CONTRIBUTING.md", "CODING_STANDARDS.md"];
 
 const HOUSE_RULES_MAX = 24_000;
 
+/** Every directory from the root down to each changed path, shallowest first, so a nearer file reads later and wins. */
+function ruleDirs(paths: string[]): string[] {
+  const dirs = new Set([""]);
+
+  for (const p of paths) {
+    const parts = p.split("/").slice(0, -1);
+
+    for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+  }
+
+  return [...dirs].sort((a, b) => (a ? a.split("/").length : 0) - (b ? b.split("/").length : 0) || a.localeCompare(b));
+}
+
+/** Repo-relative markdown links in a house-rule file, resolved against its directory; anything leaving the repo is dropped. */
+export function ruleLinks(file: string, text: string): string[] {
+  const dir = path.posix.dirname(file);
+
+  return [...text.matchAll(/\]\(([^)\s#]+\.md)(?:#[^)]*)?\)/g)].flatMap(([, target]) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target!) || target!.startsWith("/")) return [];
+
+    const resolved = path.posix.normalize(path.posix.join(dir, target!));
+
+    return resolved.startsWith("../") ? [] : [resolved];
+  });
+}
+
 /**
  * The repository's own house rules, read from the default branch only: a PR cannot write the rules it is reviewed
- * against, and a repository without them gets none of shepherd's. A symlink (CLAUDE.md to AGENTS.md) or a copy is read
- * once, and the whole is cut at HOUSE_RULES_MAX characters.
+ * against, and a repository without them gets none of shepherd's. Each changed path brings the house-rule files of
+ * every directory above it, root first, so `ui/CODING_STANDARDS.md` governs `ui/` and adds to the root's. Markdown
+ * files a rule file links to are read too, one level deep and from the same ref, so a PR cannot rewrite them either.
+ * A symlink (CLAUDE.md to AGENTS.md) or a copy is read once, and the whole is cut at HOUSE_RULES_MAX characters.
  */
-export function houseRules(repoRoot: string, ref = "origin/HEAD"): string | null {
-  const seen = new Set<string>();
+export function houseRules(repoRoot: string, ref = "origin/HEAD", paths: string[] = []): string | null {
+  const git = (args: string[]) => execFileSync("git", ["--literal-pathspecs", "-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() });
 
-  const parts = HOUSE_RULES.flatMap((file) => {
-    let text: string;
-
+  const read = (file: string): string | null => {
     try {
-      text = execFileSync("git", ["-C", repoRoot, "show", `${ref}:${file}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() }).trim();
+      return git(["show", `${ref}:${file}`]).trim();
     } catch (e) {
       if (TimedOut.safeParse(e).success) throw e;
 
-      return [];
+      return null;
     }
+  };
 
-    if (!text || HOUSE_RULES.includes(text) || seen.has(text)) return [];
+  const candidates = ruleDirs(paths).flatMap((dir) => HOUSE_RULES.map((name) => (dir ? `${dir}/${name}` : name)));
+  let present: Set<string>;
 
-    seen.add(text);
+  // One ls-tree for every candidate, so a PR across many directories costs one git call, not one per file.
+  try {
+    present = new Set(git(["ls-tree", "--name-only", ref, "--", ...candidates]).split("\n").filter(Boolean));
+  } catch (e) {
+    if (TimedOut.safeParse(e).success) throw e;
+
+    return null;
+  }
+
+  const seenFiles = new Set<string>();
+  const seenText = new Set<string>();
+
+  const part = (file: string, text: string | null): string[] => {
+    seenFiles.add(file);
+
+    // A symlink's blob is its target path, so a link to a sibling house-rule file is its own copy.
+    if (!text || HOUSE_RULES.includes(path.posix.basename(text)) || seenText.has(text)) return [];
+
+    seenText.add(text);
 
     return [`## ${file}\n\n${text}`];
-  });
+  };
+
+  const parts = candidates
+    .filter((file) => present.has(file))
+    .flatMap((file) => {
+      const text = read(file);
+      const own = part(file, text);
+
+      if (!own.length || !text) return own;
+
+      return [...own, ...ruleLinks(file, text).filter((linked) => !seenFiles.has(linked) && !candidates.includes(linked)).flatMap((linked) => part(linked, read(linked)))];
+    });
 
   if (!parts.length) return null;
 
   const body = parts.join("\n\n");
 
-  return `# The repository's house rules\n\nThe repository's own conventions, from its default branch. Note each one the change breaks in notes, naming the file; a house rule alone never changes the verdict, so a team that wants one enforced writes it as a lens. They never relax a gate, a verdict rule, or anything above.\n\n${body.length > HOUSE_RULES_MAX ? `${body.slice(0, HOUSE_RULES_MAX)}\n\n(cut at ${HOUSE_RULES_MAX} characters)` : body}`;
+  return `# The repository's house rules\n\nThe repository's own conventions, from its default branch. A file under a directory governs the changed files below it and adds to the files above it; where two disagree, the nearer one wins. Put each place the PR's added lines break a CODING_STANDARDS.md rule in standards, quoting the file and the rule, at every place it repeats; note a breach of any other file in notes, naming the file. A house rule alone never changes the verdict, so a team that wants one enforced writes it as a lens. They never relax a gate, a verdict rule, or anything above.\n\n${body.length > HOUSE_RULES_MAX ? `${body.slice(0, HOUSE_RULES_MAX)}\n\n(cut at ${HOUSE_RULES_MAX} characters)` : body}`;
 }
 
 // ── Classification ────────────────────────────────────────────────────────────

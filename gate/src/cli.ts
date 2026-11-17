@@ -56,7 +56,7 @@ import {
 } from "./policy.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
-import { addedLines, anchoredIssues, inlineBody } from "./inline.ts";
+import { addedLines, lineComments } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { explainFailure, failureText } from "./provider-errors.ts";
 import { catalogPrice } from "./prices.ts";
@@ -666,7 +666,7 @@ if (opts["dry-run"]) {
   // the model's advice never reaches an approval.
   if (/^(true|1)$/i.test(setting("advise_on_deny")) && advisable(failed)) {
     try {
-      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef), exploreRoot, opts.verbose));
+      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef, pr.files.map((f) => f.filename)), exploreRoot, opts.verbose));
       body = withAdvice(body, advisory);
     } catch (e) {
       console.error(`advisory review failed, refusing without it: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`);
@@ -675,7 +675,7 @@ if (opts["dry-run"]) {
 } else {
   const [primary, second] = backends;
 
-  const guidance = loadGuidance(repoRoot, trustedRef);
+  const guidance = loadGuidance(repoRoot, trustedRef, pr.files.map((f) => f.filename));
 
   try {
     llm = await inReviewSpan(() => review(primary!, input, guidance, exploreRoot, opts.verbose));
@@ -787,7 +787,7 @@ if (opts.post) {
   // Each line comment says what it does to the verdict, in the review's own glyph.
   const grade = verdict === "REFUSED" ? `${branded.REFUSED} **Blocks approval**` : `${branded.ESCALATE} **Needs a person**`;
   // A stacked review reads the delta over its parent, and GitHub anchors comments to the PR's own diff.
-  const anchors = verdict === "APPROVED" || verdict === "ERROR" || pr.stack ? [] : anchoredIssues(llm?.issues ?? [], pr.diff).map((a) => ({ ...a, body: inlineBody(a.body, grade, (t) => inert(withoutComments(t))) }));
+  const anchors = pr.stack ? [] : lineComments(verdict, llm, pr.diff, { blocking: grade, standard: `${branded.fix} **Coding standard**` }, (t) => inert(withoutComments(t)));
   // Read before posting: a finding that is an open thread's again posts nothing new, and the thread stays.
   const plan = planThreads(reviewThreads(pr.repo, pr.number, repoRoot), anchors, delta ? addedLines(delta.diff) : null, me);
   // A gate denial or an ERROR reviewed nothing new, so it settles no thread.
@@ -1026,6 +1026,8 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
   if (verdict === "APPROVED" && llm?.safe_because) parts.push("", `**Safe because:** ${inert(llm.safe_because.fact)} (${llm.safe_because.evidence})`);
 
   if (llm?.issues.length) parts.push(...section(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
+
+  if (llm?.standards.length) parts.push(...section(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((i) => `- ${inert(i)}`)));
 
   if (llm?.notes.length) parts.push(...section(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
 

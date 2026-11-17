@@ -64,10 +64,13 @@ to all of them.
 - **A review shows what merging does.** Merge risk is what merging the head
   as it stands could break: high for data loss, security, money or broken
   callers. A refusal or an escalation reads at least medium.
-- **House rules are notes; lenses are gates.** `AGENTS.md`, `CLAUDE.md`,
-  `REVIEW.md` and `CONTRIBUTING.md` from the default branch reach the reviewer
-  as conventions: a breach is a note and never changes the verdict. A rule a
-  team wants enforced is a lens with a `gate`.
+- **House rules never change the verdict; lenses are gates.** `AGENTS.md`,
+  `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from
+  the default branch reach the reviewer as conventions, at the root and in each
+  directory above a changed file, the nearer one winning. A `CODING_STANDARDS.md`
+  breach posts as a line comment on any verdict, so triage fixes it, and holds
+  the check only as an open thread; a breach of the others is a note. A rule a
+  team wants to refuse a PR is a lens with a `gate`.
 - **A base conflict is resolved by a merge, never a rebase,** and only where
   no decision hides in it: nothing under `escalate.paths` or a deferred thread,
   nothing risky, no choice of what the product does. A resolution changes the
@@ -127,7 +130,8 @@ to all of them.
   style) report MEDIUM at most. Personal lenses (`~/.config/shepherd`) are a
   local preview: their findings never post, so they are never fixed.
 - **House rules bind fixers too.** Triage, simplify, and ci-repair read
-  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and `docs/adr/` from the default
+  `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`,
+  `CODING_STANDARDS.md` (nested ones included) and `docs/adr/` from the default
   branch before editing.
 - **CI repair never weakens a test** to go green: no loosened assertions, no
   skips, no wholesale snapshot updates, no casts to `any`.

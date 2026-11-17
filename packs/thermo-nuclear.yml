@@ -1,0 +1,9 @@
+# Cursor's thermo-nuclear code quality review as review rules (github.com/cursor/plugins/tree/main/cursor-team-kit, MIT).
+# Extend pinned: github:jagreehal/shepherd/packs/thermo-nuclear.yml@<sha>
+# A strict maintainability pass: every rule is a note, so it never refuses a PR on its own.
+# Optional and stricter: a rule your team wants fixed on every PR belongs in CODING_STANDARDS.md instead, not in both.
+lenses:
+  thermo-nuclear:
+    skill: lenses/thermo-nuclear
+    applies_to: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.go', '**/*.rs', '**/*.java', '**/*.cs', '**/*.py']
+    gate: note

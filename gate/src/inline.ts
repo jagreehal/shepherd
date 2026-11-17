@@ -1,11 +1,15 @@
 // Pins a finding to the line it names. GitHub takes a review comment on a line inside a diff hunk, so gate checks each
 // anchor against the diff before sending it. The review body lists every issue, anchored or not.
+import type { Verdict } from "./github.ts";
 import { diffSectionPath } from "./reviewer.ts";
 
 /** A finding on a line of the head's side of the diff. */
 export type Anchored = { path: string; line: number; body: string };
 
 const MAX_ANCHORS = 25;
+
+/** Line comments kept for coding-standard breaches however many blocking issues a review raises. */
+const STANDARD_SLOTS = 10;
 
 /** The longest title a line comment shows before it falls back to the opening words. */
 const TITLE_MAX = 100;
@@ -107,4 +111,20 @@ export function inlineBody(issue: string, grade: string, clean: (text: string) =
   const cut = clause.slice(0, TITLE_MAX - 1);
 
   return `${grade} · **${clean(`${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : cut.length).replace(/[\s,;:–—-]+$/, "")}…`)}**\n\n${clean(text)}`;
+}
+
+/**
+ * The line comments a review posts. Blocking issues post only on a refusal or an escalation. A coding-standard breach
+ * posts on any finished review, approval included, so triage can fix it; as an open thread it holds the check until then.
+ */
+export function lineComments(verdict: Verdict, llm: { issues: string[]; standards: string[] } | null | undefined, diff: string, grades: { blocking: string; standard: string }, clean: (text: string) => string): Anchored[] {
+  if (verdict === "ERROR" || !llm) return [];
+
+  const anchor = (items: string[], grade: string) => anchoredIssues(items, diff).map((a) => ({ ...a, body: inlineBody(a.body, grade, clean) }));
+
+  const standards = anchor(llm.standards, grades.standard);
+  // Blocking issues lead, but leave standards room: they are what triage fixes, and a busy refusal must not crowd them out.
+  const blocking = verdict === "APPROVED" ? [] : anchor(llm.issues, grades.blocking).slice(0, MAX_ANCHORS - Math.min(standards.length, STANDARD_SLOTS));
+
+  return [...blocking, ...standards].slice(0, MAX_ANCHORS);
 }

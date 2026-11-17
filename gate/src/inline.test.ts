@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { anchoredIssues, commentableLines, inlineBody, issueAnchor } from "./inline.ts";
+import { anchoredIssues, commentableLines, inlineBody, issueAnchor, lineComments } from "./inline.ts";
 
 const diff = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -73,4 +73,25 @@ test("a line comment opens with its grade and a short title, and drops the file:
   expect(body).toContain("…**");
   expect(body).toEndWith(`\n\n${"word ".repeat(30)}end`);
   expect(inlineBody("src/a.ts:1 @team look; see <!-- x -->", grade, (t) => `[${t}]`)).toBe("❌ **Blocks approval** · **[@team look]**\n\n[see <!-- x -->]");
+});
+
+test("a coding-standard breach posts on an approval too, while a blocking issue posts only on a refusal or an escalation", () => {
+  const llm = { issues: ["src/a.ts:11 wrong total"], standards: ["src/a.ts:12 state outside a reducer. ui/CODING_STANDARDS.md: state lives in reducers."] };
+  const grades = { blocking: "BLOCK", standard: "STD" };
+  const heads = (verdict: "APPROVED" | "REFUSED" | "ERROR") => lineComments(verdict, llm, diff, grades, (t) => t).map((c) => c.body.split(" ·")[0]);
+
+  expect(heads("APPROVED")).toEqual(["STD"]);
+  expect(heads("REFUSED")).toEqual(["BLOCK", "STD"]);
+  expect(heads("ERROR")).toEqual([]);
+});
+
+test("a busy refusal leaves room for coding-standard comments", () => {
+  // Every line of a 40-line added file is commentable, so each finding anchors.
+  const big = ["diff --git a/b.ts b/b.ts", "--- /dev/null", "+++ b/b.ts", "@@ -0,0 +1,40 @@", ...Array.from({ length: 40 }, (_, i) => `+line ${i + 1}`), ""].join("\n");
+  const at = (from: number, n: number, what: string) => Array.from({ length: n }, (_, i) => `b.ts:${from + i} ${what}`);
+  const comments = lineComments("REFUSED", { issues: at(1, 25, "bug"), standards: at(26, 12, "standard") }, big, { blocking: "BLOCK", standard: "STD" }, (t) => t);
+  const count = (grade: string) => comments.filter((c) => c.body.startsWith(grade)).length;
+
+  expect(comments.length).toBe(25);
+  expect([count("BLOCK"), count("STD")]).toEqual([15, 10]);
 });

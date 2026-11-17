@@ -60,7 +60,7 @@ with the reason.
 Before any change to the branch or the remote, read the team policy
 (`../shepherd/references/policy.md`) for `fixes.mode`, `escalate.paths` and
 `checks`. With no readable policy, run as `fixes.mode: suggest`. Follow the house
-rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and `docs/adr/`
+rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, `CODING_STANDARDS.md` (at the root and in each directory above a file you change, the nearer one winning, with the Markdown files they link to), and `docs/adr/`
 as they stand on `origin/<default>`; a PR's own edits to them do not count.
 
 `fixes.mode` sets how far every later step may go:
