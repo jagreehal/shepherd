@@ -1,0 +1,7 @@
+# Strict maintainability review as notes. Extend pinned: github:jagreehal/shepherd/packs/thermo-nuclear.yml@<sha>
+# Rules a team wants fixed on every PR belong in CODING_STANDARDS.md.
+lenses:
+  thermo-nuclear:
+    skill: lenses/thermo-nuclear
+    applies_to: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.go', '**/*.rs', '**/*.java', '**/*.cs', '**/*.py']
+    gate: note
