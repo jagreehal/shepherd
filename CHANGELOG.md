@@ -1,5 +1,11 @@
 # @jagreehal/shepherd
 
+## 0.21.1
+
+### Patch Changes
+
+- ac77aa4: Every line comment opens with a bold title. A spaced dash ends the title as a sentence break does, and a first clause too long to scan gives its opening words as the title, with the full text below.
+
 ## 0.21.0
 
 ### Minor Changes
