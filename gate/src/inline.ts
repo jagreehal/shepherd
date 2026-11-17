@@ -7,6 +7,9 @@ export type Anchored = { path: string; line: number; body: string };
 
 const MAX_ANCHORS = 25;
 
+/** The longest title a line comment shows before it falls back to the opening words. */
+const TITLE_MAX = 100;
+
 /** The new-side lines of a section GitHub accepts a comment on: added and context lines, inside a hunk. */
 export function commentableLines(section: string): Set<number> {
   const lines = new Set<number>();
@@ -90,11 +93,18 @@ const LOCATION = /^[\s*_`"']*(?:\.\/)?[^\s:*`"']+:\d+(?:-\d+)?[*_`"']*\s*[-:—�
  */
 export function inlineBody(issue: string, grade: string, clean: (text: string) => string): string {
   const text = issue.replace(LOCATION, "").trim();
-  const title = text.split(/(?<=[.!?;:])\s|\n/)[0]!.replace(/[.;:]$/, "");
+  // The title ends at the first sentence break or spaced dash: models separate a title either way.
+  const end = /(?<=[.!?;:])\s|\s[–—-]\s|\n/.exec(text);
+  const clause = (end ? text.slice(0, end.index) : text).replace(/[.;:]$/, "");
 
-  // A first clause too long to scan stays in the text, and the comment has no title.
-  if (title.length > 100) return `${grade}\n\n${clean(text)}`;
-  const rest = text.slice(text.indexOf(title) + title.length).replace(/^[\s.;:,–—-]+/, "");
+  if (clause.length <= TITLE_MAX) {
+    const rest = end ? text.slice(end.index).replace(/^[\s.;:,–—-]+/, "") : "";
 
-  return [`${grade} · **${clean(title)}**`, ...(rest ? ["", clean(rest)] : [])].join("\n");
+    return [`${grade} · **${clean(clause)}**`, ...(rest ? ["", clean(rest)] : [])].join("\n");
+  }
+
+  // A first clause too long to scan gives its opening words as the title, and the text stays whole below it.
+  const cut = clause.slice(0, TITLE_MAX - 1);
+
+  return `${grade} · **${clean(`${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : cut.length).replace(/[\s,;:–—-]+$/, "")}…`)}**\n\n${clean(text)}`;
 }
