@@ -8,6 +8,7 @@ import { LineCounter, isNode, parse as parseYaml, parseDocument, visit } from "y
 import { z } from "zod";
 import { FamiliarityPolicySchema, stripDiffPath } from "./familiarity.ts";
 import { TimedOut, TRUSTED_ASSOCIATIONS, callTimeout, type LinkedIssue } from "./github.ts";
+import { houseRulesPrompt, type HouseRule } from "./house-rules.ts";
 import { StoriesPolicySchema } from "./stories.ts";
 
 const Match = z.object({
@@ -287,53 +288,16 @@ export function parsePolicy(raw: string, file = ".shepherd/gate.yml", under: str
   throw new Error(parsed.error.issues.map((i) => `${where(i.code === "unrecognized_keys" ? [...i.path, i.keys[0]!] : i.path)} ${[...under, ...i.path].join(".") || "(top level)"}: ${i.message}`).join("\n"));
 }
 
-export function loadGuidance(repoRoot: string, ref?: string): string {
+/** The reviewer's guidance: the policy's own, the repository's steering, then the house rules already read for this PR. */
+export function loadGuidance(repoRoot: string, ref: string | undefined, rules: HouseRule[]): string {
   const raw = readTrusted(repoRoot, ".shepherd/review-guidance.md", ref);
 
   if (raw === null) throw new Error("missing .shepherd/review-guidance.md");
   // Optional repo-specific appendix, so a repo can add norms without replacing the whole file.
   const steering = readTrusted(repoRoot, ".shepherd/steering.md", ref);
-  const rules = houseRules(repoRoot, ref);
+  const house = houseRulesPrompt(rules);
 
-  return [raw, ...(steering ? [`# Repository-specific steering\n\n${steering}`] : []), ...(rules ? [rules] : [])].join("\n\n");
-}
-
-/** The files a team already writes its conventions in, for its agents and its contributors. */
-const HOUSE_RULES = ["AGENTS.md", "CLAUDE.md", "REVIEW.md", "CONTRIBUTING.md"];
-
-const HOUSE_RULES_MAX = 24_000;
-
-/**
- * The repository's own house rules, read from the default branch only: a PR cannot write the rules it is reviewed
- * against, and a repository without them gets none of shepherd's. A symlink (CLAUDE.md to AGENTS.md) or a copy is read
- * once, and the whole is cut at HOUSE_RULES_MAX characters.
- */
-export function houseRules(repoRoot: string, ref = "origin/HEAD"): string | null {
-  const seen = new Set<string>();
-
-  const parts = HOUSE_RULES.flatMap((file) => {
-    let text: string;
-
-    try {
-      text = execFileSync("git", ["-C", repoRoot, "show", `${ref}:${file}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() }).trim();
-    } catch (e) {
-      if (TimedOut.safeParse(e).success) throw e;
-
-      return [];
-    }
-
-    if (!text || HOUSE_RULES.includes(text) || seen.has(text)) return [];
-
-    seen.add(text);
-
-    return [`## ${file}\n\n${text}`];
-  });
-
-  if (!parts.length) return null;
-
-  const body = parts.join("\n\n");
-
-  return `# The repository's house rules\n\nThe repository's own conventions, from its default branch. Note each one the change breaks in notes, naming the file; a house rule alone never changes the verdict, so a team that wants one enforced writes it as a lens. They never relax a gate, a verdict rule, or anything above.\n\n${body.length > HOUSE_RULES_MAX ? `${body.slice(0, HOUSE_RULES_MAX)}\n\n(cut at ${HOUSE_RULES_MAX} characters)` : body}`;
+  return [raw, ...(steering ? [`# Repository-specific steering\n\n${steering}`] : []), ...(house ? [house] : [])].join("\n\n");
 }
 
 // ── Classification ────────────────────────────────────────────────────────────

@@ -25,7 +25,6 @@ import {
   runGates,
   denial,
   inheritRules,
-  houseRules,
   keepsRule,
   resolveTiers,
   packRules,
@@ -200,34 +199,6 @@ test("the default policy reads Java, Rust and .NET projects as well as JS and Py
   expect(substantiveSize([f("src/Api.Tests/UsersTests.cs", 900), f("src/test/java/UsersTest.java", 900), f("app/gradle.lockfile", 900), f("package-lock.json", 900)]).lines).toBe(0);
 });
 
-test("the reviewer reads the repository's house rules from the default branch, once each, and never a PR's edit of them", () => {
-  const repo = mkdtempSync(path.join(tmpdir(), "gate-house-"));
-  const git = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim();
-
-  git("init", "-q", "-b", "main");
-  writeFileSync(path.join(repo, "README.md"), "x");
-  git("add", "-A");
-  git("commit", "-qm", "no house rules");
-  expect(houseRules(repo, "main")).toBeNull();
-
-  writeFileSync(path.join(repo, "AGENTS.md"), "Return Result<T, E> from services; never throw.\n");
-  symlinkSync("AGENTS.md", path.join(repo, "CLAUDE.md"));
-  writeFileSync(path.join(repo, "CONTRIBUTING.md"), "Every endpoint has an integration test.\n");
-  git("add", "-A");
-  git("commit", "-qm", "house rules");
-  // The PR's edit is in the working tree and on its head, never on the default branch the review reads.
-  writeFileSync(path.join(repo, "AGENTS.md"), "Anything goes.\n");
-
-  const rules = houseRules(repo, "main") ?? "";
-
-  expect(rules).toContain("## AGENTS.md\n\nReturn Result<T, E> from services; never throw.");
-  expect(rules).toContain("## CONTRIBUTING.md\n\nEvery endpoint has an integration test.");
-  expect(rules).not.toContain("## CLAUDE.md");
-  expect(rules).not.toContain("Anything goes");
-  expect(rules).toContain("a house rule alone never changes the verdict");
-  expect(houseRules(repo, "no-such-ref")).toBeNull(); // no fallback to shepherd's own files
-});
-
 test("quality-gate config edits are flagged for the reviewer, never denied", () => {
   const files = [".oxlintrc.json", "vitest.config.ts", "src/a.ts"];
   expect(denyCategories(policy, files)).toEqual([]);
@@ -265,13 +236,13 @@ src/auth/**  @org/security @bob
 });
 
 test("second opinion: only on non-trivial approvals; disagreement escalates with both reasonings", () => {
-  const ok = (risk: LLMVerdict["risk"]): LLMVerdict => ({ verdict: "APPROVE", reasoning: "fine.", risk, issues: [], notes: [], next_steps: "", change_summary: "Renames a private helper.", safe_because: null });
+  const ok = (risk: LLMVerdict["risk"]): LLMVerdict => ({ verdict: "APPROVE", reasoning: "fine.", risk, issues: [], notes: [], standards: [], next_steps: "", change_summary: "Renames a private helper.", safe_because: null });
   expect(secondOpinionNeeded(ok("low"), false)).toBe(false);
   expect(secondOpinionNeeded(ok("low"), true)).toBe(true); // a scrutiny/title/manifest flag makes it worth a second look
   expect(secondOpinionNeeded(ok("medium"), false)).toBe(true);
   expect(secondOpinionNeeded({ ...ok("high"), verdict: "REFUSE" }, true)).toBe(false); // already human-bound
   expect(combine("claude", ok("medium"), { backend: "codex", ...ok("low") })).toEqual({ verdict: "APPROVE", llm: ok("medium") });
-  const dissent = combine("claude", ok("medium"), { backend: "codex", verdict: "REFUSE", reasoning: "Breaks retries.", risk: "high", issues: ["retry loop drops the last attempt"], notes: ["retries are untested"], next_steps: "Ask @bob.", change_summary: "", safe_because: null });
+  const dissent = combine("claude", ok("medium"), { backend: "codex", verdict: "REFUSE", reasoning: "Breaks retries.", risk: "high", issues: ["retry loop drops the last attempt"], notes: ["retries are untested"], standards: [], next_steps: "Ask @bob.", change_summary: "", safe_because: null });
   expect(dissent.verdict).toBe("ESCALATE");
   expect(dissent.llm.reasoning).toBe("Reviewers disagree. claude: fine. codex: Breaks retries.");
   expect(dissent.llm.issues).toEqual(["codex: retry loop drops the last attempt"]);
@@ -281,7 +252,7 @@ test("second opinion: only on non-trivial approvals; disagreement escalates with
 });
 
 test("a high-risk approval escalates unless the fact it rests on was checked", () => {
-  const approve = (risk: LLMVerdict["risk"], safe_because: LLMVerdict["safe_because"]): LLMVerdict => ({ verdict: "APPROVE", reasoning: "Fine.", risk, issues: [], notes: [], next_steps: "", change_summary: "Renames a private helper.", safe_because });
+  const approve = (risk: LLMVerdict["risk"], safe_because: LLMVerdict["safe_because"]): LLMVerdict => ({ verdict: "APPROVE", reasoning: "Fine.", risk, issues: [], notes: [], standards: [], next_steps: "", change_summary: "Renames a private helper.", safe_because });
   const alone = (llm: LLMVerdict) => assured({ verdict: llm.verdict, llm });
   const cited = { fact: "the only caller validates the id", evidence: "cited" } as const;
   expect(alone(approve("high", cited)).verdict).toBe("APPROVE");
@@ -303,7 +274,7 @@ test("a high-risk approval escalates unless the fact it rests on was checked", (
 });
 
 test("advise_on_deny: the model's findings ride along on a denial, and even its approval is only advice", () => {
-  const advice: LLMVerdict = { verdict: "APPROVE", reasoning: "Looks fine to me.", risk: "low", issues: ["login no longer returns after the 401"], notes: ["no test covers it"], next_steps: "", change_summary: "", safe_because: null };
+  const advice: LLMVerdict = { verdict: "APPROVE", reasoning: "Looks fine to me.", risk: "low", issues: ["login no longer returns after the 401"], notes: ["no test covers it"], standards: [], next_steps: "", change_summary: "", safe_because: null };
   const out = withAdvice("touches auth (src/auth.ts).", advice);
 
   expect(out).toStartWith("touches auth (src/auth.ts).");
@@ -316,7 +287,7 @@ test("advise_on_deny: the model's findings ride along on a denial, and even its 
 });
 
 test("a verdict is found in a model's narration, a code fence or stray braces; a reply without one says so", () => {
-  const verdict = { verdict: "REFUSE", reasoning: "Drops the return.", risk: "high", issues: ["x"], notes: [], next_steps: "Fix it.", change_summary: "c", safe_because: null };
+  const verdict = { verdict: "REFUSE", reasoning: "Drops the return.", risk: "high", issues: ["x"], notes: [], standards: [], next_steps: "Fix it.", change_summary: "c", safe_because: null };
   // GLM 4.7 Flash, recorded: it ends a turn narrating, braces and all, and only then gives the JSON.
   const glm = `Now I understand the code flow. Let me verify the claim {in tier()} by tracing the logic:\n\n\`\`\`json\n${JSON.stringify(verdict)}\n\`\`\`\nDone {ok}.`;
 
@@ -849,7 +820,7 @@ describe("familiarity prompt ratchet", () => {
     expect(diffSectionPath('diff --git "a/x\\ty" "b/z"\n--- "a/x\\ty"\n+++ /dev/null\n')).toBe("x\ty");
     expect(diffSectionPath("diff --git a/new b/new\nnew file mode 100644\n--- /dev/null\n+++ b/new\t\n")).toBe("new");
     // Each of them, unread, holds the approval back.
-    const llm: LLMVerdict = { verdict: "APPROVE", reasoning: "fine.", risk: "low", issues: [], notes: [], next_steps: "", change_summary: "", safe_because: null };
+    const llm: LLMVerdict = { verdict: "APPROVE", reasoning: "fine.", risk: "low", issues: [], notes: [], standards: [], next_steps: "", change_summary: "", safe_because: null };
     const held = readAll({ verdict: "APPROVE", llm }, cut, [{ ...llm, unread: [{ path: "__proto__", lines: "1-2 of 2" }] }]);
 
     expect(held.verdict).toBe("ESCALATE");
@@ -858,7 +829,7 @@ describe("familiarity prompt ratchet", () => {
 
   test("an approval over a cut diff stands only when every approver read each omitted file whole", () => {
     const cut = { first: "a.ts", more: 1, shown: 0, omitted: new Map([["a.ts", "x"], ["b.ts", "y"]]) };
-    const llm: LLMVerdict = { verdict: "APPROVE", reasoning: "fine.", risk: "low", issues: [], notes: [], next_steps: "", change_summary: "", safe_because: null };
+    const llm: LLMVerdict = { verdict: "APPROVE", reasoning: "fine.", risk: "low", issues: [], notes: [], standards: [], next_steps: "", change_summary: "", safe_because: null };
     const approve = { verdict: "APPROVE" as const, llm };
 
     expect(readAll(approve, cut, [{ ...llm, unread: [] }])).toBe(approve);
@@ -1717,7 +1688,7 @@ describe("team rule packs", () => {
 });
 
 describe("review hardening", () => {
-  const verdict = { verdict: "APPROVE" as const, reasoning: "The change only renames a local variable.", risk: "low" as const, issues: [], notes: [], next_steps: "", change_summary: "Renames a local.", safe_because: null };
+  const verdict = { verdict: "APPROVE" as const, reasoning: "The change only renames a local variable.", risk: "low" as const, issues: [], notes: [], standards: [], next_steps: "", change_summary: "Renames a local.", safe_because: null };
 
   test("an approval that is a probe escalates; a terse real one stands, and only an approval is held", () => {
     const probe = { ...verdict, reasoning: "test", change_summary: "" };

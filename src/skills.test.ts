@@ -236,7 +236,7 @@ describe("skill pack", () => {
     });
 
     test.each(["triage/SKILL.md", "ci-repair/SKILL.md", "shepherd/references/dispatch.md"])("%s follows the default branch's house rules in the same words", (rel) => {
-      expect(read(rel)).toContain("Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do not count.");
+      expect(read(rel)).toContain("Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, `CODING_STANDARDS.md` (at the root and in each directory above a file you change, the nearer one winning, with the Markdown files they link to), and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do not count.");
     });
   });
 
@@ -409,7 +409,7 @@ describe("custom lenses", () => {
     expect(text).toMatch(/^# obs$/m);
     expect(text).toContain("- **boundary-signal**:");
     expect(lensProblems({ skill: ".shepherd/lenses/obs" }, home, repo)).toEqual([]);
-    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: dotnet, go, java, nextjs, node-api, nx-monorepo, observability, owasp-asvs, owasp-llm, pstack, python, react, rust');
+    expect(() => newLens(repo, "other", {}, "nope")).toThrow('no lens template "nope"; available: dotnet, go, java, nextjs, node-api, nx-monorepo, observability, owasp-asvs, owasp-llm, pstack, python, react, rust, thermo-nuclear');
   });
 
   test("validates a team lens before it runs: rules with ids, each id once", () => {

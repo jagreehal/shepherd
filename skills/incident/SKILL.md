@@ -238,7 +238,8 @@ back on `incident/<issue>` with the reproducer in place.
 ## Step 5: Fix
 
 Fix the cause the test exposes. Follow the house rules as they stand on
-`origin/<default>`: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `docs/adr/`.
+`origin/<default>`: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`,
+`CODING_STANDARDS.md` (nested ones above a file you change included), `docs/adr/`.
 A risky change (auth, permissions, billing, data deletion, migrations,
 concurrency, public API, broad shared abstraction) needs a second model's
 `accept` before it is applied, one rung up the ladder in
