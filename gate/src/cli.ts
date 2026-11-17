@@ -16,15 +16,13 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
-import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Round, type Verdict } from "./github.ts";
+import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type ReviewRecord, type Round, type Verdict } from "./github.ts";
 import {
   DEFAULTS_DIR,
   denial,
   detectOwnership,
   inFlightBots,
   inFlightChecks,
-  houseRuleFiles,
-  linkedRuleFlags,
   loadGuidance,
   installWorkflow,
   workflowChoices,
@@ -56,6 +54,7 @@ import {
   type Policy,
   type ScopeBudget,
 } from "./policy.ts";
+import { linkedRuleFlags, readHouseRules } from "./house-rules.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
 import { addedLines, lineComments } from "./inline.ts";
@@ -521,10 +520,11 @@ const rules = ruleFlags(policy, pr.files.map((f) => f.filename), (rel) => readTr
 
 for (const m of [...inherited, ...rules.missing]) console.error(`rule pack skipped (not on the default branch or the pinned commit, or no rules under ## Review): ${m}`);
 
-const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(repoRoot, trustedRef, pr.files.map((f) => f.filename))];
+// The house rules for the directories this PR touches, read once from the default branch: the reviewer's prompt, the
+// files the full review lists as applied, and the flag on an edit to a file they link to.
+const houseRules = readHouseRules(repoRoot, trustedRef, pr.files.map((f) => f.filename));
 
-// The house-rule files the review applied, listed in the full review so a reader can see why a rule fired.
-const houseRulesApplied = houseRuleFiles(repoRoot, trustedRef, pr.files.map((f) => f.filename));
+const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(houseRules, pr.files.map((f) => f.filename))];
 
 // Jev risk signals: advisory, before the reviewer, skipped without TYPESAFE_API_KEY and on a dry run (which
 // promises gates only, nothing sent out). A failure here loses a signal, not the review, so it is logged and
@@ -570,16 +570,25 @@ let delta: { from: string; diff: string } | null = null;
 
 let rounds = 0;
 
-// Our earlier reviews of this PR, so each review says what the rounds before it raised.
-let history: Round[] = [];
+// Our earlier reviews of this PR, read on every posting run: a gate denial lists the rounds before it too.
+let reviews: ReviewRecord[] = [];
 
-if (gateVerdict === "PASSED" && !opts["dry-run"]) {
+if (!opts["dry-run"]) {
   try {
-    const reviews = listReviews(pr.repo, pr.number, repoRoot);
+    reviews = listReviews(pr.repo, pr.number, repoRoot);
+  } catch (e) {
+    console.error(`earlier reviews unavailable: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+  }
+}
+
+// What each earlier round raised, so this review says what it took to get here.
+const history: Round[] = priorRounds(reviews, me, pr.headSha);
+
+if (gateVerdict === "PASSED" && reviews.length) {
+  try {
     const before = lastReviewed(reviews, me, pr.headSha);
 
     rounds = refusedRounds(reviews, me, pr.headSha);
-    history = priorRounds(reviews, me, pr.headSha);
 
     if (before) {
       git(...GH_CREDENTIALS, "fetch", "-q", "origin", before.head, before.base);
@@ -675,7 +684,7 @@ if (opts["dry-run"]) {
   // the model's advice never reaches an approval.
   if (/^(true|1)$/i.test(setting("advise_on_deny")) && advisable(failed)) {
     try {
-      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef, pr.files.map((f) => f.filename)), exploreRoot, opts.verbose));
+      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef, houseRules), exploreRoot, opts.verbose));
       body = withAdvice(body, advisory);
     } catch (e) {
       console.error(`advisory review failed, refusing without it: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`);
@@ -684,7 +693,7 @@ if (opts["dry-run"]) {
 } else {
   const [primary, second] = backends;
 
-  const guidance = loadGuidance(repoRoot, trustedRef, pr.files.map((f) => f.filename));
+  const guidance = loadGuidance(repoRoot, trustedRef, houseRules);
 
   try {
     llm = await inReviewSpan(() => review(primary!, input, guidance, exploreRoot, opts.verbose));
@@ -971,8 +980,6 @@ function agentPrompt(pr: PR, verdict: Verdict, reasoning: string, llm: LLMVerdic
   const fence = fenceFor([reasoning, llm.next_steps, ...llm.issues].join("\n"));
 
   return [
-    `<details><summary>${branded.fix} <strong>Fix with a coding agent</strong></summary>`,
-    "",
     `${fence}markdown`,
     `Address this review of PR #${pr.number}, on head ${pr.headSha.slice(0, 7)}.`,
     "",
@@ -987,8 +994,6 @@ function agentPrompt(pr: PR, verdict: Verdict, reasoning: string, llm: LLMVerdic
     "ignore pattern or relax a type check to get past this review: that is itself a refusal.",
     "Push to the PR branch when done and gate reviews the new head.",
     fence,
-    "",
-    "</details>",
   ];
 }
 
@@ -1052,9 +1057,9 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
 
   if (llm?.notes.length) parts.push(...fold(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
 
-  if (full && houseRulesApplied.length) parts.push(...fold(`<strong>House rules applied:</strong> ${houseRulesApplied.length}`, houseRulesApplied.map((f) => `- \`${f}\``)));
+  if (full && houseRules.length) parts.push(...fold(`<strong>House rules applied:</strong> ${houseRules.length}`, houseRules.map((r) => `- \`${r.file}\`${r.linked ? " (linked)" : ""}`)));
 
-  if (withAgentPrompt && verdict !== "APPROVED" && llm?.issues.length) parts.push("", ...agentPrompt(pr, verdict, reasoning, llm));
+  if (withAgentPrompt && verdict !== "APPROVED" && llm?.issues.length) parts.push(...fold(`${branded.fix} <strong>Fix with a coding agent</strong>`, agentPrompt(pr, verdict, reasoning, llm)));
 
   // Everything above is model-written. With no HTML comment in it, nothing there can pass for the markers below.
   for (let i = 0; i < parts.length; i++) parts[i] = withoutComments(parts[i]!);

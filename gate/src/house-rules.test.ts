@@ -4,7 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { houseRules, linkedRuleFlags, PolicySchema, ruleLinks, scrutinyFlags } from "./policy.ts";
+import { houseRulesPrompt, linkedRuleFlags, readHouseRules, ruleLinks } from "./house-rules.ts";
+import { PolicySchema, scrutinyFlags } from "./policy.ts";
+
+const houseRules = (repo: string, ref: string, paths: string[] = []) => houseRulesPrompt(readHouseRules(repo, ref, paths));
+
+const edits = (repo: string, paths: string[]) => linkedRuleFlags(readHouseRules(repo, "main", paths), paths);
 
 test("the reviewer reads the repository's house rules from the default branch, once each, and never a PR's edit of them", () => {
   const repo = mkdtempSync(path.join(tmpdir(), "gate-house-"));
@@ -60,9 +65,9 @@ test("the reviewer reads the repository's house rules from the default branch, o
   expect(api).not.toContain("ui/CODING_STANDARDS.md");
   expect(api).not.toContain("docs/forms.md");
   // A PR editing the linked doc is flagged for the reviewer, but only when a changed file's rules link to it.
-  expect(linkedRuleFlags(repo, "main", ["ui/forms/Login.tsx", "docs/forms.md"])[0]?.files).toEqual(["docs/forms.md"]);
-  expect(linkedRuleFlags(repo, "main", ["api/users.ts", "docs/forms.md"])).toEqual([]);
-  expect(linkedRuleFlags(repo, "main", ["ui/forms/Login.tsx"])).toEqual([]);
+  expect(edits(repo, ["ui/forms/Login.tsx", "docs/forms.md"])[0]?.files).toEqual(["docs/forms.md"]);
+  expect(edits(repo, ["api/users.ts", "docs/forms.md"])).toEqual([]);
+  expect(edits(repo, ["ui/forms/Login.tsx"])).toEqual([]);
 });
 
 test("house-rule links resolve inside the repository only", () => {

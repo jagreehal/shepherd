@@ -7,3 +7,5 @@ The review reads `CODING_STANDARDS.md` and the other house rules at the root and
 A `thermo-nuclear` lens pack adapts Cursor's strict maintainability review: a reframing that would remove new branches, special cases in unrelated flows, growth of files over 1000 lines, one-call wrappers, casts and silent fallbacks, logic outside its owning layer, and half-applied updates. Every rule is a note. It is the optional, stricter pass: a rule a team wants fixed on every PR belongs in `CODING_STANDARDS.md` instead, not in both.
 
 A review has a quick view and a full view. The PR comment lists the earlier rounds, each with its verdict, head and reason, never folded; folded reviews name their reason; coding standards open on an approval; and a link leads to the run's summary page, which holds the whole review with every section open and the house-rule files that applied.
+
+The house rules are read once per review in `gate/src/house-rules.ts`, a gate denial lists the earlier rounds too, and the full view opens the fix-with-an-agent prompt.

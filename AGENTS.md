@@ -70,7 +70,9 @@ to all of them.
   directory above a changed file, the nearer one winning. A `CODING_STANDARDS.md`
   breach posts as a line comment on any verdict, so triage fixes it, and holds
   the check only as an open thread; a breach of the others is a note. A rule a
-  team wants to refuse a PR is a lens with a `gate`.
+  team wants to refuse a PR is a lens with a `gate`. Breaking a house rule is
+  never a refusal; relaxing one is, whether the PR edits a house-rule file or a
+  file one links to.
 - **A base conflict is resolved by a merge, never a rebase,** and only where
   no decision hides in it: nothing under `escalate.paths` or a deferred thread,
   nothing risky, no choice of what the product does. A resolution changes the
