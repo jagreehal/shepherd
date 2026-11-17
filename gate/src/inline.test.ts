@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { inert } from "./reviewer.ts";
 import { anchoredIssues, commentableLines, inlineBody, issueAnchor, lineComments } from "./inline.ts";
 
 const diff = [
@@ -94,4 +95,11 @@ test("a busy refusal leaves room for coding-standard comments", () => {
 
   expect(comments.length).toBe(25);
   expect([count("BLOCK"), count("STD")]).toEqual([15, 10]);
+});
+
+test("model text never mentions an account: GitHub would notify whoever owns the name", () => {
+  const z = "\u200B";
+
+  expect(inert("add @returns, see @types/node and (@octocat)")).toBe(`add @${z}returns, see @${z}types/node and (@${z}octocat)`);
+  expect(inert("mail a@b.com")).toBe("mail a@b.com");
 });

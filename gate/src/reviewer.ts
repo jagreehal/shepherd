@@ -89,9 +89,15 @@ export function sanitize(s: string | null | undefined, max: number): string {
  * A zero-width space goes after every `<` that could open a tag and between `!` and `[`: HTML needs a letter, `/`,
  * `!` or `?` straight after `<`, and an image needs `![`, so nothing on the page fetches a URL (an auto-fetched image
  * is an exfil channel: its URL can carry what the model read). No parsing decides what is code, so no escaped backtick
- * or unclosed span can make the renderer and this function disagree, and code still reads `Map<K, V>`.
+ * or unclosed span can make the renderer and this function disagree, and code still reads `Map<K, V>`. A zero-width
+ * space after an `@` that could start a mention (`@returns`, `@types/node`) keeps model text from notifying a real
+ * account; an email address reads as before.
  */
-export const inert = (s: string) => s.replace(/<(?=[A-Za-z/!?])/g, "<\u200B").replace(/!\[/g, "!\u200B[");
+export const inert = (s: string) =>
+  s
+    .replace(/<(?=[A-Za-z/!?])/g, "<\u200B")
+    .replace(/!\[/g, "!\u200B[")
+    .replace(/(^|[^\w@])@(?=[A-Za-z0-9])/g, "$1@\u200B");
 
 /** A Markdown fence longer than any backtick run in `text`, so the text cannot close it early. */
 export const fenceFor = (text: string) => "`".repeat(Math.max(5, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
