@@ -60,9 +60,17 @@ test("a line comment opens with its grade and a short title, and drops the file:
   expect(inlineBody("`src/index.ts:35`: Removed division by zero check, breaking contract", grade, same)).toBe("❌ **Blocks approval** · **Removed division by zero check, breaking contract**");
   expect(inlineBody("**src/a.ts:12-14** wrong total. The sum skips the last row.", grade, same)).toBe("❌ **Blocks approval** · **wrong total**\n\nThe sum skips the last row.");
 
-  // A first clause too long to scan keeps the whole text and no title; model text always goes through `clean`.
-  const long = `src/a.ts:1 ${"word ".repeat(30)}end`;
+  // A spaced dash ends the title as a sentence break does; a hyphen inside a word does not.
+  expect(inlineBody("Remove division-by-zero error – divide(1,0) now returns Infinity instead of throwing as documented and expected by tests; restore throw.", grade, same)).toBe("❌ **Blocks approval** · **Remove division-by-zero error**\n\ndivide(1,0) now returns Infinity instead of throwing as documented and expected by tests; restore throw.");
+  expect(inlineBody("src/a.ts:3 unsafe without SAFETY comment - add one", grade, same)).toBe("❌ **Blocks approval** · **unsafe without SAFETY comment**\n\nadd one");
 
-  expect(inlineBody(long, grade, same)).toBe(`❌ **Blocks approval**\n\n${"word ".repeat(30)}end`);
+  // A first clause too long to scan still gets a title, its opening words, and the whole text stays below it.
+  const long = `src/a.ts:1 ${"word ".repeat(30)}end`;
+  const body = inlineBody(long, grade, same);
+
+  expect(body).toStartWith("❌ **Blocks approval** · **word word");
+  expect(body.split("\n")[0]!.length).toBeLessThan(130);
+  expect(body).toContain("…**");
+  expect(body).toEndWith(`\n\n${"word ".repeat(30)}end`);
   expect(inlineBody("src/a.ts:1 @team look; see <!-- x -->", grade, (t) => `[${t}]`)).toBe("❌ **Blocks approval** · **[@team look]**\n\n[see <!-- x -->]");
 });
