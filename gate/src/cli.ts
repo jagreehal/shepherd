@@ -16,7 +16,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
-import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Verdict } from "./github.ts";
+import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type ReviewRecord, type Round, type Verdict } from "./github.ts";
 import {
   DEFAULTS_DIR,
   denial,
@@ -54,16 +54,17 @@ import {
   type Policy,
   type ScopeBudget,
 } from "./policy.ts";
+import { linkedRuleFlags, readHouseRules } from "./house-rules.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
-import { addedLines, anchoredIssues, inlineBody } from "./inline.ts";
+import { addedLines, lineComments } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { explainFailure, failureText } from "./provider-errors.ts";
 import { catalogPrice } from "./prices.ts";
 import { beginReviewSpan, endReviewSpan, inReviewSpan, keyEnvFor, keySource, parseModelId, reviewMeasurements, summarizeRun, type ReviewAttributes } from "./llm.ts";
 import { configSummary, effectiveConfig, setting, useSettings, type Settings } from "./config.ts";
 import { egressRefusals } from "./isolated-cli.ts";
-import { advisable, assured, type Backend, combine, converged, diffCut, fenceFor, firstThatFits, inert, mergeRisk, oneLine, readAll, type Combined, review, reviewers, secondOpinionNeeded, shortened, withAdvice, type LLMVerdict, type Opinion, type Reviewed } from "./reviewer.ts";
+import { advisable, assured, type Backend, combine, converged, diffCut, fenceFor, firstThatFits, inert, mergeRisk, readAll, type Combined, review, reviewers, secondOpinionNeeded, shortened, withAdvice, type LLMVerdict, type Opinion, type Reviewed } from "./reviewer.ts";
 import { flagged, riskSignals, type Signals } from "./signals.ts";
 import { approvedOn, stackedParent, wrongBase, type StackDeps, type WrongBase } from "./stack.ts";
 import { evidenceSummary, ghStoryDeps, loadStoryEvidence, storyEvidenceRecord, weakenedCount, type StoryEvidence } from "./stories.ts";
@@ -519,7 +520,11 @@ const rules = ruleFlags(policy, pr.files.map((f) => f.filename), (rel) => readTr
 
 for (const m of [...inherited, ...rules.missing]) console.error(`rule pack skipped (not on the default branch or the pinned commit, or no rules under ## Review): ${m}`);
 
-const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags];
+// The house rules for the directories this PR touches, read once from the default branch: the reviewer's prompt, the
+// files the full review lists as applied, and the flag on an edit to a file they link to.
+const houseRules = readHouseRules(repoRoot, trustedRef, pr.files.map((f) => f.filename));
+
+const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(houseRules, pr.files.map((f) => f.filename))];
 
 // Jev risk signals: advisory, before the reviewer, skipped without TYPESAFE_API_KEY and on a dry run (which
 // promises gates only, nothing sent out). A failure here loses a signal, not the review, so it is logged and
@@ -565,9 +570,22 @@ let delta: { from: string; diff: string } | null = null;
 
 let rounds = 0;
 
-if (gateVerdict === "PASSED" && !opts["dry-run"]) {
+// Our earlier reviews of this PR, read on every posting run: a gate denial lists the rounds before it too.
+let reviews: ReviewRecord[] = [];
+
+if (!opts["dry-run"]) {
   try {
-    const reviews = listReviews(pr.repo, pr.number, repoRoot);
+    reviews = listReviews(pr.repo, pr.number, repoRoot);
+  } catch (e) {
+    console.error(`earlier reviews unavailable: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+  }
+}
+
+// What each earlier round raised, so this review says what it took to get here.
+const history: Round[] = priorRounds(reviews, me, pr.headSha);
+
+if (gateVerdict === "PASSED" && reviews.length) {
+  try {
     const before = lastReviewed(reviews, me, pr.headSha);
 
     rounds = refusedRounds(reviews, me, pr.headSha);
@@ -666,7 +684,7 @@ if (opts["dry-run"]) {
   // the model's advice never reaches an approval.
   if (/^(true|1)$/i.test(setting("advise_on_deny")) && advisable(failed)) {
     try {
-      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef), exploreRoot, opts.verbose));
+      advisory = await inReviewSpan(() => review(backends[0]!, input, loadGuidance(repoRoot, trustedRef, houseRules), exploreRoot, opts.verbose));
       body = withAdvice(body, advisory);
     } catch (e) {
       console.error(`advisory review failed, refusing without it: ${String(e instanceof Error ? e.message : e).split("\n")[0]}`);
@@ -675,7 +693,7 @@ if (opts["dry-run"]) {
 } else {
   const [primary, second] = backends;
 
-  const guidance = loadGuidance(repoRoot, trustedRef);
+  const guidance = loadGuidance(repoRoot, trustedRef, houseRules);
 
   try {
     llm = await inReviewSpan(() => review(primary!, input, guidance, exploreRoot, opts.verbose));
@@ -778,7 +796,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    scrub(`### gate: ${verdict} on #${pr.number} \`${pr.headSha.slice(0, 7)}\`\n\n${inert(oneLine(scrub(body), 1000))}\n\n${runs.flatMap(([role, r]) => (r ? [`- ${role}: ${summarizeRun(r)}`] : [])).join("\n")}\n`),
+    scrub(`${renderBody(pr, verdict, body, llm, opinion, gated.gates, "full")}\n\n${runs.flatMap(([role, r]) => (r ? [`- ${role}: ${summarizeRun(r)}`] : [])).join("\n")}\n`),
   );
 }
 
@@ -787,7 +805,7 @@ if (opts.post) {
   // Each line comment says what it does to the verdict, in the review's own glyph.
   const grade = verdict === "REFUSED" ? `${branded.REFUSED} **Blocks approval**` : `${branded.ESCALATE} **Needs a person**`;
   // A stacked review reads the delta over its parent, and GitHub anchors comments to the PR's own diff.
-  const anchors = verdict === "APPROVED" || verdict === "ERROR" || pr.stack ? [] : anchoredIssues(llm?.issues ?? [], pr.diff).map((a) => ({ ...a, body: inlineBody(a.body, grade, (t) => inert(withoutComments(t))) }));
+  const anchors = pr.stack ? [] : lineComments(verdict, llm, pr.diff, { blocking: grade, standard: `${branded.fix} **Coding standard**` }, (t) => inert(withoutComments(t)));
   // Read before posting: a finding that is an open thread's again posts nothing new, and the thread stays.
   const plan = planThreads(reviewThreads(pr.repo, pr.number, repoRoot), anchors, delta ? addedLines(delta.diff) : null, me);
   // A gate denial or an ERROR reviewed nothing new, so it settles no thread.
@@ -962,8 +980,6 @@ function agentPrompt(pr: PR, verdict: Verdict, reasoning: string, llm: LLMVerdic
   const fence = fenceFor([reasoning, llm.next_steps, ...llm.issues].join("\n"));
 
   return [
-    `<details><summary>${branded.fix} <strong>Fix with a coding agent</strong></summary>`,
-    "",
     `${fence}markdown`,
     `Address this review of PR #${pr.number}, on head ${pr.headSha.slice(0, 7)}.`,
     "",
@@ -978,8 +994,6 @@ function agentPrompt(pr: PR, verdict: Verdict, reasoning: string, llm: LLMVerdic
     "ignore pattern or relax a type check to get past this review: that is itself a refusal.",
     "Push to the PR branch when done and gate reviews the new head.",
     fence,
-    "",
-    "</details>",
   ];
 }
 
@@ -988,12 +1002,17 @@ function section(title: string, body: string[], open = false): string[] {
   return ["", `<details${open ? " open" : ""}><summary>${title}</summary>`, "", ...body, "", "</details>"];
 }
 
+/** Drop the fix-with-an-agent block so a shortened body fits GitHub's length limit. */
+function withoutFixPrompt(body: string): string {
+  return body.replace(/\n*<details(?: open)?><summary>[^<]*<strong>Fix with a coding agent<\/strong><\/summary>[\s\S]*?<\/details>/g, "");
+}
+
 /** The review body, within the length GitHub accepts. */
 function fitBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[]): string {
   // The last holds a heading, 2,000 characters of reasoning and the markers, so its length has a fixed ceiling.
   return firstThatFits(MAX_REVIEW_BODY, [
-    () => renderBody(pr, verdict, reasoning, llm, opinion, gates),
-    () => renderBody(pr, verdict, reasoning.slice(0, 4000), llm && shortened(llm, 30_000), opinion, gates, false),
+    () => renderBody(pr, verdict, reasoning, llm, opinion, gates, "quick"),
+    () => withoutFixPrompt(renderBody(pr, verdict, reasoning.slice(0, 4000), llm && shortened(llm, 30_000), opinion, gates, "quick")),
     () => [branded.heading(verdict), "", inert(withoutComments(reasoning.slice(0, 2000))), "", "This review ran past GitHub's length limit. The run's evidence holds it whole.", ...markers(pr, verdict)].join("\n"),
   ]);
 }
@@ -1008,11 +1027,18 @@ function markers(pr: PR, verdict: Verdict): string[] {
   ];
 }
 
-function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[], withAgentPrompt = true): string {
+/**
+ * The review as one view of it. `quick` is the PR comment: verdict, risk, the rounds before it and the findings, with the
+ * rest folded and a link to the run. `full` is the run's summary page: every section open, the house-rule files that
+ * applied, and nothing cut.
+ */
+function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[], view: "quick" | "full"): string {
+  const full = view === "full";
+  const fold = (title: string, body: string[], open = false) => section(title, body, open || full);
   // Model-written text goes through inert one field at a time: gate's own <sub>, <strong> and <details> stay markup.
-  const parts = [`${branded.heading(verdict)} <sub>· head \`${pr.headSha.slice(0, 7)}\`</sub>`, "", inert(reasoning)];
+  const round = history.length ? ` · round ${history.length + 1}` : "";
+  const parts = [`${branded.heading(verdict)} <sub>· head \`${pr.headSha.slice(0, 7)}\`${round}</sub>`, "", inert(reasoning)];
 
-  // Risk sits under the verdict: a reader triages by it.
   if (llm && verdict !== "ERROR") {
     const risk = mergeRisk(verdict, llm.risk);
 
@@ -1025,29 +1051,43 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
 
   if (verdict === "APPROVED" && llm?.safe_because) parts.push("", `**Safe because:** ${inert(llm.safe_because.fact)} (${llm.safe_because.evidence})`);
 
-  if (llm?.issues.length) parts.push(...section(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
+  if (history.length) parts.push("", "**Earlier rounds:**", ...history.map((r) => `- ${branded[r.verdict]} \`${r.head.slice(0, 7)}\` ${r.why}`));
 
-  if (llm?.notes.length) parts.push(...section(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
+  if (llm?.issues.length) parts.push(...fold(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
 
-  if (withAgentPrompt && verdict !== "APPROVED" && llm?.issues.length) parts.push("", ...agentPrompt(pr, verdict, reasoning, llm));
+  if (llm?.standards.length) parts.push(...fold(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((i) => `- ${inert(i)}`), verdict === "APPROVED"));
+
+  if (llm?.notes.length) parts.push(...fold(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
+
+  if (full && houseRules.length) parts.push(...fold(`<strong>House rules applied:</strong> ${houseRules.length}`, houseRules.map((r) => `- \`${r.file}\`${r.linked ? " (linked)" : ""}`)));
+
+  if (verdict !== "APPROVED" && llm?.issues.length) parts.push(...fold(`${branded.fix} <strong>Fix with a coding agent</strong>`, agentPrompt(pr, verdict, reasoning, llm)));
 
   // Everything above is model-written. With no HTML comment in it, nothing there can pass for the markers below.
   for (let i = 0; i < parts.length; i++) parts[i] = withoutComments(parts[i]!);
   const failed = gates.filter((g) => !g.passed).length;
   const run = llm?.run ? summarizeRun(llm.run) : backends[0];
 
-  if (policy.stories) parts.push(...section(`<strong>Test evidence:</strong> ${stories ? evidenceSummary(stories) : "not read"}`, [`From the \`${policy.stories.artifact}\` artifact of \`${policy.stories.workflow}\`.`]));
+  if (policy.stories) parts.push(...fold(`<strong>Test evidence:</strong> ${stories ? evidenceSummary(stories) : "not read"}`, [`From the \`${policy.stories.artifact}\` artifact of \`${policy.stories.workflow}\`.`]));
 
   parts.push(
-    ...section(`<strong>Gates:</strong> ${branded.pass} ${gates.length - failed}${failed ? ` · ${branded.fail} ${failed}` : ""}`, ["| gate | result |", "|---|---|", ...gates.map((g) => `| ${g.gate} | ${g.passed ? branded.pass : branded.fail} ${inert(g.message)} |`)]),
-    ...section(`<strong>Reviewer:</strong> ${run}${llm ? ` → ${llm.verdict}` : ""}${opinion ? ` · second opinion → ${opinion.verdict}` : ""}`, [
+    ...fold(`<strong>Gates:</strong> ${branded.pass} ${gates.length - failed}${failed ? ` · ${branded.fail} ${failed}` : ""}`, ["| gate | result |", "|---|---|", ...gates.map((g) => `| ${g.gate} | ${g.passed ? branded.pass : branded.fail} ${inert(g.message)} |`)]),
+    ...fold(`<strong>Reviewer:</strong> ${run}${llm ? ` → ${llm.verdict}` : ""}${opinion ? ` · second opinion → ${opinion.verdict}` : ""}`, [
       ...(opinion ? [`Second opinion: ${opinion.run ? summarizeRun(opinion.run) : opinion.backend} → ${opinion.verdict} (${opinion.risk} risk)`, ""] : []),
       `shepherd ${VERSION} · head \`${pr.headSha.slice(0, 7)}\` · base \`${pr.baseRef}@${pr.baseSha.slice(0, 7)}\`${pr.stack ? ` · stacked on #${pr.stack.parent} \`${pr.stack.parentHead.slice(0, 7)}\`` : ""} · policy \`${policySource(`origin/${pr.defaultBranch}`).policy}\` · risk ${llm?.risk ?? "n/a"}`,
     ]),
+    ...(full ? [] : runLink()),
     ...markers(pr, verdict),
   );
 
   return parts.join("\n").replace(/!\[([^\]]*)\]\(/g, "[image: $1]("); // no auto-fetched images: a markdown image is an exfil channel
+}
+
+/** The quick view's pointer to the full review on the run's summary page; nothing outside Actions. */
+function runLink(): string[] {
+  const { GITHUB_SERVER_URL: server = "https://github.com", GITHUB_REPOSITORY: repo, GITHUB_RUN_ID: run } = process.env;
+
+  return repo && run ? ["", `[Full review →](${server}/${repo}/actions/runs/${run})`] : [];
 }
 
 /** "+a −r lines": how far an upgraded file moved, counting lines as a multiset (order ignored). */

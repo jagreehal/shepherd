@@ -27,8 +27,9 @@ export const VerdictSchema = z.object({
   verdict: z.enum(["APPROVE", "REFUSE", "ESCALATE"]),
   reasoning: z.string().describe("1-2 sentences: your judgment call, not a code review. Plain language, no tier codes."),
   risk: z.enum(["low", "medium", "high"]).describe("What merging this head as it stands could break, counting the issues you found. high: data loss, a security hole, a wrong charge, or callers broken. medium: a contained bug, or a risk you could not verify. low: contained, reversible, or style only."),
-  issues: z.array(z.string()).describe("Blocking issues only: each one is a reason for this verdict that the author must fix. Start with file:line and a short title. For a bug, give the input, what the code does and what it should. End with the fix."),
+  issues: z.array(z.string()).describe("Blocking issues only: each one is a reason for this verdict that the author must fix. Start with file:line and a short title. For a bug, give the input, what the code does and what it should. End with the fix. A CODING_STANDARDS.md breach goes in standards, never here, unless it is also a wrong result you can show for an ordinary input."),
   notes: z.array(z.string()).default([]).describe("Non-blocking observations: refuted concerns, follow-ups, things worth knowing. Never repeat an issue here."),
+  standards: z.array(z.string()).default([]).describe("Each place the diff's added lines break a rule in a CODING_STANDARDS.md the prompt quotes: file:line and a short title, the file and rule quoted, then the fix. Never blocking and never changes the verdict."),
   next_steps: z.string().describe("Empty on APPROVE. Otherwise what the author does next: who to ask, which comment to address."),
   change_summary: z.string().describe("What changed, for a teammate who never saw the PR. Own words, never quote the diff. Under 600 chars."),
   safe_because: z
@@ -62,8 +63,9 @@ Respond with the JSON verdict only, no prose around it, exactly these keys:
 {"verdict": "APPROVE" | "REFUSE" | "ESCALATE",
  "reasoning": "1-2 sentences, your judgment call, plain language, no tier codes",
  "risk": "low" | "medium" | "high": what merging this head as it stands could break, counting your issues (high: data loss, security, a wrong charge, broken callers; medium: a contained bug or an unverified risk; low: contained, reversible, style),
- "issues": ["one blocking issue per string: file:line and a short title; for a bug, the input, what the code does and what it should; then the fix; empty array if none"],
+ "issues": ["one blocking issue per string: file:line and a short title; for a bug, the input, what the code does and what it should; then the fix; a CODING_STANDARDS.md breach goes in standards, not here; empty array if none"],
  "notes": ["non-blocking observations: refuted concerns, follow-ups; empty array if none"],
+ "standards": ["one CODING_STANDARDS.md breach per string, on a line the PR added: file:line and a short title; the file and the rule quoted; then the fix; empty array if none"],
  "next_steps": "empty string on APPROVE; otherwise what the author does next",
  "change_summary": "what changed, for a teammate who never saw the PR; own words, never quote the diff; under 600 chars",
  "safe_because": {"fact": "on APPROVE, the one fact the change is safe because of", "evidence": "claimed" | "cited" | "traced" | "tested"} or null}
@@ -87,9 +89,15 @@ export function sanitize(s: string | null | undefined, max: number): string {
  * A zero-width space goes after every `<` that could open a tag and between `!` and `[`: HTML needs a letter, `/`,
  * `!` or `?` straight after `<`, and an image needs `![`, so nothing on the page fetches a URL (an auto-fetched image
  * is an exfil channel: its URL can carry what the model read). No parsing decides what is code, so no escaped backtick
- * or unclosed span can make the renderer and this function disagree, and code still reads `Map<K, V>`.
+ * or unclosed span can make the renderer and this function disagree, and code still reads `Map<K, V>`. A zero-width
+ * space after an `@` that could start a mention (`@returns`, `@types/node`) keeps model text from notifying a real
+ * account; an email address reads as before.
  */
-export const inert = (s: string) => s.replace(/<(?=[A-Za-z/!?])/g, "<\u200B").replace(/!\[/g, "!\u200B[");
+export const inert = (s: string) =>
+  s
+    .replace(/<(?=[A-Za-z/!?])/g, "<\u200B")
+    .replace(/!\[/g, "!\u200B[")
+    .replace(/(^|[^\w@])@(?=[A-Za-z0-9])/g, "$1@\u200B");
 
 /** A Markdown fence longer than any backtick run in `text`, so the text cannot close it early. */
 export const fenceFor = (text: string) => "`".repeat(Math.max(5, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
@@ -516,6 +524,7 @@ export function combine(primary: Backend, llm: LLMVerdict, opinion: Opinion): Co
       risk: opinion.risk,
       issues: [...llm.issues, ...opinion.issues.map((i) => `${opinion.backend}: ${i}`)],
       notes: [...llm.notes, ...opinion.notes.map((i) => `${opinion.backend}: ${i}`)],
+      standards: [...llm.standards, ...opinion.standards.map((i) => `${opinion.backend}: ${i}`)],
       next_steps: opinion.next_steps || llm.next_steps || "A human decides.",
     },
   };
@@ -534,13 +543,13 @@ export async function review(backend: Backend, input: ReviewInput, guidance: str
 
   const reviewed = backend === "claude" ? viaClaudeCode(system, prompt, repoRoot, verbose) : backend === "codex" ? viaCodex(system, prompt, repoRoot, verbose) : await viaModel(backend === "api" ? setting("model") : backend, system, prompt, repoRoot, input, verbose);
 
-  return { ...reviewed, reasoning: unescaped(reviewed.reasoning), issues: reviewed.issues.map(unescaped), notes: reviewed.notes.map(unescaped), next_steps: unescaped(reviewed.next_steps) };
+  return { ...reviewed, reasoning: unescaped(reviewed.reasoning), issues: reviewed.issues.map(unescaped), notes: reviewed.notes.map(unescaped), standards: reviewed.standards.map(unescaped), next_steps: unescaped(reviewed.next_steps) };
 }
 
 /** A verdict with its issues and notes sharing `max` characters and the other fields capped. The evidence bundle keeps them whole. */
 export function shortened<T extends LLMVerdict>(llm: T, max: number): T {
   const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… (cut to fit; the evidence bundle has it whole)` : s);
-  const each = Math.floor(max / Math.max(1, llm.issues.length + llm.notes.length));
+  const each = Math.floor(max / Math.max(1, llm.issues.length + llm.notes.length + llm.standards.length));
 
   return {
     ...llm,
@@ -550,6 +559,7 @@ export function shortened<T extends LLMVerdict>(llm: T, max: number): T {
     safe_because: llm.safe_because && { ...llm.safe_because, fact: cap(llm.safe_because.fact, 1000) },
     issues: llm.issues.map((i) => cap(i, each)),
     notes: llm.notes.map((n) => cap(n, each)),
+    standards: llm.standards.map((n) => cap(n, each)),
   };
 }
 
@@ -739,7 +749,7 @@ async function viaModel(modelId: string, system: string, prompt: string, repoRoo
     approves: (v) => v.verdict === "APPROVE",
   });
 
-  if (result.refused) return { verdict: "ESCALATE", reasoning: "Model declined to review.", risk: "high", issues: [], notes: [], next_steps: "Human review.", change_summary: "", safe_because: null, run: result.run, unread: result.unread };
+  if (result.refused) return { verdict: "ESCALATE", reasoning: "Model declined to review.", risk: "high", issues: [], notes: [], standards: [], next_steps: "Human review.", change_summary: "", safe_because: null, run: result.run, unread: result.unread };
 
   return { ...(result.output ?? parseVerdict(result.text)), run: result.run, unread: result.unread };
 }

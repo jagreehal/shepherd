@@ -523,9 +523,41 @@ const SUPERSEDED = "<details><summary>Superseded: ";
 export function supersededBody(r: ReviewRecord, latestId: number): string | null {
   if (r.body.startsWith(SUPERSEDED)) return null;
 
-  const verdict = /: (APPROVED|REFUSED|ESCALATE|ERROR)\b/.exec(r.body.split("\n", 1)[0] ?? "")?.[1] ?? r.state.toLowerCase();
+  const verdict = headingVerdict(r.body) ?? r.state.toLowerCase();
+  // Its reason, so the fold says what the round raised without opening it. The body already made it inert.
+  const why = clip(opening(r.body).first);
 
-  return `${SUPERSEDED}gate ${verdict} on <code>${reviewedHead(r).slice(0, 7)}</code> · <a href="#pullrequestreview-${latestId}">latest review</a></summary>\n\n${r.body}\n\n</details>`;
+  return `${SUPERSEDED}shepherd ${verdict} on <code>${reviewedHead(r).slice(0, 7)}</code>${why ? ` — ${why}` : ""} · <a href="#pullrequestreview-${latestId}">latest review</a></summary>\n\n${r.body}\n\n</details>`;
+}
+
+/** The verdict a review's heading names, folded or not; undefined for a body with no shepherd heading. */
+const headingVerdict = (body: string) => z.enum(["APPROVED", "REFUSED", "ESCALATE", "ERROR"]).safeParse(/: (APPROVED|REFUSED|ESCALATE|ERROR)\b/.exec(opening(body).heading)?.[1]).data;
+
+/** One line of a review's reasoning, short enough to read in a fold or a list. */
+const clip = (text: string, max = 140) => (text.length > max ? `${text.slice(0, max - 1).replace(/\s+\S*$/, "")}…` : text).replace(/[<>]/g, "");
+
+/** An earlier review of ours: the head it read, its verdict and the first line of its reasoning. */
+export type Round = { head: string; verdict: "APPROVED" | "REFUSED" | "ESCALATE"; why: string };
+
+/**
+ * Our earlier reviews of this PR that a model read, oldest first: what each round raised, for the review's history. A
+ * round is a head: a rerun replaces that head's earlier review, and reviews of `head` itself are this round, not history.
+ */
+export function priorRounds(reviews: ReviewRecord[], botLogin: string, head: string): Round[] {
+  const byHead = new Map<string, Round>();
+
+  for (const r of reviews) {
+    const verdict = headingVerdict(r.body);
+    const read = reviewedShas(r)?.head;
+
+    // unread() drops ERROR and gate denials, so a kept verdict is one a model reached.
+    if (!isOurs(r, botLogin) || unread(r.body) || !verdict || verdict === "ERROR" || !read || read === head) continue;
+
+    byHead.delete(read); // re-inserted, so the head sits where its latest review does
+    byHead.set(read, { head: read, verdict, why: clip(opening(r.body).first) });
+  }
+
+  return [...byHead.values()];
 }
 
 /**

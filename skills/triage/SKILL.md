@@ -321,8 +321,8 @@ unsure and the comment predates the last push, skip rather than act.
   ignored. A fix the section lists under "Escalate" is deferred, with that
   line quoted in the report. Add the trailer `Shepherd-Lens: <name>` to the
   commit.
-- **House rules.** Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and
-  `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
+- **House rules.** Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, `CODING_STANDARDS.md` (at the root and in each directory above a file you change, the nearer one winning, with the Markdown files they link to),
+  and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
   not count. Read them before the first edit.
 - **Deferred threads fence their code.** A thread left for the author, from
   `deferred_threads` or deferred in this run, owns its code: the lines around

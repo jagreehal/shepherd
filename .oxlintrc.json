@@ -20,6 +20,10 @@
     "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-readable-spacing": "error",
-    "anti-slop/require-safety-comment-for-type-assertion": "error"
-  }
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "eslint/max-lines": ["error", { "max": 1000, "skipBlankLines": true, "skipComments": true }]
+  },
+  "overrides": [
+    { "files": ["gate/src/policy.test.ts"], "rules": { "eslint/max-lines": ["error", { "max": 1644, "skipBlankLines": true, "skipComments": true }] } }
+  ]
 }

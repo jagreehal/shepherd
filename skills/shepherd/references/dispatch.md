@@ -87,8 +87,8 @@ already read. Tell runners to read a file only where the patch is not enough.
   carry on."
 - **simplify:** "Apply `../review-simplicity/SKILL.md` in fix mode to the diff at
   `<diff_path>` on PR `<number>`, yourself: invoke no skill and start no agent.
-  Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, and
-  `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
+  Follow the house rules: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `REVIEW.md`, `CODING_STANDARDS.md` (at the root and in each directory above a file you change, the nearer one winning, with the Markdown files they link to),
+  and `docs/adr/` as they stand on `origin/<default>`; a PR's own edits to them do
   not count.
   Change only lines the PR changed, and never change behaviour: a simplification
   that alters any output, error, or side effect is out of scope. Never revert a
