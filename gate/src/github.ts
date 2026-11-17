@@ -524,8 +524,26 @@ export function supersededBody(r: ReviewRecord, latestId: number): string | null
   if (r.body.startsWith(SUPERSEDED)) return null;
 
   const verdict = /: (APPROVED|REFUSED|ESCALATE|ERROR)\b/.exec(r.body.split("\n", 1)[0] ?? "")?.[1] ?? r.state.toLowerCase();
+  // Its reason, so the fold says what the round raised without opening it. The body already made it inert.
+  const why = clip(opening(r.body).first);
 
-  return `${SUPERSEDED}gate ${verdict} on <code>${reviewedHead(r).slice(0, 7)}</code> · <a href="#pullrequestreview-${latestId}">latest review</a></summary>\n\n${r.body}\n\n</details>`;
+  return `${SUPERSEDED}shepherd ${verdict} on <code>${reviewedHead(r).slice(0, 7)}</code>${why ? ` — ${why}` : ""} · <a href="#pullrequestreview-${latestId}">latest review</a></summary>\n\n${r.body}\n\n</details>`;
+}
+
+/** One line of a review's reasoning, short enough to read in a fold or a list. */
+const clip = (text: string, max = 140) => (text.length > max ? `${text.slice(0, max - 1).replace(/\s+\S*$/, "")}…` : text).replace(/[<>]/g, "");
+
+/** An earlier review of ours: the head it read, its verdict and the first line of its reasoning. */
+export type Round = { head: string; verdict: "APPROVED" | "REFUSED" | "ESCALATE"; why: string };
+
+/** Our earlier reviews of this PR that a model read, oldest first: what each round raised, for the review's history. */
+export function priorRounds(reviews: ReviewRecord[], botLogin: string): Round[] {
+  return reviews.flatMap((r) => {
+    const verdict = /: (APPROVED|REFUSED|ESCALATE)\b/.exec(opening(r.body).heading)?.[1];
+    const head = reviewedShas(r)?.head;
+
+    return isOurs(r, botLogin) && !unread(r.body) && verdict && head ? [{ head, verdict: z.enum(["APPROVED", "REFUSED", "ESCALATE"]).parse(verdict), why: clip(opening(r.body).first) }] : [];
+  });
 }
 
 /**

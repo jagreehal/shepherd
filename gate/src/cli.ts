@@ -16,13 +16,14 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
-import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Verdict } from "./github.ts";
+import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type Round, type Verdict } from "./github.ts";
 import {
   DEFAULTS_DIR,
   denial,
   detectOwnership,
   inFlightBots,
   inFlightChecks,
+  houseRuleFiles,
   linkedRuleFlags,
   loadGuidance,
   installWorkflow,
@@ -522,6 +523,9 @@ for (const m of [...inherited, ...rules.missing]) console.error(`rule pack skipp
 
 const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(repoRoot, trustedRef, pr.files.map((f) => f.filename))];
 
+// The house-rule files the review applied, listed in the full review so a reader can see why a rule fired.
+const houseRulesApplied = houseRuleFiles(repoRoot, trustedRef, pr.files.map((f) => f.filename));
+
 // Jev risk signals: advisory, before the reviewer, skipped without TYPESAFE_API_KEY and on a dry run (which
 // promises gates only, nothing sent out). A failure here loses a signal, not the review, so it is logged and
 // the run goes on without it.
@@ -566,12 +570,16 @@ let delta: { from: string; diff: string } | null = null;
 
 let rounds = 0;
 
+// Our earlier reviews of this PR, so each review says what the rounds before it raised.
+let history: Round[] = [];
+
 if (gateVerdict === "PASSED" && !opts["dry-run"]) {
   try {
     const reviews = listReviews(pr.repo, pr.number, repoRoot);
     const before = lastReviewed(reviews, me, pr.headSha);
 
     rounds = refusedRounds(reviews, me, pr.headSha);
+    history = priorRounds(reviews, me);
 
     if (before) {
       git(...GH_CREDENTIALS, "fetch", "-q", "origin", before.head, before.base);
@@ -779,7 +787,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    scrub(`### gate: ${verdict} on #${pr.number} \`${pr.headSha.slice(0, 7)}\`\n\n${inert(oneLine(scrub(body), 1000))}\n\n${runs.flatMap(([role, r]) => (r ? [`- ${role}: ${summarizeRun(r)}`] : [])).join("\n")}\n`),
+    scrub(`${renderBody(pr, verdict, body, llm, opinion, gated.gates, "full")}\n\n${runs.flatMap(([role, r]) => (r ? [`- ${role}: ${summarizeRun(r)}`] : [])).join("\n")}\n`),
   );
 }
 
@@ -993,8 +1001,8 @@ function section(title: string, body: string[], open = false): string[] {
 function fitBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[]): string {
   // The last holds a heading, 2,000 characters of reasoning and the markers, so its length has a fixed ceiling.
   return firstThatFits(MAX_REVIEW_BODY, [
-    () => renderBody(pr, verdict, reasoning, llm, opinion, gates),
-    () => renderBody(pr, verdict, reasoning.slice(0, 4000), llm && shortened(llm, 30_000), opinion, gates, false),
+    () => renderBody(pr, verdict, reasoning, llm, opinion, gates, "quick"),
+    () => renderBody(pr, verdict, reasoning.slice(0, 4000), llm && shortened(llm, 30_000), opinion, gates, "quick", false),
     () => [branded.heading(verdict), "", inert(withoutComments(reasoning.slice(0, 2000))), "", "This review ran past GitHub's length limit. The run's evidence holds it whole.", ...markers(pr, verdict)].join("\n"),
   ]);
 }
@@ -1009,9 +1017,17 @@ function markers(pr: PR, verdict: Verdict): string[] {
   ];
 }
 
-function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[], withAgentPrompt = true): string {
+/**
+ * The review as one view of it. `quick` is the PR comment: verdict, risk, the rounds before it and the findings, with the
+ * rest folded and a link to the run. `full` is the run's summary page: every section open, the house-rule files that
+ * applied, and nothing cut.
+ */
+function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed | null, opinion: Opinion | null, gates: Gate[], view: "quick" | "full", withAgentPrompt = true): string {
+  const full = view === "full";
+  const fold = (title: string, body: string[], open = false) => section(title, body, open || full);
   // Model-written text goes through inert one field at a time: gate's own <sub>, <strong> and <details> stay markup.
-  const parts = [`${branded.heading(verdict)} <sub>· head \`${pr.headSha.slice(0, 7)}\`</sub>`, "", inert(reasoning)];
+  const round = history.length ? ` · round ${history.length + 1}` : "";
+  const parts = [`${branded.heading(verdict)} <sub>· head \`${pr.headSha.slice(0, 7)}\`${round}</sub>`, "", inert(reasoning)];
 
   // Risk sits under the verdict: a reader triages by it.
   if (llm && verdict !== "ERROR") {
@@ -1026,11 +1042,17 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
 
   if (verdict === "APPROVED" && llm?.safe_because) parts.push("", `**Safe because:** ${inert(llm.safe_because.fact)} (${llm.safe_because.evidence})`);
 
-  if (llm?.issues.length) parts.push(...section(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
+  // Never folded: what earlier rounds raised is how a reader learns what this one fixed.
+  if (history.length) parts.push("", "**Earlier rounds:**", ...history.map((r) => `- ${branded[r.verdict]} \`${r.head.slice(0, 7)}\` ${r.why}`));
 
-  if (llm?.standards.length) parts.push(...section(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((i) => `- ${inert(i)}`)));
+  if (llm?.issues.length) parts.push(...fold(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
 
-  if (llm?.notes.length) parts.push(...section(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
+  // On an approval the standards are all that is left to act on, so they open.
+  if (llm?.standards.length) parts.push(...fold(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((i) => `- ${inert(i)}`), verdict === "APPROVED"));
+
+  if (llm?.notes.length) parts.push(...fold(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
+
+  if (full && houseRulesApplied.length) parts.push(...fold(`<strong>House rules applied:</strong> ${houseRulesApplied.length}`, houseRulesApplied.map((f) => `- \`${f}\``)));
 
   if (withAgentPrompt && verdict !== "APPROVED" && llm?.issues.length) parts.push("", ...agentPrompt(pr, verdict, reasoning, llm));
 
@@ -1039,18 +1061,26 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
   const failed = gates.filter((g) => !g.passed).length;
   const run = llm?.run ? summarizeRun(llm.run) : backends[0];
 
-  if (policy.stories) parts.push(...section(`<strong>Test evidence:</strong> ${stories ? evidenceSummary(stories) : "not read"}`, [`From the \`${policy.stories.artifact}\` artifact of \`${policy.stories.workflow}\`.`]));
+  if (policy.stories) parts.push(...fold(`<strong>Test evidence:</strong> ${stories ? evidenceSummary(stories) : "not read"}`, [`From the \`${policy.stories.artifact}\` artifact of \`${policy.stories.workflow}\`.`]));
 
   parts.push(
-    ...section(`<strong>Gates:</strong> ${branded.pass} ${gates.length - failed}${failed ? ` · ${branded.fail} ${failed}` : ""}`, ["| gate | result |", "|---|---|", ...gates.map((g) => `| ${g.gate} | ${g.passed ? branded.pass : branded.fail} ${inert(g.message)} |`)]),
-    ...section(`<strong>Reviewer:</strong> ${run}${llm ? ` → ${llm.verdict}` : ""}${opinion ? ` · second opinion → ${opinion.verdict}` : ""}`, [
+    ...fold(`<strong>Gates:</strong> ${branded.pass} ${gates.length - failed}${failed ? ` · ${branded.fail} ${failed}` : ""}`, ["| gate | result |", "|---|---|", ...gates.map((g) => `| ${g.gate} | ${g.passed ? branded.pass : branded.fail} ${inert(g.message)} |`)]),
+    ...fold(`<strong>Reviewer:</strong> ${run}${llm ? ` → ${llm.verdict}` : ""}${opinion ? ` · second opinion → ${opinion.verdict}` : ""}`, [
       ...(opinion ? [`Second opinion: ${opinion.run ? summarizeRun(opinion.run) : opinion.backend} → ${opinion.verdict} (${opinion.risk} risk)`, ""] : []),
       `shepherd ${VERSION} · head \`${pr.headSha.slice(0, 7)}\` · base \`${pr.baseRef}@${pr.baseSha.slice(0, 7)}\`${pr.stack ? ` · stacked on #${pr.stack.parent} \`${pr.stack.parentHead.slice(0, 7)}\`` : ""} · policy \`${policySource(`origin/${pr.defaultBranch}`).policy}\` · risk ${llm?.risk ?? "n/a"}`,
     ]),
+    ...(full ? [] : runLink()),
     ...markers(pr, verdict),
   );
 
   return parts.join("\n").replace(/!\[([^\]]*)\]\(/g, "[image: $1]("); // no auto-fetched images: a markdown image is an exfil channel
+}
+
+/** The quick view's pointer to the full review on the run's summary page; nothing outside Actions. */
+function runLink(): string[] {
+  const { GITHUB_SERVER_URL: server = "https://github.com", GITHUB_REPOSITORY: repo, GITHUB_RUN_ID: run } = process.env;
+
+  return repo && run ? ["", `[Full review →](${server}/${repo}/actions/runs/${run})`] : [];
 }
 
 /** "+a −r lines": how far an upgraded file moved, counting lines as a multiset (order ignored). */

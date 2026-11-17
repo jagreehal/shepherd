@@ -353,6 +353,9 @@ export function linkedRuleFlags(repoRoot: string, ref: string, paths: string[]):
   return edited.length ? [{ name: "house_rule_links", files: edited, instruction: "A house-rule file links to these, so they are rules too. REFUSE if the edit relaxes a rule; adding or tightening one is fine." }] : [];
 }
 
+/** Which house-rule files governed `paths`, linked files included: what the full review lists as applied. */
+export const houseRuleFiles = (repoRoot: string, ref: string, paths: string[]): string[] => readHouseRules(repoRoot, ref, paths).map((r) => r.file);
+
 /** The house-rule files governing `paths`, root first, then the files they link to, each read from `ref` once. */
 function readHouseRules(repoRoot: string, ref: string, paths: string[]): { file: string; text: string; linked: boolean }[] {
   const git = (args: string[]) => execFileSync("git", ["--literal-pathspecs", "-C", repoRoot, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() });
