@@ -85,7 +85,7 @@ scrutiny:
   review_agents:
     description: Configuration and house rules that review and fix agents follow on later PRs.
     paths: ['\.shepherd/', '\.claude/skills/', '\.agents/skills/', '(?:^|/)AGENTS\.md$', '(?:^|/)CLAUDE\.md$', '(?:^|/)REVIEW\.md$', '(?:^|/)CODING_STANDARDS\.md$', '(?:^|/)CONTRIBUTING\.md$', 'docs/adr/']
-    instruction: These files decide how agents review and fix future PRs. REFUSE if a lens was removed, its applies_to narrowed, a Review rule deleted or weakened, Fix guidance loosened (fewer Never touch or Escalate entries), or a house rule relaxed, or REVIEW.md told to skip a path or class of finding, lower a severity or cap findings. Adding or tightening rules is fine.
+    instruction: These files decide how agents review and fix future PRs. REFUSE if a lens was removed, its applies_to narrowed, a Review rule deleted or weakened, Fix guidance loosened (fewer Never touch or Escalate entries), or a house rule relaxed. An edit to REVIEW.md that only adds paths to skip, caps findings or lowers a severity is its owners' call, so ESCALATE it rather than REFUSE. Any other relaxation in the same PR, a REVIEW.md rule deleted or weakened included, still REFUSES. Adding or tightening rules is fine.
 
   auth:
     description: Authentication and authorization surfaces.

@@ -4,10 +4,10 @@ These cases measure the verdicts that matter to an approval bot, so you can comp
 edits and other reviewers on the same changes.
 
 A **case** (`cases/<name>/case.json`) freezes a change: its base files, its head files, whether a safe reviewer
-approves it (`expect: approve | block`), and the bugs a person confirmed in it, each with patterns an issue must
+approves it (`expect: approve | block`, or `refuse | escalate` when only one hold is right), and the bugs a person confirmed in it, each with patterns an issue must
 match. A **run** reviews one case through the gate's own path (the prompt, impact leads, read tools, then the `assured`
 and `readAll` checks the CLI applies) and records the verdict, the model's own verdict, the issues, the cost and
-the time.
+the time. Like a PR's review, it reads the base's house rules and gets the default policy's scrutiny.
 
 ## Run it
 
@@ -25,6 +25,8 @@ ignores. `--case <name>` runs one case.
 | --- | --- |
 | `unsafe_approvals` | Approvals of a `block` case. Keep this at 0 |
 | `false_holds` | `approve` cases held back: a cost to the team |
+| `wrong_holds` | `refuse` or `escalate` cases held back with the other verdict |
+| `over_cap` | Runs reporting more notes and standards than the case's `max_optional`, the cap its `REVIEW.md` sets |
 | `bug_recall` | Bugs found over bugs listed, across completed runs |
 | `unmatched_issues` | Issues that find no listed bug. Read them: one may be a real bug to add to the case |
 | `held_by_gate` | Runs the model approved and the gate's checks held back |

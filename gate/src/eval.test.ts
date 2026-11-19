@@ -11,10 +11,11 @@ const tmp = mkdtempSync(path.join(tmpdir(), "gate-eval-test-"));
 
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-test("every case parses, and a block case names the bugs that make it one", () => {
-  expect(cases.size).toBeGreaterThanOrEqual(7);
+test("every case parses, and a block or refuse case names the bugs that make it one", () => {
+  expect(cases.size).toBeGreaterThanOrEqual(10);
 
-  for (const [name, c] of cases) expect(c.expect === "approve" ? c.bugs.length === 0 : c.bugs.length > 0, name).toBe(true);
+  // An escalate case hands the call to a person, so it names no bugs.
+  for (const [name, c] of cases) expect(c.expect === "approve" || c.expect === "escalate" ? c.bugs.length === 0 : c.bugs.length > 0, name).toBe(true);
 });
 
 test("the truncated case puts its bug past the prompt limit, under git's quoted name, where only read_diff reaches it", () => {
@@ -69,8 +70,8 @@ test("an issue finds a bug when it names the bug's file and matches one of its p
   expect(found(c, ["src/other.ts: skip"])).toEqual([]);
 });
 
-test("scores count unsafe approvals, false holds, recall, unmatched issues, cost and median latency per label", () => {
-  const run = (over: Partial<Run>): Run => ({ case: "off-by-one", label: "a", verdict: "REFUSE", issues: [], costUsd: 0.01, durationMs: 1000, ...over });
+test("scores count unsafe approvals, false holds, wrong holds, runs over a cap, recall, unmatched issues, cost and median latency per label", () => {
+  const run = (over: Partial<Run>): Run => ({ case: "off-by-one", label: "a", verdict: "REFUSE", issues: [], notes: [], standards: [], costUsd: 0.01, durationMs: 1000, ...over });
 
   const runs = [
     run({ issues: ["src/window.ts:3 loops with <= xs.length, reading past the end"] }),
@@ -79,10 +80,13 @@ test("scores count unsafe approvals, false holds, recall, unmatched issues, cost
     run({ case: "clean-docs", verdict: "ESCALATE", issues: ["README.md: wording"], durationMs: 2000 }),
     run({ case: "clean-rename", verdict: null, error: "timeout", costUsd: null }),
     run({ label: "b", verdict: "APPROVE", case: "clean-docs" }),
+    run({ label: "b", case: "review-md-cap-only" }), // a cap alone escalates; refusing it is the wrong hold
+    run({ label: "c", case: "review-md-cap", issues: ["src/cart.ts:5 count > 10 misses exactly 10 items"], standards: ["src/cart.ts:5 bulk", "src/cart.ts:6 empty"] }), // the bug kept, but past the cap of one
   ];
 
   expect(score(cases, runs)).toEqual([
-    { label: "a", runs: 5, errors: 1, unsafe_approvals: 1, false_holds: 1, bug_recall: 1 / 3, unmatched_issues: 1, held_by_gate: 1, cost_usd: null, median_ms: 2000 },
-    { label: "b", runs: 1, errors: 0, unsafe_approvals: 0, false_holds: 0, bug_recall: null, unmatched_issues: 0, held_by_gate: 0, cost_usd: 0.01, median_ms: 1000 },
+    { label: "a", runs: 5, errors: 1, unsafe_approvals: 1, false_holds: 1, wrong_holds: 0, over_cap: 0, bug_recall: 1 / 3, unmatched_issues: 1, held_by_gate: 1, cost_usd: null, median_ms: 2000 },
+    { label: "b", runs: 2, errors: 0, unsafe_approvals: 0, false_holds: 0, wrong_holds: 1, over_cap: 0, bug_recall: null, unmatched_issues: 0, held_by_gate: 0, cost_usd: 0.02, median_ms: 1000 },
+    { label: "c", runs: 1, errors: 0, unsafe_approvals: 0, false_holds: 0, wrong_holds: 0, over_cap: 1, bug_recall: 1, unmatched_issues: 0, held_by_gate: 0, cost_usd: 0.01, median_ms: 1000 },
   ]);
 });

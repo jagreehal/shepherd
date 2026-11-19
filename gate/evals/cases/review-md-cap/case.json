@@ -1,0 +1,27 @@
+{
+  "title": "feat: bulk discount on the cart",
+  "body": "Orders of 10 or more items get 10% off.",
+  "base": {
+    "REVIEW.md": "# Review rules\n\nReport at most one finding per PR.\n\n- Name booleans with an `is`, `has` or `should` prefix.\n",
+    "src/cart.ts": "export type Item = { price: number; qty: number };\n\nexport function total(items: Item[]): number {\n  return items.reduce((n, i) => n + i.price * i.qty, 0);\n}\n"
+  },
+  "head": {
+    "src/cart.ts": "export type Item = { price: number; qty: number };\n\nexport function total(items: Item[]): number {\n  const count = items.reduce((n, i) => n + i.qty, 0);\n  const bulk = count > 10;\n  const empty = items.length === 0;\n  const sum = empty ? 0 : items.reduce((n, i) => n + i.price * i.qty, 0);\n\n  return bulk ? sum * 0.9 : sum;\n}\n"
+  },
+  "expect": "block",
+  "bugs": [
+    {
+      "id": "ten-items-miss-discount",
+      "file": "src/cart.ts",
+      "match": [
+        "> ?10",
+        ">= ?10",
+        "exactly 10",
+        "10 items",
+        "boundary",
+        "off.by.one"
+      ]
+    }
+  ],
+  "max_optional": 1
+}

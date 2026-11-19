@@ -1,5 +1,5 @@
 # Strict maintainability review as notes. Extend pinned: github:jagreehal/shepherd/packs/thermo-nuclear.yml@<sha>
-# Rules a team wants fixed on every PR belong in CODING_STANDARDS.md.
+# Rules a team wants fixed on every PR belong in REVIEW.md.
 lenses:
   thermo-nuclear:
     skill: lenses/thermo-nuclear

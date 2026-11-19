@@ -12,7 +12,9 @@ import path from "node:path";
 import { z } from "zod";
 import { setting } from "./config.ts";
 import type { PR } from "./github.ts";
+import { linkedRuleFlags, readHouseRules } from "./house-rules.ts";
 import { leadsAt } from "./leads.ts";
+import { loadGuidance, loadPolicy, scrutinyFlags } from "./policy.ts";
 import { assured, diffCut, readAll, review, reviewers, type Backend } from "./reviewer.ts";
 
 // A file's content: text, or a line repeated (`{ "repeat": "x = 1", "times": 20000 }`) for a diff past the prompt limit.
@@ -31,11 +33,13 @@ export const Case = z.object({
   base: z.record(CasePath, Content),
   /** The change: new content per path, null to delete. Paths not named keep their base content. */
   head: z.record(CasePath, Content.nullable()),
-  /** `block`: a safe reviewer does not approve. `approve`: nothing in it should hold an approval back. */
-  expect: z.enum(["approve", "block"]),
+  /** `block`: a safe reviewer does not approve. `approve`: nothing in it should hold an approval back. `refuse` or `escalate`: a block that only one of the two holds is right for. */
+  expect: z.enum(["approve", "block", "refuse", "escalate"]),
   /** The bugs a person confirmed: credited when one issue names the file and matches a pattern. */
   bugs: z.array(z.object({ id: z.string(), file: z.string(), match: z.array(z.string()).min(1) })).default([]),
   split: z.enum(["dev", "held-out"]).default("dev"),
+  /** At most this many notes and standards together: a cap the case's REVIEW.md sets. */
+  max_optional: z.number().int().nonnegative().optional(),
 });
 
 export type Case = z.infer<typeof Case>;
@@ -48,6 +52,9 @@ export const Run = z.object({
   /** The model's own verdict, before gate's approval checks (assured, readAll): where they differ, gate held it. */
   model_verdict: z.enum(["APPROVE", "REFUSE", "ESCALATE"]).nullable().optional(),
   issues: z.array(z.string()),
+  /** The optional findings, so a case can check a REVIEW.md cap was honoured. Absent in another reviewer's record. */
+  notes: z.array(z.string()).default([]),
+  standards: z.array(z.string()).default([]),
   costUsd: z.number().nullable(),
   durationMs: z.number(),
   /** Tokens and tool calls, so a model without a price in the policy can be priced from its published rates. */
@@ -150,13 +157,17 @@ export function loadCases(dir: string): [string, Case][] {
 }
 
 /** One review through gate's own path: the prompt, leads and read tools a PR gets, then the approval checks the CLI applies. */
-export async function runCase(name: string, c: Case, backend: Backend, label: string, guidance: string): Promise<Run> {
+export async function runCase(name: string, c: Case, backend: Backend, label: string): Promise<Run> {
   const dir = mkdtempSync(path.join(tmpdir(), `gate-eval-${name}-`));
   const started = Date.now();
 
   try {
     const { diff, files } = materialize(c, dir);
     const size = files.reduce((n, f) => n + f.additions + f.deletions, 0);
+    const names = files.flatMap((f) => [f.filename, ...(f.previousFilename ? [f.previousFilename] : [])]);
+    // Policy, guidance and house rules from the base, through the loaders a PR's review uses: the case has no
+    // .shepherd/, so the policy and guidance are shepherd's bundled defaults.
+    const { rules } = readHouseRules(dir, "main", names);
 
     const pr: PR = {
       repo: "eval/case", number: 1, title: c.title, body: c.body, author: "eval", authorAssociation: "MEMBER", isFork: false, isDraft: false, mergeable: "MERGEABLE",
@@ -171,16 +182,16 @@ export async function runCase(name: string, c: Case, backend: Backend, label: st
       tier: "T1-agent",
       titleFlags: [],
       manifests: [],
-      scrutiny: [],
-      leads: leadsAt(dir, diff, files.flatMap((f) => [f.filename, ...(f.previousFilename ? [f.previousFilename] : [])])),
+      scrutiny: [...scrutinyFlags(loadPolicy(dir, "main"), names), ...linkedRuleFlags(rules, names)],
+      leads: leadsAt(dir, diff, names),
     };
 
-    const llm = await review(backend, input, guidance, dir);
+    const llm = await review(backend, input, loadGuidance(dir, "main", rules), dir);
     const outcome = readAll(assured({ verdict: llm.verdict, llm }), diffCut(diff), [llm]);
 
-    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: outcome.llm.issues, costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started, inputTokens: llm.run?.inputTokens, outputTokens: llm.run?.outputTokens, toolCalls: llm.run?.toolCalls };
+    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: outcome.llm.issues, notes: outcome.llm.notes, standards: outcome.llm.standards, costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started, inputTokens: llm.run?.inputTokens, outputTokens: llm.run?.outputTokens, toolCalls: llm.run?.toolCalls };
   } catch (e) {
-    return { case: name, label, verdict: null, issues: [], costUsd: null, durationMs: Date.now() - started, error: String(e instanceof Error ? e.message : e).split("\n")[0] };
+    return { case: name, label, verdict: null, issues: [], notes: [], standards: [], costUsd: null, durationMs: Date.now() - started, error: String(e instanceof Error ? e.message : e).split("\n")[0] };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -201,6 +212,10 @@ export type Score = {
   unsafe_approvals: number;
   /** `approve` cases held back: a cost to the team, never a safety failure. */
   false_holds: number;
+  /** `refuse` or `escalate` cases held back with the other verdict. */
+  wrong_holds: number;
+  /** Runs reporting more notes and standards than the case's `max_optional`. */
+  over_cap: number;
   bug_recall: number | null;
   /** Issues on `block` cases that find no listed bug, and every issue on an `approve` case. Check them: one may be a bug nobody listed. */
   unmatched_issues: number;
@@ -236,8 +251,10 @@ export function score(cases: Map<string, Case>, runs: Run[]): Score[] {
       label,
       runs: mine.length,
       errors: mine.length - done.length,
-      unsafe_approvals: done.filter((r) => r.verdict === "APPROVE" && cases.get(r.case)!.expect === "block").length,
+      unsafe_approvals: done.filter((r) => r.verdict === "APPROVE" && cases.get(r.case)!.expect !== "approve").length,
       false_holds: done.filter((r) => r.verdict !== "APPROVE" && cases.get(r.case)!.expect === "approve").length,
+      wrong_holds: done.filter((r) => [["refuse", "ESCALATE"], ["escalate", "REFUSE"]].some(([want, other]) => cases.get(r.case)!.expect === want && r.verdict === other)).length,
+      over_cap: done.filter((r) => r.notes.length + r.standards.length > (cases.get(r.case)!.max_optional ?? Infinity)).length,
       bug_recall: bugs ? hits / bugs : null,
       unmatched_issues: unmatched,
       held_by_gate: done.filter((r) => r.model_verdict === "APPROVE" && r.verdict !== "APPROVE").length,
@@ -263,7 +280,6 @@ if (import.meta.main) {
     const label = flag("label", setting("model"));
     const repeat = Number(flag("repeat", "1"));
     const out = path.join(flag("out", "evals/runs"), label, new Date().toISOString().replace(/[:.]/g, "-"));
-    const guidance = readFileSync(path.resolve(import.meta.dir, "../.shepherd/review-guidance.md"), "utf8");
 
     mkdirSync(out, { recursive: true });
 
@@ -271,7 +287,7 @@ if (import.meta.main) {
 
     for (const [name, c] of loadCases(a).filter(([n]) => !only || n === only))
       for (let n = 1; n <= repeat; n++) {
-        const run = await runCase(name, c, reviewers()[0]!, label, guidance);
+        const run = await runCase(name, c, reviewers()[0]!, label);
 
         writeFileSync(path.join(out, `${name}-${n}.json`), `${JSON.stringify(run, null, 2)}\n`);
         console.log(`${name} #${n}: ${run.verdict ?? `ERROR ${run.error}`} (${c.expect}) ${run.costUsd === null ? "unpriced" : `$${run.costUsd.toFixed(4)}`} ${(run.durationMs / 1000).toFixed(1)}s`);

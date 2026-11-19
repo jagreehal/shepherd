@@ -116,7 +116,7 @@ proposal follows from it.
 Before writing an edit, sort each cause with the categories in
 `../retro/SKILL.md` (Matt Pocock's `retro`): a mechanical mistake gets an
 automated check (Step 5), and a check that exists but is not wired in is the
-finding; only a judgement call becomes skill text. Write that text by
+finding; only a judgement call becomes skill text, or a `REVIEW.md` rule where `retro` says `CODING_STANDARDS.md`: `REVIEW.md` is the file whose breaches shepherd posts. Write that text by
 `../writing-for-agents/SKILL.md`.
 
 Clone or use the shepherd checkout, branch `garden/<date>`, make the edits,

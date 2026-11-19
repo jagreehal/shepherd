@@ -8,7 +8,7 @@ You customize Shepherd with `.shepherd/config.yml` and a checklist per rule. She
 
 | I want to… | Edit |
 | --- | --- |
-| Have the review point out where a change breaks the conventions we already wrote down | Nothing: the review reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from the default branch, at the root and in each directory above a changed file. A `CODING_STANDARDS.md` breach gets a line comment that triage fixes; on a stacked PR it is listed in the review only. A breach of the others gets a note |
+| Have the review point out where a change breaks the conventions we already wrote down | Nothing: the review reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from the default branch, at the root and in each directory above a changed file. A `REVIEW.md` breach gets a line comment that triage fixes; on a stacked PR it is listed in the review only. A breach of the others gets a note. `REVIEW.md` is read as Claude Code Review reads it, `@` includes and `.claude/skills/` or `.agents/skills/` skills included, so one file steers both |
 | Add my team's review rules | `.shepherd/lenses/<name>/SKILL.md`, made by `shepherd lens new <name>` |
 | Run those rules only on some directories | The lens's `applies_to` in `.shepherd/config.yml` |
 | Choose what Shepherd may change: nothing, my working tree, or the PR branch | `fixes.mode` in `.shepherd/config.yml` |

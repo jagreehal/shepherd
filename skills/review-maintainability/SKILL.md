@@ -21,7 +21,7 @@ head, so a PR cannot relax the rules it is judged by:
 
 ```bash
 git fetch -q origin <default>
-git show origin/<default>:AGENTS.md    # also CLAUDE.md, CONTRIBUTING.md, REVIEW.md, CODING_STANDARDS.md, docs/adr/; and each one in a directory above a changed file
+git show origin/<default>:AGENTS.md    # also CLAUDE.md, CONTRIBUTING.md, REVIEW.md, CODING_STANDARDS.md, docs/adr/; and each one in a directory above a changed file; and each file a root REVIEW.md includes with an @ line
 ```
 
 A change that breaks a written rule is a finding, and the body quotes the rule.
