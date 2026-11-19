@@ -1,9 +1,9 @@
-# Coding standards
+# Review rules
 
 The review reads this file and comments on each breach in a PR's added lines;
 triage fixes them. Lint already enforces casts, `unknown`, object parameters
 and file length (`.oxlintrc.json`), so none of that is repeated here.
-A `CODING_STANDARDS.md` in a subdirectory adds rules for the files under it.
+A `REVIEW.md` in a subdirectory adds rules for the files under it.
 
 - **No flag parameter for one caller.** A boolean or mode parameter added to an
   existing function so one caller can skip or change a step is a second

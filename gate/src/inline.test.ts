@@ -77,7 +77,7 @@ test("a line comment opens with its grade and a short title, and drops the file:
 });
 
 test("a coding-standard breach posts on an approval too, while a blocking issue posts only on a refusal or an escalation", () => {
-  const llm = { issues: ["src/a.ts:11 wrong total"], standards: ["src/a.ts:12 state outside a reducer. ui/CODING_STANDARDS.md: state lives in reducers."] };
+  const llm = { issues: ["src/a.ts:11 wrong total"], standards: ["src/a.ts:12 state outside a reducer. ui/REVIEW.md: state lives in reducers."] };
   const grades = { blocking: "BLOCK", standard: "STD" };
   const heads = (verdict: "APPROVED" | "REFUSED" | "ERROR") => lineComments(verdict, llm, diff, grades, (t) => t).map((c) => c.body.split(" ·")[0]);
 

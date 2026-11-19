@@ -54,7 +54,7 @@ import {
   type Policy,
   type ScopeBudget,
 } from "./policy.ts";
-import { linkedRuleFlags, readHouseRules } from "./house-rules.ts";
+import { linkedRuleFlags, promptRules, readHouseRules } from "./house-rules.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
 import { addedLines, lineComments } from "./inline.ts";
@@ -522,7 +522,7 @@ for (const m of [...inherited, ...rules.missing]) console.error(`rule pack skipp
 
 // The house rules for the directories this PR touches, read once from the default branch: the reviewer's prompt, the
 // files the full review lists as applied, and the flag on an edit to a file they link to.
-const houseRules = readHouseRules(repoRoot, trustedRef, pr.files.map((f) => f.filename));
+const { rules: houseRules, skipped: houseRulesSkipped } = readHouseRules(repoRoot, trustedRef, pr.files.map((f) => f.filename));
 
 const scrutiny = [...scrutinyFlags(policy, pr.files.map((f) => f.filename)), ...suppressionFlags(pr.diff), ...testMarkerFlags(pr.diff), ...incidentFlags(pr.issues ?? []), ...rules.flags, ...linkedRuleFlags(houseRules, pr.files.map((f) => f.filename))];
 
@@ -1059,7 +1059,12 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
 
   if (llm?.notes.length) parts.push(...fold(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
 
-  if (full && houseRules.length) parts.push(...fold(`<strong>House rules applied:</strong> ${houseRules.length}`, houseRules.map((r) => `- \`${r.file}\`${r.linked ? " (linked)" : ""}`)));
+  const applied = promptRules(houseRules).shown;
+
+  if (full && applied.length) parts.push(...fold(`<strong>House rules applied:</strong> ${applied.length}`, applied.map((r) => `- \`${r.file}\`${r.linked ? " (linked)" : ""}${r.includes?.length ? ` (includes ${r.includes.map((i) => `\`${i}\``).join(", ")})` : ""}`)));
+
+  // Listed on every review, as Code Review's check run lists it, so a team sees which rules the review left out.
+  if (houseRulesSkipped.length) parts.push(...fold(`<strong>House rules not fully applied:</strong> ${houseRulesSkipped.length}`, houseRulesSkipped.map((s) => `- ${inert(s)}`)));
 
   if (verdict !== "APPROVED" && llm?.issues.length) parts.push(...fold(`${branded.fix} <strong>Fix with a coding agent</strong>`, agentPrompt(pr, verdict, reasoning, llm)));
 

@@ -67,13 +67,18 @@ to all of them.
 - **House rules never change the verdict; lenses are gates.** `AGENTS.md`,
   `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from
   the default branch reach the reviewer as conventions, at the root and in each
-  directory above a changed file, the nearer one winning. A `CODING_STANDARDS.md`
+  directory above a changed file, the nearer one winning. `REVIEW.md` reads
+  as Claude Code Review reads it (`gate/src/review-md.ts`): `@` includes,
+  `.claude/skills/` and `.agents/skills/` skills, its limits and skipped
+  directories; what a limit leaves out is listed in the review. A `REVIEW.md`
   breach posts as a line comment on any verdict, so triage fixes it, and holds
   the check only as an open thread; on a stacked PR, whose diff GitHub cannot
   anchor to, it is listed in the review only. A breach of the others is a note. A rule a
   team wants to refuse a PR is a lens with a `gate`. Breaking a house rule is
   never a refusal; relaxing one is, whether the PR edits a house-rule file or a
-  file one links to.
+  file one links to or includes. The one exception is a `REVIEW.md` edit that only adds
+  paths to skip, caps findings or lowers a severity: that escalates, and any
+  other relaxation in the same PR still refuses.
 - **A base conflict is resolved by a merge, never a rebase,** and only where
   no decision hides in it: nothing under `escalate.paths` or a deferred thread,
   nothing risky, no choice of what the product does. A resolution changes the

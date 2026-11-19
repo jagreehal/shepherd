@@ -53,8 +53,8 @@ over rule 3). Balance them for whoever maintains this next year.
 - **The smell baseline.** Also match the diff against the smell baseline in
   `../code-review/SKILL.md` (Matt Pocock's `code-review`, its step 3): data
   clumps, repeated switches, message chains, middle man, divergent change and
-  the rest. Its two rules bind you: the repo's documented standards override a
-  smell, and each smell is a judgement call ("possible Middle Man"), never a
+  the rest. Its two rules bind you: the repo's documented standards (`REVIEW.md` among them)
+  override a smell, and each smell is a judgement call ("possible Middle Man"), never a
   hard violation. Tag them `simplicity/smell`.
 
 ## Judgement
