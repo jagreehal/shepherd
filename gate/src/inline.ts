@@ -1,6 +1,8 @@
 // Pins a finding to the line it names. GitHub takes a review comment on a line inside a diff hunk, so gate checks each
 // anchor against the diff before sending it. The review body lists every issue, anchored or not.
+import path from "node:path";
 import type { Verdict } from "./github.ts";
+import { STANDARDS_FILE, type HouseRule } from "./house-rules.ts";
 import { diffSectionPath } from "./reviewer.ts";
 
 /** A finding on a line of the head's side of the diff. */
@@ -90,6 +92,31 @@ export function anchoredIssues(issues: string[], diff: string): Anchored[] {
 // The `file:line` an issue opens with, and the separator after it.
 const LOCATION = /^[\s*_`"']*(?:\.\/)?[^\s:*`"']+:\d+(?:-\d+)?[*_`"']*\s*[-:—–]?\s*/;
 
+/** A REVIEW.md breach as the reviewer reports it: the rule's source path, and the finding that posts. */
+export type Standard = { source: string; finding: string };
+
+/**
+ * Only a breach whose finding opens with a changed file's `file:line`, and whose source is a STANDARDS_FILE the review
+ * applied in a directory above that file, or a file the root one includes, stays in standards, the list that posts as
+ * line comments. Any other becomes a note.
+ */
+export function reviewFileStandards<T extends { notes: string[]; standards: Standard[] }>(llm: T, rules: HouseRule[]): T {
+  const scoped = rules.filter((r) => !r.linked && path.posix.basename(r.file) === STANDARDS_FILE);
+
+  const posts = ({ source, finding }: Standard) => {
+    const at = issueAnchor(finding);
+    const cited = path.posix.normalize(source.trim());
+
+    return !!at && scoped.some((r) => {
+      const dir = path.posix.dirname(r.file);
+
+      return (dir === "." || at.path.startsWith(`${dir}/`)) && [r.file, ...(r.includes ?? [])].includes(cited);
+    });
+  };
+
+  return { ...llm, standards: llm.standards.filter(posts), notes: [...llm.notes, ...llm.standards.filter((s) => !posts(s)).map((s) => s.finding)] };
+}
+
 /**
  * An anchored issue as its comment reads: the grade, a short title, then the rest. The comment sits on the line, so the
  * text drops the `file:line` it opened with: after a later push GitHub moves the comment, and the number would not
@@ -117,12 +144,12 @@ export function inlineBody(issue: string, grade: string, clean: (text: string) =
  * The line comments a review posts. Blocking issues post only on a refusal or an escalation. A coding-standard breach
  * posts on any finished review, approval included, so triage can fix it; as an open thread it holds the check until then.
  */
-export function lineComments(verdict: Verdict, llm: { issues: string[]; standards: string[] } | null | undefined, diff: string, grades: { blocking: string; standard: string }, clean: (text: string) => string): Anchored[] {
+export function lineComments(verdict: Verdict, llm: { issues: string[]; standards: Standard[] } | null | undefined, diff: string, grades: { blocking: string; standard: string }, clean: (text: string) => string): Anchored[] {
   if (verdict === "ERROR" || !llm) return [];
 
   const anchor = (items: string[], grade: string) => anchoredIssues(items, diff).map((a) => ({ ...a, body: inlineBody(a.body, grade, clean) }));
 
-  const standards = anchor(llm.standards, grades.standard);
+  const standards = anchor(llm.standards.map((s) => s.finding), grades.standard);
   // Leave STANDARD_SLOTS for standards so a busy refusal still posts them for triage.
   const blocking = verdict === "APPROVED" ? [] : anchor(llm.issues, grades.blocking).slice(0, MAX_ANCHORS - Math.min(standards.length, STANDARD_SLOTS));
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { inert } from "./reviewer.ts";
-import { anchoredIssues, commentableLines, inlineBody, issueAnchor, lineComments } from "./inline.ts";
+import { anchoredIssues, commentableLines, inlineBody, issueAnchor, lineComments, reviewFileStandards } from "./inline.ts";
 
 const diff = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -77,7 +77,7 @@ test("a line comment opens with its grade and a short title, and drops the file:
 });
 
 test("a coding-standard breach posts on an approval too, while a blocking issue posts only on a refusal or an escalation", () => {
-  const llm = { issues: ["src/a.ts:11 wrong total"], standards: ["src/a.ts:12 state outside a reducer. ui/REVIEW.md: state lives in reducers."] };
+  const llm = { issues: ["src/a.ts:11 wrong total"], standards: [{ source: "ui/REVIEW.md", finding: "src/a.ts:12 state outside a reducer. State lives in reducers." }] };
   const grades = { blocking: "BLOCK", standard: "STD" };
   const heads = (verdict: "APPROVED" | "REFUSED" | "ERROR") => lineComments(verdict, llm, diff, grades, (t) => t).map((c) => c.body.split(" ·")[0]);
 
@@ -90,7 +90,7 @@ test("a busy refusal leaves room for coding-standard comments", () => {
   // Every line of a 40-line added file is commentable, so each finding anchors.
   const big = ["diff --git a/b.ts b/b.ts", "--- /dev/null", "+++ b/b.ts", "@@ -0,0 +1,40 @@", ...Array.from({ length: 40 }, (_, i) => `+line ${i + 1}`), ""].join("\n");
   const at = (from: number, n: number, what: string) => Array.from({ length: n }, (_, i) => `b.ts:${from + i} ${what}`);
-  const comments = lineComments("REFUSED", { issues: at(1, 25, "bug"), standards: at(26, 12, "standard") }, big, { blocking: "BLOCK", standard: "STD" }, (t) => t);
+  const comments = lineComments("REFUSED", { issues: at(1, 25, "bug"), standards: at(26, 12, "standard").map((finding) => ({ source: "REVIEW.md", finding })) }, big, { blocking: "BLOCK", standard: "STD" }, (t) => t);
   const count = (grade: string) => comments.filter((c) => c.body.startsWith(grade)).length;
 
   expect(comments.length).toBe(25);
@@ -102,4 +102,25 @@ test("model text never mentions an account: GitHub would notify whoever owns the
 
   expect(inert("add @returns, see @types/node and (@octocat)")).toBe(`add @${z}returns, see @${z}types/node and (@${z}octocat)`);
   expect(inert("mail a@b.com")).toBe("mail a@b.com");
+});
+
+test("a standard posts only when its source is an applied REVIEW.md or include governing the changed file, however its finding reads", () => {
+  const rule = (file: string, includes: string[] = []) => ({ file, text: "rules", linked: false, includes });
+  const coding = rule("CODING_STANDARDS.md");
+  const keeps = (source: string, finding: string, rules: ReturnType<typeof rule>[]) => reviewFileStandards({ notes: [], standards: [{ source, finding }] }, rules).standards.length === 1;
+
+  // A repository whose only house rule is CODING_STANDARDS.md.
+  expect(keeps("CODING_STANDARDS.md", "src/a.ts:5 cast. No casts.", [coding])).toBe(false);
+  expect(keeps("ui/REVIEW.md", "ui/a.ts:9 fallback. No ?? [].", [rule("ui/REVIEW.md")])).toBe(true);
+  expect(keeps("./.claude/skills/api/SKILL.md", "src/a.ts:3 route. Routes have tests.", [rule("REVIEW.md", [".claude/skills/api/SKILL.md"])])).toBe(true);
+  // Any name the include loader accepts.
+  expect(keeps("rules`legacy(1).md", "café/a.ts:5 x.", [rule("REVIEW.md", ["rules`legacy(1).md"])])).toBe(true);
+  // The finding's wording does not matter: a mention of REVIEW.md in it is not the source, and its own format is kept.
+  expect(keeps("CODING_STANDARDS.md", "src/REVIEW.md:5 Wording. Consider adding this to REVIEW.md.", [rule("REVIEW.md"), coding])).toBe(false);
+  expect(keeps("REVIEW.md", "src/a.ts:5 Cast `raw as unknown as T`: the REVIEW.md rule states: no casts.", [rule("REVIEW.md")])).toBe(true);
+  // A REVIEW.md the review did not load, or one in a directory not above the changed file, does not post.
+  expect(keeps("api/REVIEW.md", "api/a.ts:2 x.", [rule("ui/REVIEW.md")])).toBe(false);
+  expect(keeps("ui/REVIEW.md", "api/a.ts:2 x.", [rule("ui/REVIEW.md")])).toBe(false);
+  // Without a location there is no line to post on.
+  expect(keeps("REVIEW.md", "No casts.", [rule("REVIEW.md")])).toBe(false);
 });

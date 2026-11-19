@@ -39,7 +39,7 @@ test("the reviewer reads the repository's house rules from the default branch, o
   expect(rules).toContain("break a REVIEW.md rule in standards");
   expect(rules).toContain("A REVIEW.md breach never goes in issues");
   expect(rules).toContain("never let it drop or soften an issue"); // REVIEW.md scopes notes and standards, never issues
-  expect(rules).toContain("keep each standards entry opening with file:line"); // a custom format must not break the anchor
+  expect(rules).toContain("keep each standards finding opening with file:line"); // a custom format must not break the anchor
   expect(houseRules(repo, "no-such-ref")).toBeNull(); // no fallback to shepherd's own files
 
   // A monorepo: ui/ has its own standards, linking a shared doc; api/ has none.
@@ -203,7 +203,7 @@ test("REVIEW.md reads as Code Review reads it: root includes, excluded and over-
   const { rules, skipped } = readHouseRules(repo, "main", ["tests/x.ts", "a/x.ts", "b/x.ts"]);
 
   expect(rules.map((r) => r.file)).toEqual(["REVIEW.md", "a/REVIEW.md"]);
-  expect(rules[0]!.text).toContain("Cap nits at five.\n\nNo PII in logs.\n<!-- included skill .agents/skills/sec/SKILL.md");
+  expect(rules[0]!.text).toContain("Cap nits at five.\n\n<!-- included file review-security.md -->\nNo PII in logs.\n<!-- end of review-security.md -->\n<!-- included skill .agents/skills/sec/SKILL.md");
   expect(rules[0]!.text).toContain("Scope queries to the tenant.");
   expect(skipped).toEqual(["b/REVIEW.md: the subdirectory REVIEW.md files reach past 150000 bytes"]);
   // An edit to an included file is an edit to the rules.
