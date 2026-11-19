@@ -1,44 +1,56 @@
 ---
 title: "Customize Shepherd for your team"
+description: "Tune what Shepherd flags with your house rules and lenses, keep fixes away from code a person owns, make the review refuse or escalate a broken rule, and check each change before you merge it."
 ---
 
-You customize Shepherd with `.shepherd/config.yml` and a checklist per rule. Shepherd reads them from your default branch, so a change takes effect once you merge it. A PR cannot change the rules it is reviewed against.
+You change what Shepherd reviews by committing instructions to your repository: `.shepherd/config.yml` and a checklist for each rule. Shepherd reads them from your default branch, so a change takes effect once you merge it, and a pull request can't change the rules Shepherd reviews it against.
+
+:::note
+Your existing `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` already steer the review with no setup. Shepherd reads `REVIEW.md` the way Claude Code Review does, so one file steers both. See [What it reads](/shepherd/integrations/github-actions/#what-it-reads).
+:::
 
 ## Where each change goes
 
+Find what you want in the first column:
+
 | I want to… | Edit |
 | --- | --- |
-| Have the review point out where a change breaks the conventions we already wrote down | Nothing: the review reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from the default branch, at the root and in each directory above a changed file. A `REVIEW.md` breach gets a line comment that triage fixes; on a stacked PR it is listed in the review only. A breach of the others gets a note. `REVIEW.md` is read as Claude Code Review reads it, `@` includes and `.claude/skills/` or `.agents/skills/` skills included, so one file steers both |
+| Have the review point out where a change breaks the conventions we already wrote down | Nothing. Shepherd reads `AGENTS.md`, `CLAUDE.md`, `REVIEW.md`, `CONTRIBUTING.md` and `CODING_STANDARDS.md` from the default branch, at the root and in each directory above a changed file. A `REVIEW.md` breach gets a line comment that triage fixes, or on a stacked pull request a line in the review. A breach of the others gets a note. `@` includes and `.claude/skills/` or `.agents/skills/` skills work as they do in Claude Code Review |
 | Add my team's review rules | `.shepherd/lenses/<name>/SKILL.md`, made by `shepherd lens new <name>` |
 | Run those rules only on some directories | The lens's `applies_to` in `.shepherd/config.yml` |
-| Choose what Shepherd may change: nothing, my working tree, or the PR branch | `fixes.mode` in `.shepherd/config.yml` |
+| Choose what Shepherd may change: nothing, my working tree, or the pull request branch | `fixes.mode` in `.shepherd/config.yml` |
 | Keep fixes out of code a person must own | `escalate.paths` in `.shepherd/config.yml` |
-| Make the review refuse or escalate when a rule breaks | `gate:` on the lens in `.shepherd/config.yml` |
+| Make the review refuse or escalate a broken rule | `gate:` on the lens in `.shepherd/config.yml` |
 | Stop the review approving changes to some files | A `deny` category under `review:` in `.shepherd/config.yml` |
 | Set the tests, linters and models | `checks` and `models` in `.shepherd/config.yml` |
 | Share all of this across repositories | A pack, named under `extends` |
 
-## Two policies in one file: fixing and approval
+## Fixing and approval are two policies
 
-The top of `.shepherd/config.yml` decides what Shepherd reviews and what the local skills may fix. The `review:` section decides what the review in CI may approve.
+`.shepherd/config.yml` holds two policies. The top of the file decides what Shepherd reviews and what the local skills may fix. The `review:` section decides what the review in CI may approve.
 
-They answer different questions. `escalate.paths` stops Shepherd fixing `src/api/auth.ts`, but the review can still approve a person's change to it. A `deny` category stops the review approving any change to it, whoever wrote it. Most teams want both for their most sensitive code.
+Each answers a different question:
 
-## Example: our team requires tenant ownership checks
+- **`escalate.paths`**: stops Shepherd fixing `src/api/auth.ts`, but the review can still approve a person's change to it.
+- **A `deny` category**: stops the review approving any change to it, whoever wrote it.
 
-Your API serves many customers from one database. Every handler that loads a record must check the record belongs to the caller's tenant. This walkthrough turns that rule into a reviewer, keeps fixes away from the auth module, and makes the review send a missing check to a person.
+For your most sensitive code, you'll want both.
 
-### 1. Create the lens
+## Example: require tenant ownership checks
+
+Your API serves many customers from one database, and each handler that loads a record must check the record belongs to the caller's tenant. This walkthrough turns that rule into a reviewer, keeps fixes away from the auth module, and makes the review send a missing check to a person.
+
+**1. Create the lens**
 
 ```bash
 shepherd lens new tenancy --applies 'src/api/**' --description "Tenant ownership checks for API handlers"
 ```
 
-That writes `.shepherd/lenses/tenancy/SKILL.md` and registers it in `.shepherd/config.yml`. The lens runs on every PR that changes a file under `src/api/`.
+The command writes `.shepherd/lenses/tenancy/SKILL.md` and registers the lens in `.shepherd/config.yml`. The lens runs on each pull request that changes a file under `src/api/`.
 
-### 2. Write the checklist
+**2. Write the checklist**
 
-Replace the template's placeholders with your rules. Give each rule an id; findings post as `[tenancy/<id>]`.
+Replace the template's placeholders with your rules. Give each rule an id: Shepherd posts its findings as `[tenancy/<id>]`.
 
 ```markdown
 ---
@@ -59,9 +71,12 @@ description: Tenant ownership checks for API handlers. Flags a read or write of 
 - Escalate: any change to `src/api/auth.ts` itself.
 ```
 
-`[refuse]` marks a rule that names a security or data-loss defect. Shepherd grades it at full severity, and the review refuses a PR that breaks it. `## Fix` tells Shepherd how to fix a finding; leave it out and Shepherd uses its own rules.
+The checklist uses two markers:
 
-### 3. Keep people in charge of the auth module
+- **`[refuse]`**: marks a rule that names a security or data-loss defect. Shepherd grades it at full severity, and the review refuses a pull request that breaks it.
+- **`## Fix`**: tells Shepherd how to fix a finding. Leave it out, and Shepherd uses its own rules.
+
+**3. Keep people in charge of the auth module**
 
 Add this to `.shepherd/config.yml`:
 
@@ -77,9 +92,9 @@ escalate:
   reason: a person reviews auth and schema changes
 ```
 
-Shepherd still reviews `src/api/auth.ts` but hands any fix there to the author.
+Shepherd still reviews `src/api/auth.ts`, but hands any fix there to the author.
 
-### 4. Make the review enforce it
+**4. Make the review enforce it**
 
 The review already reads your lenses as rule packs. To send auth changes to a person as well, add `auth` inside the existing `deny:` map under `review:` in `.shepherd/config.yml`, next to `gate_policy`:
 
@@ -94,15 +109,15 @@ review:
       # ...
 ```
 
-Keep `gate_policy` as it is: it stops the review approving changes to its own policy, and the review refuses a policy without it. Add `auth` to the `deny:` map that is there; a second `deny:` key makes the file invalid.
+Keep `gate_policy` as it is. It stops the review approving changes to its own policy, and the review refuses a policy without it. Add `auth` to the `deny:` map that's already there: a second `deny:` key makes the file invalid.
 
-Changes to shepherd's own setup are a person's call. The policy is read from the default branch, so a PR cannot loosen its own review, and any edit to `.shepherd/config.yml` escalates under `gate_policy`: a person who can push approves it, and the check turns green. `shepherd init` suggests CODEOWNERS entries for `/.shepherd/` and `/.github/`, and `shepherd doctor` checks they are in place.
+A person decides changes to Shepherd's own setup. Shepherd reads the policy from the default branch, so a pull request can't loosen its own review, and it escalates any edit to `.shepherd/config.yml` under `gate_policy`: once a person who can push approves it, the check turns green. `shepherd init` suggests CODEOWNERS entries for `/.shepherd/` and `/.github/`, and `shepherd doctor` checks they're in place.
 
-The review now refuses a PR that breaks `owner-check`, escalates one that breaks `tenant-from-session`, and never approves a change to the auth module.
+The review now refuses a pull request that breaks `owner-check`, escalates one that breaks `tenant-from-session`, and never approves a change to the auth module.
 
-### 5. Check it
+**5. Check it**
 
-Each part has its own check. `shepherd config validate` checks `.shepherd/config.yml` and your lenses; `shepherd gate config` checks the `review:` section. Both exit 1 on a mistake, so CI can run them.
+Each part has its own check. `shepherd config validate` checks `.shepherd/config.yml` and your lenses, and `shepherd gate config` checks the `review:` section. Both exit 1 on a mistake, so CI can run them.
 
 ```bash
 shepherd config validate                     # .shepherd/config.yml and the lenses it names
@@ -112,18 +127,18 @@ shepherd config explain --working-tree       # every Shepherd setting and the fi
 shepherd preview --working-tree              # the reviewers, models and writes for your current change
 ```
 
-`config explain` shows `lenses.tenancy` and `escalate.paths` with `.shepherd/config.yml` as their source. `preview` lists `tenancy` among the reviewers when your change touches `src/api/`.
+`config explain` shows `lenses.tenancy` and `escalate.paths` with `.shepherd/config.yml` as their source. `preview` lists `tenancy` among the reviewers if your change touches `src/api/`.
 
 To see the lens find something before you merge it, run `/swarm --preview` in your coding agent on a branch that changes a handler. It reports what each lens found and posts nothing.
 
-### 6. Merge it
+**6. Merge it**
 
-Commit `.shepherd/` and merge it to the default branch. The review escalates an edit to `.shepherd/config.yml`, so a person approves this PR. From the next PR on, the lens reviews every change under `src/api/`, and the review holds the rules you wrote.
+Commit `.shepherd/` and merge it into the default branch. Shepherd escalates an edit to `.shepherd/config.yml`, so a person approves this pull request. From the next pull request on, the lens reviews each change under `src/api/`, and the review holds the rules you wrote.
 
-## Go further
+## Related resources
 
-- [Build and share review lenses](/shepherd/configuration/lenses/): starter templates, rule tags, trimming a pack's rules.
-- [Compose team policy and recipes](/shepherd/configuration/team-policy/): packs, layering and custom recipes.
-- [Compose reviews for your stack](/shepherd/configuration/stacks/): bundled lenses for React, Node, Go and more.
-- [Choose models](/shepherd/configuration/models/): tiers, a cost ladder, and a model per lens.
-- [Configuration reference](/shepherd/reference/configuration/): every key.
+- [Build and share review lenses](/shepherd/configuration/lenses/): starter templates, rule tags, and trimming a pack's rules
+- [Compose team policy and recipes](/shepherd/configuration/team-policy/): packs, layering and custom recipes
+- [Compose reviews for your stack](/shepherd/configuration/stacks/): bundled lenses for React, Node, Go and more
+- [Choose models](/shepherd/configuration/models/): tiers, a cost ladder, and a model per lens
+- [Configuration reference](/shepherd/reference/configuration/): each key in `.shepherd/config.yml`

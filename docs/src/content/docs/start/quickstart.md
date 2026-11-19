@@ -1,12 +1,24 @@
 ---
 title: "Run your first review"
+description: "Install Shepherd's CLI and skills, start in review-only mode, check the setup, and review a test pull request from your coding agent."
 ---
 
-Install the skills, choose what the agent may change, and review a test PR. This guide starts with findings only.
+This guide takes you from nothing installed to a review of a test pull request from your coding agent. You start in review-only mode, so Shepherd posts findings and changes no code until you choose to let it.
 
-## Prerequisites
+:::note
+To review each pull request in CI instead, see [Set up the review in GitHub Actions](/shepherd/integrations/github-actions/).
+:::
 
-You need Bun 1.2 or later, Git, an authenticated GitHub CLI (`gh`) and a coding agent that can load skills and run subagents. Use a clone of the GitHub repository you want to review. Your agent needs access to its model provider.
+## Before you begin
+
+Make sure you have:
+
+- **Bun 1.2 or later** and **Git**.
+- **An authenticated GitHub CLI (`gh`)**.
+- **A coding agent** that loads skills and runs subagents, with access to its model provider.
+- **A clone of the GitHub repository** you want to review.
+
+Check them from the clone:
 
 ```bash
 bun --version
@@ -14,9 +26,11 @@ git remote -v
 gh auth status
 ```
 
-For the PR example, choose an open PR from a branch in the repository. Use [local review](/shepherd/guides/local-review/) if you do not have a PR yet.
+For the pull request steps, pick an open pull request from a branch in the repository. If you don't have one yet, use [local review](/shepherd/guides/local-review/).
 
-## 1. Install the CLI and skills
+## Run the review
+
+**1. Install the CLI and skills**
 
 In your terminal:
 
@@ -25,11 +39,11 @@ bun add -g @jagreehal/shepherd
 shepherd install
 ```
 
-The default installation copies skills to `~/.claude/skills` and installs the `/shepherd` command. For a repository installation, use `shepherd install --project`. For another harness, use `shepherd install --target <skills-directory>` with the directory that harness reads. Install the full pack because skills reference siblings.
+By default, `install` copies the skills to `~/.claude/skills` and installs the `/shepherd` command. To install into the repository, use `shepherd install --project`. For another harness, use `shepherd install --target <skills-directory>` with the directory that harness reads. Install the full pack, because the skills reference each other.
 
-Confirm your agent can find the installed `shepherd` skill. The terminal CLI configures and supports the workflow; the coding agent executes the review skills.
+Confirm your agent can find the `shepherd` skill. The terminal CLI configures Shepherd; your coding agent runs the review skills.
 
-## 2. Start in review-only mode
+**2. Start in review-only mode**
 
 ```bash
 shepherd init --preset review-only
@@ -38,20 +52,31 @@ shepherd config explain --working-tree
 shepherd preview --working-tree
 ```
 
-Add `--stacks` to give the policy a lens for each stack your repository uses (React, Next.js, Node APIs, Go, Rust, Java, .NET, Python). Expect `fixes.mode: suggest` in the generated policy and a plan with review steps. Under this mode, the agent posts findings and changes no code. A repository with no policy uses the built-in `push` mode; create and merge policy before you rely on review-only behaviour. Rerunning `init` keeps an existing `.shepherd/config.yml`; `--preset` on it changes only `fixes.mode`. `shepherd config explain` shows the effective mode.
+You should see `fixes.mode: suggest` in the generated policy, and a plan with review steps. In this mode, the agent posts findings and changes no code.
 
-Commit `.shepherd/config.yml` and merge it into the default branch. The PR workflow reads that trusted branch, not unmerged policy edits.
+To give the policy a lens for each stack your repository uses (React, Next.js, Node APIs, Go, Rust, Java, .NET, Python), add `--stacks`.
 
-## 3. Check the setup
+Keep these in mind:
+
+- **No policy yet**: a repository with no policy uses the built-in `push` mode. Create and merge a policy before you rely on review-only behaviour.
+- **Existing policy**: rerunning `init` keeps an existing `.shepherd/config.yml`, and `--preset` on it changes only `fixes.mode`. `shepherd config explain` shows the effective mode.
+
+Commit `.shepherd/config.yml` and merge it into the default branch. The pull request workflow reads that branch, never unmerged policy edits.
+
+**3. Check the setup**
 
 ```bash
 shepherd doctor
 shepherd config explain
 ```
 
-Fix lines marked `fail`. A missing `shepherd.yml` workflow is a warning: you can review and fix from your agent without it, but no PR gets a verdict in CI. Other warnings include a CLI not on `PATH` and model IDs the harness cannot verify. Read each suggested action.
+Fix each line marked `fail`, and read each suggested action. These warnings are common:
 
-## 4. Review a PR
+- **Missing `shepherd.yml` workflow**: you can review and fix from your agent without it, but no pull request gets a verdict in CI.
+- **CLI not on `PATH`**: use `bunx @jagreehal/shepherd <command>`.
+- **Unverified model ids**: the harness can't confirm the ids exist.
+
+**4. Review a pull request**
 
 In your coding agent, from the repository clone:
 
@@ -59,27 +84,32 @@ In your coding agent, from the repository clone:
 /shepherd 42
 ```
 
-Replace `42` with your test PR number. Under review-only policy, expect a completed review with findings, if any, and a `reviewed` result. Inspect the PR comments; Shepherd labels its automated findings. A completed review does not grant approval.
+Replace `42` with your test pull request's number. Under review-only policy, you get a completed review with any findings and a `reviewed` result. Read the pull request's comments: Shepherd labels each automated finding. A completed review doesn't grant approval.
 
-If your harness uses skill names without slash commands, ask it to load the `shepherd` skill and review PR 42. The skill's instructions remain the same.
+If your harness uses skill names without slash commands, ask it to load the `shepherd` skill and review pull request 42. The skill's instructions stay the same.
 
-Once `shepherd.yml` is merged, every PR gets a review in GitHub Actions. To review a head again from the terminal:
+Once `shepherd.yml` is on the default branch, Shepherd reviews each pull request in GitHub Actions. To review a head again from the terminal:
 
 ```bash
-shepherd review 42   # comments /review on the PR
+shepherd review 42   # comments /review on the pull request
 shepherd status 42   # the review, the shepherd status, CI and open threads, and what to do next
 ```
 
-## 5. Choose the next mode
+## Choose the next mode
 
-| Mode | Agent may do | You do next |
+Once you trust the findings, let Shepherd do more. Find the mode that fits in the first column:
+
+| Mode | What the agent may do | What you do next |
 | --- | --- | --- |
-| `suggest` | Post findings; change no code | Read and apply the findings |
-| `local` | Edit the working tree; no commits, pushes or thread resolutions | Inspect, commit and push the fixes |
-| `push` | Fix, commit and push under the skill rules | Review decisions left to you and the resulting diff |
+| `suggest` | Post findings, and change no code | Read and apply the findings |
+| `local` | Edit the working tree, with no commits, pushes or thread resolutions | Inspect, commit and push the fixes |
+| `push` | Fix, commit and push under the skill rules | Review the decisions left to you and the resulting diff |
 
-Change `fixes.mode` in `.shepherd/config.yml`, validate and preview the change, then merge it. `--local` provides a separate pre-PR review path with no GitHub writes.
+To change mode, edit `fixes.mode` in `.shepherd/config.yml`, validate and preview the change, then merge it. `--local` is a separate pre-pull-request path with no GitHub writes.
 
-## Next steps
+## Related resources
 
-[Customize Shepherd for your team](/shepherd/start/customize/) with your own review rules, add [recipes](/shepherd/configuration/team-policy/), or enable [GitHub Actions](/shepherd/integrations/github-actions/). Use [troubleshooting](/shepherd/operations/troubleshooting/) if an expected step does not run.
+- [Customize Shepherd for your team](/shepherd/start/customize/): add your own review rules
+- [Compose team policy and recipes](/shepherd/configuration/team-policy/): packs, layering and recipes
+- [Set up the review in GitHub Actions](/shepherd/integrations/github-actions/): a review and a verdict on each pull request
+- [Troubleshoot a review or repair](/shepherd/operations/troubleshooting/): a step that doesn't run

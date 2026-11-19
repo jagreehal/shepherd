@@ -1,53 +1,85 @@
 ---
 title: "Use Shepherd with pstack"
+description: "Install Shepherd beside pstack, review against pstack's principles, use any pstack skill as a lens, and split the work on a pull request between the two."
 ---
 
-[pstack](https://github.com/cursor/plugins/tree/main/pstack) shapes how an agent writes a change: its `poteto-mode` skill routes a task to a playbook and holds the agent to a set of engineering principles. Shepherd starts once the change exists: it reviews it, fixes the findings, repairs CI, and its review in GitHub Actions gives the verdict. Install both to cover the change from first edit to approval.
+[pstack](https://github.com/cursor/plugins/tree/main/pstack) shapes how an agent writes a change: its `poteto-mode` skill routes a task to a playbook and holds the agent to a set of engineering principles. Shepherd starts once the change exists. It reviews the change, fixes the findings and repairs CI, and its [review in GitHub Actions](/shepherd/integrations/github-actions/) gives the verdict. Install both to cover a change from first edit to approval.
 
 ## Install side by side
 
-Shepherd installs as a plugin, like pstack, or with its CLI:
+Shepherd installs as a plugin, like pstack. In Claude Code, run:
 
 ```text
 /plugin marketplace add jagreehal/shepherd
 /plugin install shepherd@shepherd
 ```
 
-Its Cursor manifest is `.cursor-plugin/plugin.json`: for a local install, clone the repository into `~/.cursor/plugins/local/shepherd`. The CLI install still works: `bun add -g @jagreehal/shepherd` puts the `shepherd` command on your PATH, and `shepherd install` (or `shepherd install --target ~/.cursor/skills`) copies the skills. A plugin install has no command on your PATH, so the skills fall back to `bunx @jagreehal/shepherd`.
+Pick the install that fits your setup:
 
-Both packs ship a skill named `swarm`. pstack's runs parallel workers over slices of a task; Shepherd's reviews a PR through lenses. `/shepherd` loads its own sub-skills by path, so the loop runs Shepherd's `swarm`. When you type a skill on its own, use the plugin prefix in Claude Code (`/pstack:swarm`, `/shepherd:swarm`); in Cursor, pick it from the `/` menu by its description. `shepherd doctor` lists every skill name another plugin shares with Shepherd.
+- **Cursor plugin**: Shepherd's Cursor manifest is `.cursor-plugin/plugin.json`. For a local install, clone the repository into `~/.cursor/plugins/local/shepherd`.
+- **CLI**: `bun add -g @jagreehal/shepherd` puts the `shepherd` command on your `PATH`. Then `shepherd install`, or `shepherd install --target ~/.cursor/skills`, copies the skills.
+
+A plugin install puts no command on your `PATH`, so the skills fall back to `bunx @jagreehal/shepherd`.
+
+### Run the right swarm skill
+
+Both packs ship a skill named `swarm`. pstack's runs parallel workers over slices of a task. Shepherd's reviews a pull request through lenses. `/shepherd` loads its own sub-skills by path, so the loop runs Shepherd's `swarm`.
+
+To type a `swarm` skill on its own:
+
+- **In Claude Code**: use the plugin prefix, `/pstack:swarm` or `/shepherd:swarm`.
+- **In Cursor**: pick the skill from the `/` menu by its description.
+
+To list every skill name another plugin shares with Shepherd, run `shepherd doctor`.
 
 ## Review against pstack's principles
 
-The `pstack` lens turns the principles that pstack's agents follow into review rules: fix the root cause, keep checks at the boundary, let types and data structures carry the domain, collapse one-caller layers, delete the old API with its last caller, make steps idempotent, write tests that can fail, and prove what the PR claims. Swarm reviews against them, and the review in CI reads them as a rule pack through `rules_from: { shepherd: {} }` under `review:`.
+The `pstack` lens turns the principles pstack's agents follow into review rules:
 
-```bash
-bunx @jagreehal/shepherd lens new pstack --from pstack   # a copy your team owns and trims
-```
+- Fix the root cause.
+- Keep checks at the boundary.
+- Let types and data structures carry the domain.
+- Collapse one-caller layers.
+- Delete the old API with its last caller.
+- Make steps idempotent.
+- Write tests that can fail.
+- Prove what the pull request claims.
 
-Or extend the pack pinned to a commit, to stay in step with Shepherd's copy:
+Swarm reviews against these rules. The review in CI reads them as a rule pack through `rules_from: { shepherd: {} }` under `review:`.
 
-```yaml
-# .shepherd/config.yml
-extends:
-  - github:jagreehal/shepherd/packs/pstack.yml@<sha>
-```
+To add the lens, pick one of these:
 
-Its gate is `note`: the rules are judgement calls, so the review records a broken one without refusing the PR. Raise it to `escalate` once the team agrees.
+- **A copy your team owns and trims**: scaffold it from the template.
 
-`shepherd init` tells you when pstack is installed and the lens is not yet in your policy.
+  ```bash
+  bunx @jagreehal/shepherd lens new pstack --from pstack
+  ```
+
+- **The pack, pinned to a commit**: extend it to stay in step with Shepherd's copy.
+
+  ```yaml
+  # .shepherd/config.yml
+  extends:
+    - github:jagreehal/shepherd/packs/pstack.yml@<sha>
+  ```
+
+The lens's gate is `note`. The rules are judgement calls, so the review records a broken one without refusing the pull request. Raise the gate to `escalate` once the team agrees.
+
+`shepherd init` tells you if pstack is installed and the lens isn't yet in your policy.
 
 ## Use any pstack skill as a lens
 
-A lens can name an installed plugin's skill as `<plugin>:<skill>`. Shepherd finds it in Claude Code's plugin install record and in Cursor's plugin cache:
+A lens can name an installed plugin's skill as `<plugin>:<skill>`. Shepherd finds the skill in Claude Code's plugin install record and in Cursor's plugin cache:
 
 ```bash
 bunx @jagreehal/shepherd lens add pstack:principle-type-system-discipline --name types --applies '**/*.ts'
 ```
 
-A pstack skill written for an agent doing the work, not reviewing it, has no `## Review` rules. Run `/lens-import pstack:<skill>` to convert one into a lens with stable rule ids first.
+Some pstack skills target an agent doing the work, and they carry no `## Review` rules. To convert one into a lens with stable rule ids first, run `/lens-import pstack:<skill>`.
 
-## Where the two meet
+## Split the work between pstack and Shepherd
+
+Find each step of a change in the first column to see which tool handles it:
 
 | Step | pstack | Shepherd |
 | --- | --- | --- |
@@ -56,6 +88,13 @@ A pstack skill written for an agent doing the work, not reviewing it, has no `##
 | Work the review threads | `babysit` playbook | `triage`, which never touches a thread a person is in |
 | Repair CI | `babysit` playbook | `ci-repair` |
 | Approve | | The CI review's verdict, with the fact it rests on; a person approves |
-| Land | `shipping` playbook | you merge |
+| Land | `shipping` playbook | You merge |
 
-Pick one owner for a PR's review threads and CI. When `/shepherd` runs on a PR, leave pstack's `babysit` off it, so two loops do not push to the same branch.
+Pick one owner for a pull request's review threads and CI. If `/shepherd` runs on a pull request, leave pstack's `babysit` off it, so two loops don't push to the same branch.
+
+## Related resources
+
+- [Build and share review lenses](/shepherd/configuration/lenses/): write, add and share lenses like `pstack`
+- [Compose team policy and recipes](/shepherd/configuration/team-policy/): extend packs such as `packs/pstack.yml`
+- [Command reference](/shepherd/reference/commands/): `shepherd install`, `shepherd lens` and `shepherd doctor`
+- [Credits](/shepherd/reference/credits/): the licence for the pstack principles the lens adapts
