@@ -13,6 +13,7 @@ import { z } from "zod";
 import { setting } from "./config.ts";
 import type { PR } from "./github.ts";
 import { linkedRuleFlags, readHouseRules } from "./house-rules.ts";
+import { reviewFileStandards } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { loadGuidance, loadPolicy, scrutinyFlags } from "./policy.ts";
 import { assured, diffCut, readAll, review, reviewers, type Backend } from "./reviewer.ts";
@@ -188,8 +189,9 @@ export async function runCase(name: string, c: Case, backend: Backend, label: st
 
     const llm = await review(backend, input, loadGuidance(dir, "main", rules), dir);
     const outcome = readAll(assured({ verdict: llm.verdict, llm }), diffCut(diff), [llm]);
+    const found = reviewFileStandards(outcome.llm, rules);
 
-    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: outcome.llm.issues, notes: outcome.llm.notes, standards: outcome.llm.standards, costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started, inputTokens: llm.run?.inputTokens, outputTokens: llm.run?.outputTokens, toolCalls: llm.run?.toolCalls };
+    return { case: name, label, verdict: outcome.verdict, model_verdict: llm.verdict, issues: found.issues, notes: found.notes, standards: found.standards.map((s) => s.finding), costUsd: llm.run?.costUsd ?? null, durationMs: Date.now() - started, inputTokens: llm.run?.inputTokens, outputTokens: llm.run?.outputTokens, toolCalls: llm.run?.toolCalls };
   } catch (e) {
     return { case: name, label, verdict: null, issues: [], notes: [], standards: [], costUsd: null, durationMs: Date.now() - started, error: String(e instanceof Error ? e.message : e).split("\n")[0] };
   } finally {

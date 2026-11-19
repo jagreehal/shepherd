@@ -30,7 +30,10 @@ export const VerdictSchema = z.object({
   risk: z.enum(["low", "medium", "high"]).describe("What merging this head as it stands could break, counting the issues you found. high: data loss, a security hole, a wrong charge, or callers broken. medium: a contained bug, or a risk you could not verify. low: contained, reversible, or style only."),
   issues: z.array(z.string()).describe(`Blocking issues only: each one is a reason for this verdict that the author must fix. Start with file:line and a short title. For a bug, give the input, what the code does and what it should. End with the fix. A ${STANDARDS_FILE} breach goes in standards, never here, unless it is also a wrong result you can show for an ordinary input. Empty array if none.`),
   notes: z.array(z.string()).default([]).describe("Non-blocking observations: refuted concerns, follow-ups, things worth knowing. Never repeat an issue here. Empty array if none."),
-  standards: z.array(z.string()).default([]).describe(`Each place the diff's added lines break a rule in a ${STANDARDS_FILE} the prompt quotes, after its paths to skip and caps: file:line and a short title, the file and rule quoted, then the fix. Never blocking and never changes the verdict. Empty array if none.`),
+  standards: z
+    .array(z.object({ source: z.string(), finding: z.string() }))
+    .default([])
+    .describe(`Each place the diff's added lines break a rule in a ${STANDARDS_FILE} the prompt quotes, after its paths to skip and caps. source: the path the rule's heading or include marker gives, exactly. finding: file:line and a short title, the rule quoted, then the fix. Never blocking and never changes the verdict. Empty array if none.`),
   next_steps: z.string().describe("Empty on APPROVE. Otherwise what the author does next: who to ask, which comment to address."),
   change_summary: z.string().describe("What changed, for a teammate who never saw the PR. Own words, never quote the diff. Under 600 chars."),
   safe_because: z
@@ -534,7 +537,7 @@ export function combine(primary: Backend, llm: LLMVerdict, opinion: Opinion): Co
       risk: opinion.risk,
       issues: [...llm.issues, ...opinion.issues.map((i) => `${opinion.backend}: ${i}`)],
       notes: [...llm.notes, ...opinion.notes.map((i) => `${opinion.backend}: ${i}`)],
-      standards: [...llm.standards, ...opinion.standards.map((i) => `${opinion.backend}: ${i}`)],
+      standards: [...llm.standards, ...opinion.standards.map((s) => ({ ...s, finding: `${opinion.backend}: ${s.finding}` }))],
       next_steps: opinion.next_steps || llm.next_steps || "A human decides.",
     },
   };
@@ -553,7 +556,7 @@ export async function review(backend: Backend, input: ReviewInput, guidance: str
 
   const reviewed = backend === "claude" ? viaClaudeCode(system, prompt, repoRoot, verbose) : backend === "codex" ? viaCodex(system, prompt, repoRoot, verbose) : await viaModel(backend === "api" ? setting("model") : backend, system, prompt, repoRoot, input, verbose);
 
-  return { ...reviewed, reasoning: unescaped(reviewed.reasoning), issues: reviewed.issues.map(unescaped), notes: reviewed.notes.map(unescaped), standards: reviewed.standards.map(unescaped), next_steps: unescaped(reviewed.next_steps) };
+  return { ...reviewed, reasoning: unescaped(reviewed.reasoning), issues: reviewed.issues.map(unescaped), notes: reviewed.notes.map(unescaped), standards: reviewed.standards.map((s) => ({ ...s, finding: unescaped(s.finding) })), next_steps: unescaped(reviewed.next_steps) };
 }
 
 /** A verdict with its issues and notes sharing `max` characters and the other fields capped. The evidence bundle keeps them whole. */
@@ -569,7 +572,7 @@ export function shortened<T extends LLMVerdict>(llm: T, max: number): T {
     safe_because: llm.safe_because && { ...llm.safe_because, fact: cap(llm.safe_because.fact, 1000) },
     issues: llm.issues.map((i) => cap(i, each)),
     notes: llm.notes.map((n) => cap(n, each)),
-    standards: llm.standards.map((n) => cap(n, each)),
+    standards: llm.standards.map((s) => ({ ...s, finding: cap(s.finding, each) })),
   };
 }
 

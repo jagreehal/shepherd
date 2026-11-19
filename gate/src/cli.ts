@@ -57,7 +57,7 @@ import {
 import { linkedRuleFlags, promptRules, readHouseRules } from "./house-rules.ts";
 import { tryRetainApproval, type RetentionResult } from "./retention.ts";
 import { incrementalDiff } from "./delta.ts";
-import { addedLines, lineComments } from "./inline.ts";
+import { addedLines, lineComments, reviewFileStandards } from "./inline.ts";
 import { leadsAt } from "./leads.ts";
 import { explainFailure, failureText } from "./provider-errors.ts";
 import { catalogPrice } from "./prices.ts";
@@ -713,7 +713,7 @@ if (opts["dry-run"]) {
     // Checked on the combined verdict: a disagreement has already escalated, and only an approval can be held back.
     outcome = readAll(assured(outcome), diffCut(pr.diff), opinion ? [llm, opinion] : [llm]);
     verdict = VERDICT_OF[outcome.verdict];
-    llm = { ...llm, ...outcome.llm };
+    llm = reviewFileStandards({ ...llm, ...outcome.llm }, houseRules);
     body = llm.reasoning;
   } catch (e) {
     verdict = "ERROR";
@@ -1055,7 +1055,7 @@ function renderBody(pr: PR, verdict: Verdict, reasoning: string, llm: Reviewed |
 
   if (llm?.issues.length) parts.push(...fold(`<strong>Issues:</strong> ${llm.issues.length}`, llm.issues.map((i, n) => `${n + 1}. ${inert(i)}`), true)); // numbered, so a reply can name "issue 2"
 
-  if (llm?.standards.length) parts.push(...fold(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((i) => `- ${inert(i)}`), verdict === "APPROVED"));
+  if (llm?.standards.length) parts.push(...fold(`<strong>Coding standards:</strong> ${llm.standards.length} to fix, not blocking`, llm.standards.map((s) => `- ${inert(s.finding)}`), verdict === "APPROVED"));
 
   if (llm?.notes.length) parts.push(...fold(`<strong>Notes:</strong> ${llm.notes.length} not blocking`, llm.notes.map((i) => `- ${inert(i)}`)));
 
