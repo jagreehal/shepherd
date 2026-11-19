@@ -1,21 +1,38 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
-import mermaid from 'astro-mermaid';
+import starlightShadcn from 'starlight-shadcn';
 import remarkLinks from './src/remark-links.mjs';
+import remarkMermaid from './src/remark-mermaid.mjs';
 
 const base = process.env.BASE ?? '/shepherd';
 export default defineConfig({
   site: process.env.SITE ?? 'https://jagreehal.github.io',
   base,
   trailingSlash: 'always',
-  markdown: { processor: unified({ remarkPlugins: [[remarkLinks, { defaultBase: '/shepherd', base }]] }) },
+  markdown: { processor: unified({ remarkPlugins: [remarkMermaid, [remarkLinks, { defaultBase: '/shepherd', base }]] }) },
   integrations: [
-    mermaid({ theme: 'neutral', autoTheme: true }),
+    {
+      name: 'mermaid-flow-player',
+      hooks: { 'astro:config:setup': ({ injectScript }) => injectScript('page', "import '/src/scripts/flow-player.ts';") },
+    },
     starlight({
       title: 'Shepherd',
       description: 'Review changes, fix findings and prepare pull requests for approval.',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/jagreehal/shepherd' }],
+      favicon: '/favicon.png',
+      head: [{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${base.replace(/\/$/, '')}/apple-touch-icon.png` } }],
+      customCss: ['./src/styles/global.css'],
+      lastUpdated: true,
+      plugins: [
+        starlightShadcn({
+          navLinks: [
+            { label: 'Docs', href: '/start/quickstart/', activeMatch: '/(start|guides)/' },
+            { label: 'Configure', href: '/start/customize/', activeMatch: '/configuration/' },
+            { label: 'Reference', href: '/reference/commands/', activeMatch: '/reference/' },
+          ],
+        }),
+      ],
       editLink: { baseUrl: 'https://github.com/jagreehal/shepherd/edit/main/docs/' },
       sidebar: [
   {
@@ -24,6 +41,10 @@ export default defineConfig({
       {
         "label": "Overview",
         "slug": ""
+      },
+      {
+        "label": "Set up the review in GitHub Actions",
+        "slug": "integrations/github-actions"
       },
       {
         "label": "First run",
@@ -43,7 +64,11 @@ export default defineConfig({
     "label": "Guides",
     "items": [
       {
-        "label": "Review before opening a PR",
+        "label": "Read and respond to a review",
+        "slug": "guides/pull-requests"
+      },
+      {
+        "label": "Review before opening a pull request",
         "slug": "guides/local-review"
       },
       {
@@ -93,11 +118,7 @@ export default defineConfig({
         "slug": "integrations/pstack"
       },
       {
-        "label": "Run in GitHub Actions",
-        "slug": "integrations/github-actions"
-      },
-      {
-        "label": "PR state notifications",
+        "label": "Send pull request state notifications",
         "slug": "integrations/notifications"
       }
     ]
@@ -108,6 +129,10 @@ export default defineConfig({
       {
         "label": "Troubleshooting",
         "slug": "operations/troubleshooting"
+      },
+      {
+        "label": "Review costs",
+        "slug": "operations/costs"
       },
       {
         "label": "Upgrades and maintenance",

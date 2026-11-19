@@ -1,20 +1,25 @@
 ---
 title: "Command reference"
+description: "Look up every Shepherd terminal command and coding-agent command: setup, configuration, local records, evaluation, operations, and the review and fixing skills."
 ---
 
-Use the terminal CLI for installation, configuration and records. Use your coding agent for the review and fixing skills. You can replace `shepherd` with `bunx @jagreehal/shepherd` if the CLI is not on `PATH`; include a package version when you need a repeatable CI setup.
+Shepherd has two kinds of command. You run the `shepherd` CLI in a terminal for installation, configuration and records, and you run the review and fixing skills from your coding agent.
 
-## Setup and configuration: terminal
+If the CLI isn't on your `PATH`, replace `shepherd` with `bunx @jagreehal/shepherd`. For a repeatable CI setup, include a package version.
 
-| Command | Options and purpose |
+## Set up and configure from the terminal
+
+Find the command in the first column. The second column lists its options and what it does:
+
+| Command | Options and what it does |
 | --- | --- |
 | `shepherd install` | `--project`, `--target <dir>`, `--link`, `--force`; install the skill pack |
 | `shepherd uninstall` | `--project`, `--target <dir>`; remove files the installer owns |
 | `shepherd init` | `--preset review-only\|local-fix\|push`, `--from <pack>`, `--stacks`, `--model <id>` (the review model, as `models.loop`), `--yes`; create repository policy and `.github/workflows/shepherd.yml`, and set the model key as an Actions secret, with a lens for each detected stack under `--stacks`. `--stacks` adds a lens only for a stack the effective policy lacks: a lens the file or a pack it extends already provides keeps its skill, scope and gate. On an existing policy it keeps every other setting |
 | `shepherd doctor` | `--json`; diagnose local setup and repository policy, and whether the model's key is a repository secret |
-| `shepherd review <pr>` | Comment `/review` on the PR, which reviews its head again in GitHub Actions |
-| `shepherd status <pr>` | Show the review's verdict, the `shepherd` status, CI and open threads on the PR's head as one stage and the next step |
-| `shepherd gate <pr>` | `--dry-run`, `--post`, `--json <path>`, `--policy-dir <dir>`; review a PR as the workflow does. `shepherd gate config` prints every review setting and its source; `shepherd gate init` writes the workflow and `review:` |
+| `shepherd review <pr>` | Comment `/review` on the pull request, which reviews its head again in GitHub Actions |
+| `shepherd status <pr>` | Show the review's verdict, the `shepherd` status, CI and open threads on the pull request's head as one stage and the next step |
+| `shepherd gate <pr>` | `--dry-run`, `--post`, `--json <path>`, `--policy-dir <dir>`; review a pull request as the workflow does. `shepherd gate config` prints every review setting and its source; `shepherd gate init` writes the workflow and `review:` |
 | `shepherd help` | `--all`; the everyday commands, or every command including those the workflows call |
 | `shepherd config validate` | Validate working-tree policy and lens resolution |
 | `shepherd config schema` | Print the JSON Schema of `.shepherd/config.yml`, the one `schema/config.json` ships and `shepherd init` links to |
@@ -22,15 +27,15 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | `shepherd branding` | `--working-tree`; the branding comments post with (name, avatar, glyphs, headers), resolved and escaped, as JSON |
 | `shepherd preview` | `--recipe <name>`, `--base <ref>`, `--working-tree`; show the plan for the change |
 | `shepherd model-id <id>` | Print a model id as OpenCode spells it: `bedrock:<id>` becomes `amazon-bedrock/<id>`, and an OpenCode id or Claude Code alias passes through |
-| `shepherd stack <pr>` | Print, as JSON, the open PR this one is stacked on and the range to review (`parent_head...head`), or the long-lived branch it should target when most of its commits already sit there. Git ancestry only; the loop and swarm run it before they write the diff |
-| `shepherd impact <diff>` | Print, as JSON, where the change reaches beyond its diff: each changed export with the files outside the PR that name it, each changed source file with its tests, and each identifier the diff renamed, removed or added uses of, with the unchanged lines still naming it, docs included. Git only (`ls-files`, `grep`), capped, and advisory: swarm hands the `lines` to the router and the correctness lens as leads |
+| `shepherd stack <pr>` | Print, as JSON, the open pull request this one is stacked on and the range to review (`parent_head...head`), or the long-lived branch it should target when most of its commits already sit there. Git ancestry only; the loop and swarm run it before they write the diff |
+| `shepherd impact <diff>` | Print, as JSON, where the change reaches beyond its diff: each changed export with the files outside the pull request that name it, each changed source file with its tests, and each identifier the diff renamed, removed or added uses of, with the unchanged lines still naming it, docs included. Git only (`ls-files`, `grep`), capped, and advisory: swarm hands the `lines` to the router and the correctness lens as leads |
 | `shepherd number <diff>` | Print the diff with each hunk line's old and new numbers, under a contents list of each file's lines that marks generated files. It is what reviewers read; `coverage` and `inline` keep reading the raw diff |
 | `shepherd ci-log <log>` | Print, as JSON, a failed job log's `index` of error, warning and failure lines by number, and an `excerpt` around the last `##[error]` |
-| `shepherd coverage <round.json> --diff <path>` | Print, as JSON, the changed ranges of the PR's diff that no finished lens's scope holds, and the lenses that did not finish. Exits non-zero when any range went unreviewed; swarm runs it before a round posts |
+| `shepherd coverage <round.json> --diff <path>` | Print, as JSON, the changed ranges of the pull request's diff that no finished lens's scope holds, and the lenses that did not finish. Exits non-zero when any range went unreviewed; swarm runs it before a round posts |
 | `shepherd reviewed <summary.md>` | Print the `head_sha` and `base_sha` the previous round's summary recorded, for the next round's `interdiff --since-base` |
-| `shepherd interdiff <since> <base> [--head <sha>] [--since-base <sha>]` | Print, as JSON, how the PR's own change moved since the head swarm last reviewed: `unchanged`, the `files` whose part of the change differs, the `git range-diff` `text`, and the same delta as a plain `focus` with `+` and `-` meaning changed since that head. Each version is squashed onto its own merge base first, so commits a base merge or rebase brought in are left out. `<base>` is the base branch, or a stacked PR's parent head. `--since-base` names the base tip the earlier head was reviewed against, so a stacked parent force-pushed in between keeps its old change out. Swarm runs it for every round after the first |
+| `shepherd interdiff <since> <base> [--head <sha>] [--since-base <sha>]` | Print, as JSON, how the pull request's own change moved since the head swarm last reviewed: `unchanged`, the `files` whose part of the change differs, the `git range-diff` `text`, and the same delta as a plain `focus` with `+` and `-` meaning changed since that head. Each version is squashed onto its own merge base first, so commits a base merge or rebase brought in are left out. `<base>` is the base branch, or a stacked pull request's parent head. `--since-base` names the base tip the earlier head was reviewed against, so a stacked parent force-pushed in between keeps its old change out. Swarm runs it for every round after the first |
 | `shepherd inline <round.json>` | Print swarm's inline review as the JSON payload for `POST /pulls/<n>/reviews`: each finding above NIT with a line in the diff, most severe first, at most 10, with its title, a one-click `suggestion` when the fix replaces exactly its lines, `Verified:`, the commands that checked it, and a collapsed prompt for AI agents. Run it from the reviewed checkout: it places each suggestion on the lines it rewrites, at their indentation, keeps a suggestion over code only when it is code, and posts one comment per place, naming the other findings on those lines under it. With `--diff <path>`, it also leaves out findings whose lines fall outside the diff's hunks, which GitHub would reject the whole review over; the summary comment still carries them |
-| `shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]` | Render swarm's summary comment from the round's JSON, reading the reviewed files from the working directory as `inline` does, so both cite the same lines: the verdict heading and confidence, then collapsed sections for numbered findings, one agent prompt for every finding above NIT, pre-merge checks, the walkthrough, still open, checks, lenses and earlier rounds. `--previous` carries the round number and history forward from the comment on the PR; `--body` drops the marker, header and history; `--fanout` (default `$SHEPHERD_FANOUT`) lists the router and each first-wave lens the round never reported as `could_not_run` |
+| `shepherd summary <round.json> [--previous <comment.md>] [--body] [--fanout <fanout.json>]` | Render swarm's summary comment from the round's JSON, reading the reviewed files from the working directory as `inline` does, so both cite the same lines: the verdict heading and confidence, then collapsed sections for numbered findings, one agent prompt for every finding above NIT, pre-merge checks, the walkthrough, still open, checks, lenses and earlier rounds. `--previous` carries the round number and history forward from the comment on the pull request; `--body` drops the marker, header and history; `--fanout` (default `$SHEPHERD_FANOUT`) lists the router and each first-wave lens the round never reported as `could_not_run` |
 | `shepherd fanout [--base <ref>] [--working-tree]` | Print the lenses swarm starts beside the router, as JSON: `correctness` on the whole diff and each custom lens whose `applies_to` matches a changed file, with its directory from the default branch. Exits 1 naming a team lens that resolves nowhere |
 | `shepherd workflows [--upgrade] [--model <id>] [--environment <name>] [--aws-region <region>]` | Write `.github/workflows/shepherd.yml` and add the review policy under `review:` in `.shepherd/config.yml`, keeping files that exist, and pin `SHEPHERD_VERSION` to this CLI's version. `--upgrade` rewrites `shepherd.yml` from the current template, keeping its environment, OIDC and region; moves `.shepherd/gate.yml` under `review:` and removes it once it reads back; and prints which older workflow files to delete. `--model` pins `models.loop`; `--environment` runs the review job in that GitHub environment, for environment-scoped model keys |
 | `shepherd lens new <name>` | `--from <template>` (react, nextjs, node-api, go, rust, java, dotnet, python, observability), repeatable `--applies <glob>`, `--description <text>`, `--model`; scaffold a lens |
@@ -42,9 +47,11 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | `shepherd models tier <name> <model>` | `--global`; name a model once, for the ladder and pins |
 | `shepherd opencode-agents` | `--file <lenses.yml>`; print model agents for OpenCode 1.x |
 
-## Local records: terminal
+## Record local reviews from the terminal
 
-| Command | Purpose |
+These commands capture and check a [local review](/shepherd/guides/local-review/). Find the command in the first column:
+
+| Command | What it does |
 | --- | --- |
 | `shepherd local change [--base <ref>]` | Capture the current change and its fingerprint |
 | `shepherd local finish <record.json> [--base <ref>]` | Check review completeness and write a receipt when complete; exits 2 when incomplete |
@@ -52,35 +59,50 @@ Use the terminal CLI for installation, configuration and records. Use your codin
 | `shepherd local demo [<dir>]` | Create the planted-bug demonstration repository |
 | `shepherd acceptance <suggest\|local> [--pr <n>] -- <agent-command>...` | Run an agent and check its writes against the mode |
 
-A `complete` local record proves the review covered the captured ranges. It does not establish that the reviewer found each defect: `shepherd eval` measures that. An edit invalidates the matching receipt.
+A `complete` local record proves the review covered the captured ranges. It doesn't establish that the reviewer found each defect: `shepherd eval` measures that. An edit invalidates the matching receipt.
 
-## Evaluation: terminal
+## Evaluate reviews from the terminal
 
-| Command | Purpose |
+These commands measure how well reviews find bugs. Find the command in the first column:
+
+| Command | What it does |
 | --- | --- |
 | `shepherd eval run <cases-dir> --config <label> -- <agent-command>...` | Review each case in a fresh clone of its head and keep each run; `--repeat <n>`, `--out <dir>`; `{base}` and `{head}` in the command are filled in |
 | `shepherd eval score <runs-dir>` | Recall, precision, false positives and duplicates per configuration, development and held-out apart, and the cheapest configuration within noise of the best; `--cases <dir>`, `--json` |
 
-See [measure review accuracy](/shepherd/contributing/evaluation/).
+See [Measure review accuracy](/shepherd/contributing/evaluation/).
 
-## Operations: terminal
+## Run operations from the terminal
 
-| Command | Purpose |
+These commands score runs, record traces and send notifications. Find the command in the first column:
+
+| Command | What it does |
 | --- | --- |
 | `shepherd garden <owner/repo>...` | Score runs; `--since`, `--min-prs`, repeatable `--traces`, `--tempo-url`, `--trace-retries`, `--trace-wait-ms`, `--trace-cost-usd` control collection and thresholds |
 | `shepherd trace event <stage> <start\|end> --pr <n>` | Record a stage; `--round`, `--outcome ok\|failed\|skipped`, `--retries`, `--head` add context |
 | `shepherd trace flush --pr <n> --repo <owner/repo> --head <sha> --outcome <how it ended>` | Export and clear an iteration; `--base`, `--ci-run`, `--ci-attempt`, repeatable `--related <traceparent>` add context |
 | `shepherd notify --pr <n> --repo <owner/repo> --head <sha> --state <state> --file <path>` | Send a state notification when `SHEPHERD_NOTIFY_WEBHOOK` is set; prints `sent`, `unchanged`, `off` or `failed` and never fails the iteration |
 
-See [trace scoring](/shepherd/operations/gardener-telemetry/) for telemetry credentials and [notifications](/shepherd/integrations/notifications/) for notification semantics. `config validate` exits non-zero for invalid policy; acceptance exits 1 when the run broke its mode and 2 when the agent did not finish. Read JSON result fields rather than equating a successful CLI invocation with merge readiness.
+See [Garden trace scoring](/shepherd/operations/gardener-telemetry/) for telemetry credentials and [Send pull request state notifications](/shepherd/integrations/notifications/) for notification semantics.
 
-## Review and fixing: coding agent
+### Exit codes
 
-| Command | Task |
+Scripts can rely on these exit codes:
+
+- **`shepherd config validate`**: exits non-zero for invalid policy.
+- **`shepherd acceptance`**: exits 1 if the run broke its mode, and 2 if the agent didn't finish.
+
+A successful CLI invocation doesn't mean the pull request is ready to merge. Read the JSON result fields instead.
+
+## Review and fix from your coding agent
+
+Run these in your coding agent. Find the command in the first column:
+
+| Command | What it does |
 | --- | --- |
-| `/shepherd 42` | Run the recipe selected by team policy on PR 42 |
+| `/shepherd 42` | Run the recipe selected by team policy on pull request 42 |
 | `/shepherd 42 --recipe <name>` | Run a configured recipe |
-| `/shepherd --local [--base <ref>]` | Review and fix before a PR, with no GitHub writes; `--base` measures from that ref |
+| `/shepherd --local [--base <ref>]` | Review and fix before a pull request, with no GitHub writes; `--base` measures from that ref |
 | `/swarm 42` | Run the review swarm |
 | `/swarm --local [--base <ref>]` | Review the local change without fixes |
 | `/swarm --preview` | Preview lenses without posting findings |
@@ -89,4 +111,12 @@ See [trace scoring](/shepherd/operations/gardener-telemetry/) for telemetry cred
 | `/review-security` | Run one review lens |
 | `/incident <run-url\|issue\|error-file>` | Investigate a failure and attempt a reproducing test and fix |
 
-`/loop 5m /shepherd 42` is a scheduling command for harnesses that support it. Read [the skill catalog](/shepherd/reference/skills/) for other installed skills.
+`/loop 5m /shepherd 42` is a scheduling command for harnesses that support it. For other installed skills, see [Skills and human decisions](/shepherd/reference/skills/).
+
+## Related resources
+
+- [Skills and human decisions](/shepherd/reference/skills/): what each skill does
+- [Configuration reference](/shepherd/reference/configuration/): every setting in `.shepherd/config.yml`
+- [Environment and credentials](/shepherd/reference/environment/): the secrets and variables commands read
+- [Review before opening a pull request](/shepherd/guides/local-review/): the `shepherd local` commands in use
+- [Measure review accuracy](/shepherd/contributing/evaluation/): run `shepherd eval` on your own cases

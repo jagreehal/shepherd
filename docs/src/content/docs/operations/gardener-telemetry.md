@@ -1,16 +1,23 @@
 ---
 title: "Score exported traces in garden"
+description: "Feed garden the traces Shepherd exports, from files, Grafana Tempo or Datadog, and read the trace signals and coverage limits in its report."
 ---
 
-The gate and Shepherd already export through autotel when
-`OTEL_EXPORTER_OTLP_ENDPOINT` is set. Garden reads those traces from files,
-Grafana Tempo, Datadog, or any mix of them. No telemetry backend is required for GitHub-only
-scoring, and trace signals never change the accepted-fix rule.
+The CI review and Shepherd's local loop already export spans through autotel once `OTEL_EXPORTER_OTLP_ENDPOINT` is set (see [Trace an iteration](/shepherd/operations/traces/)). [Garden](/shepherd/operations/gardening/) can read those traces back and add them to its score. Scoring from GitHub alone needs no telemetry backend, and trace signals never change the accepted-fix rule.
 
-## File exports
+## Choose a trace source
 
-Use an uncompressed OTLP JSON export, or the collector's JSON-lines file
-exporter. Pass explicit files; garden does not scan the working tree:
+Garden reads traces from three sources. Pick one, or combine them: trace and span IDs prevent duplicate counts where they overlap.
+
+| Source | When to use it | Set |
+| --- | --- | --- |
+| [Exported files](#read-exported-files) | Your collector writes OTLP to disk | `--traces <file>` or `GARDEN_TRACE_FILES` |
+| [Grafana Tempo](#query-grafana-tempo) | Your traces land in Tempo | `GARDEN_TEMPO_URL`, `GARDEN_TEMPO_HEADERS` |
+| [Datadog](#query-datadog) | Your traces land in Datadog through its OTLP intake | `GARDEN_DATADOG_SITE`, `GARDEN_DATADOG_API_KEY`, `GARDEN_DATADOG_APP_KEY` |
+
+## Read exported files
+
+Garden reads an uncompressed OTLP JSON export, or the collector's JSON-lines file exporter. It doesn't scan the working tree, so pass each file explicitly:
 
 ```bash
 shepherd garden acme/service --since 2026-10-01 \
@@ -18,12 +25,13 @@ shepherd garden acme/service --since 2026-10-01 \
   --traces /var/lib/otel/garden-previous.jsonl
 ```
 
-For scheduled invocations, set `GARDEN_TRACE_FILES` to a JSON array of paths
-available on that runner. Copy closed/rotated files before reading them; a
-batch being written can leave an incomplete JSON line, which marks that source
-unavailable rather than interpreting half a batch as a successful run.
+For scheduled invocations, set `GARDEN_TRACE_FILES` to a JSON array of paths available on that runner.
 
-A collector pipeline can keep a file alongside its existing backend exporter:
+Copy closed or rotated files before garden reads them. A batch still being written can leave an incomplete JSON line. Garden then marks that source unavailable, rather than reading half a batch as a successful run.
+
+### Add a file exporter to your collector
+
+A collector pipeline can write a file alongside its existing backend exporter:
 
 ```yaml
 exporters:
@@ -42,16 +50,18 @@ service:
       exporters: [file/garden] # add your existing backend exporter here too
 ```
 
-Keep the pipeline's existing receiver/processor definitions and mount a writable
-directory for the file exporter. See the collector's
-[file exporter contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/fileexporter).
-Files must be regular files, at most 10 MB each; symlinks and compressed exports
-are refused. At most 100 files, 50,000 spans and 50 MB of normalized
-measurements enter one report.
+Keep the pipeline's existing receiver and processor definitions, and mount a writable directory for the file exporter. See the collector's [file exporter contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/exporter/fileexporter).
 
-## Grafana Tempo
+### File limits
 
-Use the query endpoint, not its OTLP ingestion URL:
+Garden applies these limits to files:
+
+- **Each file**: a regular file of at most 10 MB. Garden refuses symlinks and compressed exports.
+- **Each report**: at most 100 files, 50,000 spans and 50 MB of normalized measurements.
+
+## Query Grafana Tempo
+
+Point garden at Tempo's query endpoint, not its OTLP ingestion URL:
 
 ```bash
 export GARDEN_TEMPO_URL=https://tempo.example.com
@@ -60,29 +70,23 @@ export GARDEN_TEMPO_URL=https://tempo.example.com
 shepherd garden acme/service --since 2026-10-01
 ```
 
-The reader calls Tempo's [search and trace-by-ID APIs](https://grafana.com/docs/tempo/latest/api_docs/).
-It searches only the selected repository and window for `shepherd.iteration`
-and `gate.review`, then fetches at most 100 traces within a shared 30-second
-budget. Responses have a 10 MB cap, the report has a 50,000-span cap, and the
-reader follows no redirects. Authentication headers never appear in the report.
-Set a read-only credential. Grafana Cloud tenants can supply their Basic
-Authorization and tenant headers through the same object.
+Set a read-only credential in `GARDEN_TEMPO_HEADERS`. Grafana Cloud tenants can supply their Basic Authorization and tenant headers through the same object.
 
-The CLI sends `GARDEN_TEMPO_HEADERS` only to the origin `GARDEN_TEMPO_URL`
-names. A `--tempo-url` on another origin gets no headers.
+The reader calls Tempo's [search and trace-by-ID APIs](https://grafana.com/docs/tempo/latest/api_docs/), within these bounds:
 
-For the bundled weekly workflow, set the repository variable `GARDEN_TEMPO_URL`
-and secret `GARDEN_TEMPO_HEADERS`. A step before the agent runs the collector
-with them and writes the report to `GARDEN_REPORT`; the agent reads that file
-and never holds the Tempo credential. No change to the publisher's write token
-is needed. Exported files, Tempo and Datadog can overlap; trace/span IDs
-prevent duplicate counts.
+- **Search scope**: only the selected repository and window, for `shepherd.iteration` and `gate.review`.
+- **Fetches**: at most 100 traces, within a shared 30-second budget.
+- **Size**: responses have a 10 MB cap, and the report has a 50,000-span cap.
+- **Redirects**: the reader follows none.
+- **Credentials**: authentication headers never appear in the report. The CLI sends `GARDEN_TEMPO_HEADERS` only to the origin `GARDEN_TEMPO_URL` names, so a `--tempo-url` on another origin gets no headers.
 
-## Datadog
+### Use Tempo in the weekly workflow
 
-Garden reads spans that the CI review and the local loop sent through Datadog's OTLP intake
-(`OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.<site>` with
-`OTEL_EXPORTER_OTLP_HEADERS=dd-api-key=<key>`). Set three variables:
+For the bundled weekly workflow, set the repository variable `GARDEN_TEMPO_URL` and the secret `GARDEN_TEMPO_HEADERS`. A step before the agent runs the collector with them and writes the report to `GARDEN_REPORT`. The agent reads that file and never holds the Tempo credential. The publisher's write token needs no change.
+
+## Query Datadog
+
+Garden reads spans that the CI review and the local loop sent through Datadog's OTLP intake, with `OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.<site>` and `OTEL_EXPORTER_OTLP_HEADERS=dd-api-key=<key>`. Set three variables:
 
 ```bash
 export GARDEN_DATADOG_SITE=datadoghq.eu   # your Datadog site
@@ -91,46 +95,46 @@ export GARDEN_DATADOG_APP_KEY=...         # an application key scoped to apm_rea
 shepherd garden acme/service --since 2026-10-01
 ```
 
-The reader calls the [span search API](https://docs.datadoghq.com/api/latest/spans/)
-on `api.<site>`, and only for the listed Datadog sites, so the keys never go
-anywhere else. It finds the repository's `shepherd.iteration` and
-`gate.review` roots, then fetches their traces in batches of 50, since stage
-spans carry no repository. Datadog nests OTLP attributes under `custom` and
-stores span IDs in decimal; the reader maps both back. The span search API
-allows 300 requests an hour, which a weekly run stays well under.
-A root search with more results than it read, or a page Datadog marks partial
-(a status other than `done`, such as `timeout`, or any warning), sets
-`coverage.limited`; the reader still pages through every trace it found.
+The reader calls the [span search API](https://docs.datadoghq.com/api/latest/spans/) on `api.<site>`, and only for the listed Datadog sites, so the keys never go anywhere else. It works like this:
 
-For the bundled weekly workflow, set the repository variable
-`GARDEN_DATADOG_SITE` and the secrets `GARDEN_DATADOG_API_KEY` and
-`GARDEN_DATADOG_APP_KEY`. The collector step reads them; the agent never does.
+- **Roots first**: it finds the repository's `shepherd.iteration` and `gate.review` roots, then fetches their traces in batches of 50, since stage spans carry no repository.
+- **Mapping**: Datadog nests OTLP attributes under `custom` and stores span IDs in decimal. The reader maps both back.
+- **Rate limit**: the span search API allows 300 requests an hour. A weekly run stays well under it.
+- **Partial results**: a root search with more results than the reader read, or a page Datadog marks partial (a status other than `done`, such as `timeout`, or any warning), sets `coverage.limited`. The reader still pages through every trace it found.
 
-## Assess the measurements
+### Use Datadog in the weekly workflow
 
-The JSON adds a `telemetry` summary per PR and fixed inspection signals:
+For the bundled weekly workflow, set the repository variable `GARDEN_DATADOG_SITE` and the secrets `GARDEN_DATADOG_API_KEY` and `GARDEN_DATADOG_APP_KEY`. The collector step reads them; the agent never does.
+
+## Read the trace signals
+
+Garden's JSON adds a `telemetry` summary per pull request and a fixed set of inspection signals. Each signal fires at its default trigger:
 
 | Signal | Default trigger |
 | --- | --- |
 | `trace_stage_failed` | A recorded stage failed or never finished |
-| `trace_retries` | At least 3 recorded retries on the PR |
+| `trace_retries` | At least 3 recorded retries on the pull request |
 | `trace_approval_wait` | At least 5 minutes, and half the observed iteration time, waiting for approval |
-| `trace_review_cost` | At least $5 of known review cost on the PR |
+| `trace_review_cost` | At least $5 of known review cost on the pull request |
 
-Use `--trace-retries`, `--trace-wait-ms` and `--trace-cost-usd` to change the
-inspection thresholds. The report includes their effective values, coverage
-limits, unavailable reads and the trace IDs behind each PR's samples.
-`coverage.untouchedPrs` counts PRs with trace samples that shepherd did not
-work on, such as a PR only the CI review saw; the report scores shepherd's runs,
-so their samples stay out of the per-PR summaries. Sampling
-or retention can omit runs, so the report never claims a complete history.
-`unpricedReviews` distinguishes missing or incomplete prices from zero cost.
-Older spans without `gate.cost_complete` remain incomplete even when their
-known subtotal is available. The gate's root cost
-already includes its reviewer calls; child model spans do not add it again.
-Shepherd's stage spans measure orchestration time, not the harness's model cost.
+To change the thresholds, pass `--trace-retries`, `--trace-wait-ms` and `--trace-cost-usd`. The report includes their effective values, coverage limits, unavailable reads, and the trace IDs behind each pull request's samples.
 
-The gardener investigates these signals against GitHub and cites trace IDs in
-its proposals. A threshold crossing alone does not justify a skill edit, a
-weaker test, or a new lint rule. Accepted fixes still require the existing
-unreverted `Shepherd-Fixes` trailers and trusted PR authors.
+### Coverage and cost
+
+Read these fields before you trust a number:
+
+- **`coverage.untouchedPrs`**: counts pull requests with trace samples that Shepherd didn't work on, such as one only the CI review saw. The report scores Shepherd's runs, so their samples stay out of the per-pull-request summaries.
+- **Missing runs**: sampling or retention can omit runs, so the report never claims a complete history.
+- **`unpricedReviews`**: separates missing or incomplete prices from zero cost. Older spans without `gate.cost_complete` remain incomplete, even when their known subtotal is available.
+- **Review cost**: the gate's root cost already includes its reviewer calls, so child model spans don't add it again.
+- **Stage spans**: Shepherd's stage spans measure orchestration time, and they exclude the harness's model cost.
+
+### Act on a signal
+
+The gardener investigates these signals against GitHub and cites trace IDs in its proposals. A threshold crossing alone doesn't justify a skill edit, a weaker test, or a new lint rule. Accepted fixes still require the existing unreverted `Shepherd-Fixes` trailers and trusted pull request authors.
+
+## Related resources
+
+- [Improve reviews with garden](/shepherd/operations/gardening/): run garden and the weekly workflow
+- [Trace an iteration](/shepherd/operations/traces/): turn on the spans garden reads
+- [Environment and credentials](/shepherd/reference/environment/): the variables Shepherd reads

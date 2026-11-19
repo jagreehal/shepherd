@@ -1,12 +1,17 @@
 ---
 title: "Compose reviews for your stack"
+description: "Pick bundled lenses for your languages and frameworks, layer them over an organisation pack, trim their rules, and convert any other skill into a lens."
 ---
 
 Shepherd ships a starter lens for each common stack. Pick the ones your repository uses, trim the rules you don't want, and add your own on top. The review in CI reads the same lenses as rule packs, so you declare them once.
 
-## The catalogue
+:::note
+To write a lens from scratch, see [Build and share review lenses](/shepherd/configuration/lenses/).
+:::
 
-Each lens lives in `lenses/<name>/SKILL.md`, with a pack in `packs/<name>.yml` that sets its files and gate.
+## Find a lens for your stack
+
+Each lens lives in `lenses/<name>/SKILL.md`, with a pack in `packs/<name>.yml` that sets its files and gate. Find your language or framework in the first column:
 
 | Lens | Covers | `applies_to` |
 | --- | --- | --- |
@@ -27,6 +32,8 @@ Each lens lives in `lenses/<name>/SKILL.md`, with a pack in `packs/<name>.yml` t
 
 Rules tagged `[refuse]` name security or data-loss defects. The rest follow the pack's `gate`: `escalate` for every bundled pack except `pstack` and `thermo-nuclear`, which are `note`.
 
+`owasp-asvs` and `owasp-llm` adapt the [OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook) (CC-BY-4.0) for diff review. They hold for every language, so they compose with any stack pack.
+
 ## Add lenses for the stacks you use
 
 `shepherd init --stacks` reads your tracked files (`package.json` dependencies, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, `*.csproj`, `pyproject.toml`) and copies a lens for each stack it finds into `.shepherd/lenses/`. You own the copies and can edit them.
@@ -36,9 +43,9 @@ bunx @jagreehal/shepherd init --stacks
 bunx @jagreehal/shepherd lens new go --from go --applies 'services/**/*.go'   # one at a time
 ```
 
-To stay in step with shepherd's own rules, extend the packs instead of copying them. Pin each pack to a commit on `jagreehal/shepherd`'s default branch.
+To stay in step with Shepherd's own rules, extend the packs instead of copying them. Pin each pack to a commit on `jagreehal/shepherd`'s default branch.
 
-## Compose: organisation, then stacks, then the repository
+## Layer the organisation, the stacks and the repository
 
 Settings layer in the order you list them. An organisation pack sets house rules, stack packs add the framework rules, and the repository trims both. A pack can extend packs of its own (the `nextjs` pack extends `react`), up to four deep.
 
@@ -59,30 +66,34 @@ lenses:
     gate: refuse
 ```
 
-A lens entry merges field by field, so `react: { disable: [...] }` keeps the pack's skill and files. `only` keeps the rules whose ids match its globs; `disable` drops them. `shepherd lens list` reports a glob that matches no rule.
+## Trim a pack's rules
 
-The same layering works for any language. A Rust service extends `packs/rust.yml`, a .NET API `packs/dotnet.yml` with `observability`, a Django app `packs/python.yml`, a Java monolith `packs/java.yml` with `only: ['injection', 'endpoint-authz']` to start small.
+A lens entry merges field by field, so `react: { disable: [...] }` keeps the pack's skill and files. Use these keys to choose rules:
+
+- **`only`**: keeps the rules whose ids match its globs.
+- **`disable`**: drops the rules whose ids match its globs.
+
+`shepherd lens list` reports a glob that matches no rule.
+
+The same layering works for any language. A Rust service extends `packs/rust.yml`, a .NET API `packs/dotnet.yml` with `observability`, and a Django app `packs/python.yml`. A Java monolith can extend `packs/java.yml` with `only: ['injection', 'endpoint-authz']` to start small.
 
 ## Convert any other skill
 
 For a rule set the catalogue lacks, run `/lens-import` in your agent with an installed skill, a path, a pinned `github:` source or a style guide. It writes `.shepherd/lenses/<name>/SKILL.md` with one id per rule, severity tags, `## Fix` guidance and the source's licence, then checks it with `shepherd lens list`.
 
-You can also pass a collection directory. The importer selects skills for the
-target repository, accounts for excluded and uncertain rules, and splits large
-sources into separately registered lenses. Each import includes local source
-references and an `import-report.json` with provenance, licence evidence and
-examples of code that should and should not trigger a finding. Performance and
-style guidance stays advisory; source priority labels do not become refusals.
+You can also pass a collection directory. The importer then does the following:
 
-The bundled `lens-import/scripts/check-import.mjs` checks the report's output
-mapping, instruction budgets and local links. Shepherd's normal lens and config
-checks still run, and the importer checks semantic fidelity separately. An
-action-only skill can produce no lens. Existing imports keep local rule edits
-and configuration when updated.
+- **Selection**: it selects skills for the target repository and accounts for excluded and uncertain rules.
+- **Splitting**: it splits large sources into separately registered lenses.
+- **Provenance**: each import includes local source references and an `import-report.json` with provenance, licence evidence and examples of code that should and shouldn't trigger a finding.
+- **Severity**: performance and style guidance stays advisory. Source priority labels don't become refusals.
+- **Updates**: existing imports keep local rule edits and configuration when updated.
 
-## The CI review reads the same lenses
+The bundled `lens-import/scripts/check-import.mjs` checks the report's output mapping, instruction budgets and local links. Shepherd's normal lens and config checks still run, and the importer checks semantic fidelity separately. An action-only skill can produce no lens.
 
-The review treats every lens in `.shepherd/config.yml` as a rule pack, read from the same default branch, so `shepherd init --stacks` is all a Rust, Java or Go repository needs. Each lens's `gate` becomes its `on_break` (`escalate` when unset), and each rule's tag overrides that for the one rule. To change the default for lenses with no `gate`:
+## Use the same lenses in the CI review
+
+The review treats every lens in `.shepherd/config.yml` as a rule pack, read from the same default branch, so `shepherd init --stacks` is all a Rust, Java or Go repository needs. Each lens's `gate` becomes its `on_break` (`escalate` if unset), and each rule's tag overrides that for the one rule. To change the default for lenses with no `gate`:
 
 ```yaml
 # .shepherd/config.yml
@@ -91,8 +102,11 @@ review:
     shepherd: { on_break: refuse }
 ```
 
-A `rules:` entry with the same name wins over the inherited lens. The review sends a PR that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how later PRs get judged.
+A `rules:` entry with the same name wins over the inherited lens. The review sends a pull request that edits `.shepherd/config.yml`, a local pack or an inherited lens file to a person, since those files decide how Shepherd judges later pull requests.
 
-## OWASP lenses
+## Related resources
 
-`owasp-asvs` and `owasp-llm` adapt the [OWASP Secure Agent Playbook](https://github.com/OWASP/secure-agent-playbook) (CC-BY-4.0) for diff review. They hold for every language, so they compose with any stack pack.
+- [Build and share review lenses](/shepherd/configuration/lenses/): the lens format, rule ids and previews
+- [Compose team policy and recipes](/shepherd/configuration/team-policy/): how layers and packs combine
+- [Use Shepherd with pstack](/shepherd/integrations/pstack/): the `pstack` lens
+- [Configuration reference](/shepherd/reference/configuration/): `lenses.<name>.only`, `disable` and `gate`
