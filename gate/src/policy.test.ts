@@ -641,7 +641,7 @@ describe("familiarity prompt ratchet", () => {
       ...baseInput.pr,
       reviews: [
         review("a", "COMMENTED", "self-review: all good"),
-        review("someone", "COMMENTED", swarm),
+        review("someone", "COMMENTED", swarm), review("iconed", "COMMENTED", `${AUTOMATED_HEADER}\n\nLooks fine.`),
         review("greptile-apps[bot]", "COMMENTED", "no issues"),
         review("teammate", "APPROVED", "lgtm"),
         review("teammate", "APPROVED", "lgtm", true),
@@ -1766,7 +1766,7 @@ describe("review hardening", () => {
 
       expect(payload).toEqual({ commit_id: "abc", event: "COMMENT", body: "body [redacted]", comments: [{ path: "a.ts", line: 3, side: "RIGHT", body: `${AUTOMATED_HEADER}\n\na.ts:3 [redacted]\n\n<!-- gate-run:2026-11-03T00:00:00Z -->` }] });
       // triage reads only the first 300 characters for the header
-      expect(payload.comments[0]!.body.slice(0, 300)).toContain("🤖 Automated comment by");
+      expect(payload.comments[0]!.body.slice(0, 300)).toContain("Automated comment by");
       expect(reviewPayload("abc", "APPROVED", "ok", [], "t").event).toBe("COMMENT"); // the check carries an approval; a person approves the PR
     } finally {
       process.env.GH_TOKEN = saved;

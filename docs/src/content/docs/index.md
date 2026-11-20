@@ -66,7 +66,7 @@ Each review leaves these on the pull request:
 - **The `shepherd` commit status**: `success`, `failure` with the author's next step, or `error` if the review didn't finish.
 - **An evidence artifact**: `gate-evidence-<pr>` on the workflow run, holding the review's evidence as JSON.
 
-Each comment Shepherd posts starts with `🤖 Automated comment by`, so you can tell it from a person's comment.
+Each comment Shepherd posts starts with shepherd's icon and `Automated comment by`, so you can tell it from a person's comment.
 
 ### Verdicts
 

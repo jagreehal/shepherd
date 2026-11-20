@@ -3,8 +3,8 @@
 // the recurring lens findings into lint-rule proposals.
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { isAutomatedComment } from "../gate/src/github.ts";
 
-export const HEADER = "🤖 Automated comment by";
 
 export type Thread = { tag: string; severity: string; path: string; resolved: boolean; humanReplied: boolean };
 
@@ -143,11 +143,11 @@ function outcomesOf(prs: PrRecord[]) {
 export function parseThread(path: string, resolved: boolean, comments: { author: string; bot: boolean; body: string }[]): Thread | null {
   const [first, ...replies] = comments;
 
-  if (!first?.body.includes(HEADER)) return null;
+  if (!first || !isAutomatedComment(first.body)) return null;
   const m = TAG.exec(first.body);
 
   if (!m) return null;
-  const humanReplied = replies.some((c) => !c.body.includes(HEADER) && !c.bot);
+  const humanReplied = replies.some((c) => !isAutomatedComment(c.body) && !c.bot);
 
   return { tag: m[1]!, severity: m[2]!, path, resolved, humanReplied };
 }

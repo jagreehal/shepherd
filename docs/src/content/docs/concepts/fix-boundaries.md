@@ -12,7 +12,7 @@ Shepherd applies these rules to every review:
 - **Machines first**: swarm runs your lint, typecheck and nearby tests before any model reads the diff. It also runs the scanners you have installed (`gitleaks`, `semgrep`, `osv-scanner`, `actionlint`, `shellcheck`, `hadolint`) on the files they read. Swarm keeps findings on changed lines, lists each suppression comment the pull request adds, and tells the models not to repeat what the tools found. If the repository uses Oxlint's anti-slop rules, swarm gets those findings at no model cost.
 - **Cheapest model that can do the job**: reading work, such as the review router and simplify, starts at the bottom of the ladder (`haiku` -> `sonnet` -> `opus` -> `fable` on Claude Code). Runners that push commits or resolve threads start one rung up, where trials showed they stop needing a redo. A stronger model validates risky changes and serious findings. It never replaces a test.
 - **Verified findings**: a second model checks every finding above NIT before it posts. It gives the input that triggers the finding, the expected result and the actual one, traced through the quoted code. Shepherd drops refuted findings, and posts a HIGH with no such example as MEDIUM.
-- **Labelled comments**: everything swarm posts starts with `🤖 Automated comment by **Shepherd swarm**`. Swarm posts through your account, and readers deserve to know a machine wrote it.
+- **Labelled comments**: everything swarm posts starts with shepherd's icon and `Automated comment by **Shepherd swarm**`. Swarm posts through your account, and readers deserve to know a machine wrote it.
 
 ## What Shepherd leaves to people
 

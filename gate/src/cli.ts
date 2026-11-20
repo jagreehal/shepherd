@@ -16,7 +16,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { notify, notifyOn } from "./notify.ts";
 import { computeFamiliarity, ensureFullHistory, familiarityEvidence, type AuthorFamiliarity } from "./familiarity.ts";
-import { callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type ReviewRecord, type Round, type Verdict } from "./github.ts";
+import { AUTOMATED_HEADER, issueComments, callTimeout, EVIDENCE_UNSEEN_MARKER, lastReviewed, priorRounds, refusedRounds, checkRuns, effectiveAssociation, permissionOf, TRUSTED_ASSOCIATIONS, withoutComments, compareDelta, dismissOwnApprovals, GH_CREDENTIALS, fetchPR, openPRsInto, listReviews, foldSuperseded, postVerdict, reconcilePosted, repoSlug, checkFor, planThreads, resolveIfOurs, reviewThreads, setCheck, reviewedMarker, runMarker, scrub, scrubJson, withBudget, type PR, type ReviewRecord, type Round, type Verdict } from "./github.ts";
 import {
   DEFAULTS_DIR,
   denial,
@@ -67,6 +67,7 @@ import { egressRefusals } from "./isolated-cli.ts";
 import { advisable, assured, type Backend, combine, converged, diffCut, fenceFor, firstThatFits, inert, mergeRisk, readAll, type Combined, review, reviewers, secondOpinionNeeded, shortened, withAdvice, type LLMVerdict, type Opinion, type Reviewed } from "./reviewer.ts";
 import { flagged, riskSignals, type Signals } from "./signals.ts";
 import { approvedOn, stackedParent, wrongBase, type StackDeps, type WrongBase } from "./stack.ts";
+import { DEFAULT_LOOK, showWorkingNote } from "../../src/working.ts";
 import { evidenceSummary, ghStoryDeps, loadStoryEvidence, storyEvidenceRecord, weakenedCount, type StoryEvidence } from "./stories.ts";
 
 const VERSION = SHEPHERD_VERSION;
@@ -399,6 +400,9 @@ let pr = fetchPR(prNumber, repoRoot, [me]);
 
 // The check goes pending before the review, so a green one never stands over a head nobody reviewed.
 if (opts.post) setCheck(pr.repo, pr.headSha, { state: "pending", description: "shepherd is reviewing this head" }, repoRoot);
+
+// The PR shows a review under way from the start, not only once the verdict posts. Actions runs only: the note links the run.
+if (opts.post && process.env.GITHUB_RUN_ID) showNote(pr.repo, pr.number, pr.headSha);
 
 // Until the review posts, its settlement is an error: a run that stops anywhere before then leaves the check `error`.
 if (opts.post && opts.settle) writeFileSync(opts.settle, JSON.stringify({ head: pr.headSha, retire: [], check: checkFor("ERROR", "", 0), verdict: "ERROR" }));
@@ -948,6 +952,27 @@ function whoami(): string {
     return JSON.parse(execFileSync("gh", ["api", "user"], { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: callTimeout() })).login;
   } catch {
     return "github-actions[bot]"; // GITHUB_TOKEN has no user endpoint; this is what its reviews post as
+  }
+}
+
+/** The "shepherd is reviewing" note for this run, deleted when the process exits. It never changes the review. */
+function showNote(repo: string, number: number, head: string): void {
+  const api = issueComments(repo, number, repoRoot);
+  const id = process.env.GITHUB_RUN_ID ?? "";
+  const run = { id, url: `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${id}` };
+
+  try {
+    const note = showWorkingNote(api, run, head, { ...DEFAULT_LOOK, header: AUTOMATED_HEADER }, me);
+
+    process.on("exit", () => {
+      try {
+        api.remove(note);
+      } catch {
+        /* best effort: a later run deletes a finished run's note */
+      }
+    });
+  } catch (e) {
+    console.error(`could not post the reviewing note: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
   }
 }
 

@@ -135,7 +135,7 @@ gh api graphql -f query='
          first_comment: .comments.nodes[0].id,
          comments_truncated: (.comments.totalCount > 50),
          participants: ([.comments.nodes[] | {login: .author.login, type: .author.__typename,
-           automated: (.body[:300] | contains("🤖 Automated comment by"))}] | unique)}]}'
+           automated: (.body | test("^(\\s*<!--[^\\n]*-->)*\\s*(> \\[!NOTE\\]\\s*)?> (🤖|<img [^>\\n]*>) Automated comment by "))}] | unique)}]}'
 ```
 
 Follow `endCursor` while `hasNextPage` is true. Do not re-classify ids already
@@ -162,7 +162,7 @@ gh api graphql -f query='
 (`__typename == "Bot"`, a login ending `[bot]`, or a known review bot:
 greptile, coderabbit, cursor, copilot, sonarcloud, codescene, sourcery,
 ellipsis, claude, chatgpt-codex-connector, github-actions, dependabot,
-renovate), **or** its body carries `🤖 Automated comment by` and an account that
+renovate), **or** its body opens with the automated header (`automated` above: the icon or 🤖, then `Automated comment by`, after any hidden markers and `> [!NOTE]`; the words anywhere else do not count) and an account that
 can already push wrote it: the logged-in user, or a login where `gh api
 repos/<owner>/<repo>/collaborators/<login>/permission --jq .permission` says
 `admin` or `write` (ask once per login). The header is the check that matters

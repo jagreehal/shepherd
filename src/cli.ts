@@ -65,11 +65,11 @@ import { numberDiff } from "./diff.ts";
 import { formatLeads, leadsAt } from "./leads.ts";
 import { prInterdiff, prStack } from "./stack.ts";
 import { flush, recordEvent, traceFile } from "./trace.ts";
-import { compareDiff, latestVerdict, listReviews, reviewThreads as prThreads } from "../gate/src/github.ts";
+import { compareDiff, issueComments, latestVerdict, listReviews, reviewThreads as prThreads } from "../gate/src/github.ts";
 import { approvedDiffUnchanged } from "../gate/src/retention.ts";
 import { githubSetup, KEY_MODELS, modelProblem, pickModel } from "./setup.ts";
 import { type PrFacts, prStatus } from "./status.ts";
-import { DEFAULT_LOOK, isWorkingNote, WORKING_IMAGE, workingNote } from "./working.ts";
+import { DEFAULT_LOOK, showWorkingNote, WORKING_IMAGE } from "./working.ts";
 import { addLens, sharedModelProblem, BUILT_IN_LENSES, PROVIDER_KEY_ENVS, pluginRoots, lensTemplates, globalLensFile, lensProblems, newLens, opencodeAgents, opencodeModel, setTier, detectStacks, stackLens, pinModel, repoLensFile, resolveSkill, setLadder, skillDescription, skillDirs, type Lens } from "./lens.ts";
 
 const BUNDLE_ROOT = path.resolve(import.meta.dir, "..");
@@ -639,11 +639,7 @@ if (command === "install") {
   console.log(["", "Next", ...(changed.length ? ["  git add .shepherd .github/workflows && git commit -m 'Set up shepherd', then open a PR and merge it"] : []), "  shepherd doctor        once merged: checks the workflows and the model key on GitHub", "  shepherd review <pr>   on any PR, then shepherd status <pr>"].join("\n"));
 
 } else if (command === "working" && opts.pr && opts.repo) {
-  // The workflow's "shepherd is reviewing" note: posted, or refreshed for a new run. The finalizer deletes it.
-  const api = (args: string[]) => spawnSync("gh", ["api", ...args], { encoding: "utf8" });
-  const listed = api([`repos/${opts.repo}/issues/${opts.pr}/comments`, "--paginate", "--jq", ".[] | {id, user: {login: .user.login}, body}"]);
-  const note = (listed.stdout ?? "").split("\n").filter(Boolean).map((l) => z.object({ id: z.number(), user: z.object({ login: z.string() }), body: z.string() }).parse(JSON.parse(l))).find(isWorkingNote);
-
+  // This run's "shepherd is reviewing" note, posted or refreshed; the caller deletes it when the run ends.
   // The default branch's branding, as every other comment uses; the defaults when it cannot be read.
   const look = (() => {
     try {
@@ -655,10 +651,14 @@ if (command === "install") {
     }
   })();
 
-  const body = workingNote(opts.head ?? "", `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${opts.repo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`, look);
-  const posted = api(note ? ["-X", "PATCH", `repos/${opts.repo}/issues/comments/${note.id}`, "-f", `body=${body}`] : [`repos/${opts.repo}/issues/${opts.pr}/comments`, "-f", `body=${body}`]);
+  const id = process.env.GITHUB_RUN_ID ?? "";
+  const run = { id, url: `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${opts.repo}/actions/runs/${id}` };
 
-  if (posted.status !== 0) console.error(`could not post the note: ${posted.stderr.trim()}`);
+  try {
+    console.log(showWorkingNote(issueComments(opts.repo, Number(opts.pr), repoRoot), run, opts.head ?? "", look, "github-actions[bot]"));
+  } catch (e) {
+    console.error(`could not post the note: ${e instanceof Error ? e.message.split("\n")[0] : e}`);
+  }
 } else if (command === "status" && sub) {
   const s = prStatus(orExit(() => prFacts(Number(sub))));
 

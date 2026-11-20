@@ -36,7 +36,7 @@ secrets before quoting anything, as `../diagnosing-bugs/SKILL.md` describes.
   `incident/<issue>` and open one PR from it. Nothing else on GitHub.
 - Every issue and PR body starts with `headers.incident` from
   `shepherd branding` (default
-  `> 🤖 Automated comment by **Shepherd incident**, not written by a human`),
+  `> <img src="https://raw.githubusercontent.com/jagreehal/shepherd/main/docs/public/favicon.png" alt="🤖" width="16" height="16"> Automated comment by **Shepherd incident**, not written by a human`),
   copied exactly.
 - Never push to the default branch, merge, approve, or comment on someone
   else's thread.
