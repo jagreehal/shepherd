@@ -6,8 +6,25 @@ import { z } from "zod";
 import type { Anchored } from "./inline.ts";
 import type { PRFile } from "./policy.ts";
 
+/** The image automated headers open with: shepherd's face, the docs favicon. A branch URL, so every release shows the same one. */
+export const AUTOMATED_ICON = '<img src="https://raw.githubusercontent.com/jagreehal/shepherd/main/docs/public/favicon.png" alt="🤖" width="16" height="16">';
+
+/** The words every automated header carries. */
+export const AUTOMATED_MARK = "Automated comment by";
+
+/**
+ * A comment that opens with an automated header: after any hidden markers and a `> [!NOTE]` line, the icon (or the
+ * 🤖 older headers used) and the words. Only the opening counts, so a person quoting a header is still a person.
+ * The triage skill runs this pattern in jq; a test keeps the two the same.
+ */
+export const AUTOMATED_OPENING_PATTERN = "^(\\s*<!--[^\\n]*-->)*\\s*(> \\[!NOTE\\]\\s*)?> (🤖|<img [^>\\n]*>) Automated comment by ";
+
+const AUTOMATED_OPENING = new RegExp(AUTOMATED_OPENING_PATTERN);
+
+export const isAutomatedComment = (body: string) => AUTOMATED_OPENING.test(body);
+
 /** Opens every comment shepherd posts, so triage and other reviewers read it as automated even when it posts through a person's account. */
-export const AUTOMATED_HEADER = "> 🤖 Automated comment by **shepherd**, not written by a human";
+export const AUTOMATED_HEADER = `> ${AUTOMATED_ICON} ${AUTOMATED_MARK} **shepherd**, not written by a human`;
 
 // A hung call must fail rather than wait for the job to be killed: a killed run skips every catch,
 // including the one that falls through to dismissing a stale approval.
@@ -755,6 +772,30 @@ export type Check = { state: "success" | "failure" | "pending" | "error"; descri
 export function setCheck(repo: string, sha: string, check: Check, cwd: string): void {
   gh(["api", `repos/${repo}/statuses/${sha}`, "-f", "context=shepherd", "-f", `state=${check.state}`, "-f", `description=${check.description.split(/\s+/).join(" ").slice(0, 139)}`], cwd);
 }
+
+const NoteRow = z.object({ id: z.number(), user: Login, body: z.string() });
+
+/** One PR's issue comments, and the writes on them, as the reviewing note uses them (`src/working.ts`). */
+export const issueComments = (repo: string, number: number, cwd: string) => ({
+  list: () => paginated(NoteRow, `repos/${repo}/issues/${number}/comments`, cwd),
+  post: (body: string) => call(NoteRow, ["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`], cwd).id,
+  edit: (id: number, body: string): void => {
+    gh(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id}`, "-f", `body=${body}`], cwd);
+  },
+  remove: (id: number): void => {
+    gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${id}`], cwd);
+  },
+  /** Whether an Actions run is over; unreadable counts as still running, so a live run's note is never taken. */
+  finished: (runId: string) => {
+    try {
+      return call(z.object({ status: z.string() }), ["api", `repos/${repo}/actions/runs/${runId}`], cwd).status === "completed";
+    } catch {
+      return false;
+    }
+  },
+});
+
+export type IssueComments = ReturnType<typeof issueComments>;
 
 /**
  * The check for a posted verdict. An approval is `success` only while no thread stays open that is shepherd's or that

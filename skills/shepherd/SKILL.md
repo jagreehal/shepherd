@@ -257,7 +257,7 @@ with `../pr/SKILL.md`), or
 cancel.
 
 A body shepherd writes starts with
-`> 🤖 Written by an AI agent on behalf of @<login>, who has not reviewed it yet.`
+`> <img src="https://raw.githubusercontent.com/jagreehal/shepherd/main/docs/public/favicon.png" alt="🤖" width="16" height="16"> Written by an AI agent on behalf of @<login>, who has not reviewed it yet.`
 Only the author changes that line: a green `shepherd` status is no person's
 reading of the code. Its evidence holds to these rules:
 

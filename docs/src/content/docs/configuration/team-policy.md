@@ -135,7 +135,7 @@ These limits apply to branding:
 
 - **Glyphs**: a glyph is one short token, at most 16 characters, with no spaces or markdown. Garden reads a finding's severity from `**[tag]** <glyph> HIGH`.
 - **Source**: `shepherd branding` prints the resolved values as JSON, escaped, from the default branch, so a pull request can't restyle its own review. The skills post with it.
-- **Automated marker**: branding never changes what marks a comment as automated. The `🤖 Automated comment by` prefix stays, because triage, garden and the review tell automated comments from people's by it, and the hidden `<!-- shepherd… -->` markers stay as they are.
+- **Automated marker**: branding never changes what marks a comment as automated. The shepherd icon and `Automated comment by` prefix stay, because triage, garden and the review tell automated comments from people's by it, and the hidden `<!-- shepherd… -->` markers stay as they are.
 - **Profile picture**: the posting account supplies the picture, and `avatar` leaves it alone. A comment shows the picture of whoever posted it: `github-actions[bot]` for the review in CI, or your own account when the skills run locally. `avatar` only adds an image inside the comment. To change the picture itself, post as a bot account whose profile picture is your logo, or as a GitHub App (a token from an app installation posts as `<app>[bot]` with the app's logo).
 
 ## Related resources

@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, st
 import path from "node:path";
 import { z } from "zod";
 import { parse } from "yaml";
+import { AUTOMATED_ICON, AUTOMATED_MARK } from "../gate/src/github.ts";
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 
@@ -46,7 +47,7 @@ const FIXERS = new Set<Step>(["triage", "simplify", "ci-repair", "incident"]);
 const REVIEWS = new Set<Step>(["swarm", "gate"]);
 
 /**
- * The glyphs shepherd posts, by role, as they are today. Not here: the `🤖 Automated comment by` header prefix, which
+ * The glyphs shepherd posts, by role, as they are today. Not here: the `Automated comment by` header prefix, which
  * triage, garden and gate match to tell automated comments from people's, and the hidden `<!-- shepherd… -->` markers.
  */
 export const BRANDING = {
@@ -673,7 +674,7 @@ export function branding(p: Effective) {
   const b = p.branding?.value;
   const name = html(b?.name ?? BRANDING.name).replaceAll(/[\\`*_[\]|]/g, "\\$&");
   const avatar = b?.avatar ? `<img src="${html(b.avatar)}" alt="" width="16" height="16"> ` : "";
-  const header = (runner: string) => `> 🤖 Automated comment by ${avatar}**${name} ${runner}**, not written by a human`;
+  const header = (runner: string) => `> ${AUTOMATED_ICON} ${AUTOMATED_MARK} ${avatar}**${name} ${runner}**, not written by a human`;
 
   return { name, avatar, avatarUrl: b?.avatar ? html(b.avatar) : "", emoji: { ...BRANDING.emoji, ...b?.emoji }, headers: { swarm: header("swarm"), incident: header("incident"), audit: header("audit") } };
 }

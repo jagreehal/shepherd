@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { setting } from "./config.ts";
 import { CLI_CONTROL, CLI_OUTPUT, CLI_ROOT, isolatedCli, type EgressDecisions } from "./isolated-cli.ts";
-import type { PR, Verdict } from "./github.ts";
+import { isAutomatedComment, type PR, type Verdict } from "./github.ts";
 import { formatFamiliarity, type AuthorFamiliarity } from "./familiarity.ts";
 import { STANDARDS_FILE } from "./house-rules.ts";
 import type { Gate, Ownership, ScrutinyFlag } from "./policy.ts";
@@ -306,23 +306,19 @@ export type ReviewInput = {
 
 // Review agents that post through the PR author's own account (shepherd's swarm, for one) open
 // every comment with this header. Neither the author nor such a comment is independent of the change.
-const AUTOMATED_RE = /🤖 Automated comment by/;
-
-const isAutomated = (body: string) => AUTOMATED_RE.test(body.slice(0, 300));
-
 /** Current-head reviewers who can count as independent assurance: not the author, not an agent posting for them. */
 export const independentReviewers = (pr: PR) =>
   [
     ...new Set(
       // An inline reply posts an empty COMMENTED review: a question in a thread is not assurance.
-      pr.reviews.flatMap((r) => (r.isCurrentHead && (r.state === "APPROVED" || (r.state === "COMMENTED" && r.body.trim())) && r.user !== pr.author && !isAutomated(r.body) ? [r.user] : [])),
+      pr.reviews.flatMap((r) => (r.isCurrentHead && (r.state === "APPROVED" || (r.state === "COMMENTED" && r.body.trim())) && r.user !== pr.author && !isAutomatedComment(r.body) ? [r.user] : [])),
     ),
   ].sort();
 
 export function buildPrompt(input: ReviewInput): string {
   const { pr } = input;
   const line = (s: string) => `  - ${s}`;
-  const who = (user: string, body: string) => `@${sanitize(user, 50)}${user === pr.author ? " (author)" : ""}${isAutomated(body) ? " (automated)" : ""}`;
+  const who = (user: string, body: string) => `@${sanitize(user, 50)}${user === pr.author ? " (author)" : ""}${isAutomatedComment(body) ? " (automated)" : ""}`;
 
   const reviews = pr.reviews
     .filter((r) => r.state !== "COMMENTED" || r.body)
@@ -339,7 +335,7 @@ export function buildPrompt(input: ReviewInput): string {
   for (const c of pr.inline) threads.set(c.thread, [...(threads.get(c.thread) ?? []), c]);
 
   const open = [...threads.values()].filter((t) => !t[0]?.resolved);
-  const openAutomated = open.filter((t) => t.every((c) => isAutomated(c.body) || c.user.endsWith("[bot]"))).length;
+  const openAutomated = open.filter((t) => t.every((c) => isAutomatedComment(c.body) || c.user.endsWith("[bot]"))).length;
   const { body, changes } = splitReviewChanges(pr.body);
 
   const commits = pr.commits.slice(-50).map((c) => {

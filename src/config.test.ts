@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { branding, ciModel, ciSettings, type Fetch, type FetchDir, fetchPackLenses, modelPlan, lensCache, loadPolicy, policyProblems, preview, type Read, recipeProblems } from "./config.ts";
 import { lensProblems, resolveSkill } from "./lens.ts";
+import { AUTOMATED_ICON } from "../gate/src/github.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -317,12 +318,12 @@ test("branding: no block posts exactly as before; custom values are merged, esca
   const load = (yml: string) => loadPolicy(files({ ".shepherd/config.yml": yml }), noFetch, null);
   const plain = branding(load("lenses: {}\n"));
 
-  expect(plain.headers.swarm).toBe("> 🤖 Automated comment by **Shepherd swarm**, not written by a human");
+  expect(plain.headers.swarm).toBe(`> ${AUTOMATED_ICON} Automated comment by **Shepherd swarm**, not written by a human`);
   expect(plain.emoji).toEqual({ critical: "🔴", high: "🟠", medium: "🟡", low: "🟢", nit: "⚪", blocked: "🚫", changes_needed: "⚠️", approve_with_nits: "💬", looks_good: "✅", resolved: "✅" });
 
   const custom = branding(load('branding:\n  name: "Acme <b>*Bot*</b>"\n  avatar: "https://x.test/a.png?v=1&s=\\"y"\n  emoji: { low: "🔵" }\n'));
 
-  expect(custom.headers.swarm).toBe('> 🤖 Automated comment by <img src="https://x.test/a.png?v=1&amp;s=&quot;y" alt="" width="16" height="16"> **Acme &lt;b&gt;\\*Bot\\*&lt;/b&gt; swarm**, not written by a human');
+  expect(custom.headers.swarm).toBe(`> ${AUTOMATED_ICON} Automated comment by <img src="https://x.test/a.png?v=1&amp;s=&quot;y" alt="" width="16" height="16"> **Acme &lt;b&gt;\\*Bot\\*&lt;/b&gt; swarm**, not written by a human`);
   expect(custom.emoji.low).toBe("🔵");
   expect(custom.emoji.high).toBe("🟠");
   expect(() => load("branding:\n  avatar: http://x.test/a.png\n")).toThrow("https");

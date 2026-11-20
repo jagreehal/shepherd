@@ -8,11 +8,17 @@ to all of them.
 ## What shepherd may do on GitHub
 
 - **Every posted comment carries the header**
-  `> 🤖 Automated comment by **<name>**, not written by a human`: **shepherd**
-  for the CI reviewer, **Shepherd swarm** for the local skills. A comment can
-  post through the author's own account, so the header is the only signal that
-  it is automated. `triage` detects the `🤖 Automated comment by` text, and so
-  does anything that weighs reviews; a test pins it in swarm and triage.
+  `> <shepherd icon> Automated comment by **<name>**, not written by a human`,
+  the icon being the docs favicon (`AUTOMATED_ICON`): **shepherd** for the CI
+  reviewer, **Shepherd swarm** for the local skills. A comment can post
+  through the author's own account, so the header is the only signal that it
+  is automated. `triage` detects a comment that opens with the header
+  (`AUTOMATED_OPENING_PATTERN`, either icon), never the words elsewhere, and so does
+  anything that weighs reviews; a test pins it in swarm and triage.
+- **A review shows it is under way.** `gate --post` in Actions posts a
+  "shepherd is reviewing" note as the check goes pending and deletes it when
+  the run exits. Each run owns its note; a later run deletes the notes of
+  runs that finished without deleting theirs, never a running one's.
 - **Every review posts with `event=COMMENT`.** A person approves the PR; the
   `shepherd` check carries the reviewer's verdict.
 - **Triage never posts.** Its only GitHub mutations are commits and resolving

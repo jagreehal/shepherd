@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { BRANDING } from "./config.ts";
 import { changedRanges, covers } from "./local.ts";
+import { isAutomatedComment } from "../gate/src/github.ts";
 
 const Severity = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "NIT"]);
 
@@ -280,7 +281,7 @@ export function swarmThreads(nodes: readonly ThreadNode[], viewer: string | null
   return nodes.flatMap((t) => {
     const first = t.comments.nodes[0];
 
-    return !t.isResolved && first && ours(first.author) && /🤖 Automated comment by .*swarm\*\*/.test(first.body) ? [{ url: first.url, ids: FINDING_IDS.exec(first.body)?.[1]?.split(" ") ?? [] }] : [];
+    return !t.isResolved && first && ours(first.author) && isAutomatedComment(first.body) && /Automated comment by .*swarm\*\*/.test(first.body) ? [{ url: first.url, ids: FINDING_IDS.exec(first.body)?.[1]?.split(" ") ?? [] }] : [];
   });
 }
 

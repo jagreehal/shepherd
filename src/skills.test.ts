@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
+import { AUTOMATED_ICON, AUTOMATED_OPENING_PATTERN } from "../gate/src/github.ts";
 import { parseCommit, parseEscape, parseThread, roundsOf, score } from "./garden.ts";
 import { loadPolicy } from "./config.ts";
 import { bundledSkills, install, MARKER, uninstall } from "./install.ts";
@@ -168,8 +169,8 @@ describe("skill pack", () => {
   test("swarm labels its comments with the exact text triage detects", () => {
     const swarm = readFileSync(path.join(SKILLS, "swarm", "SKILL.md"), "utf8");
     const triage = readFileSync(path.join(SKILLS, "triage", "SKILL.md"), "utf8");
-    expect(swarm).toContain("> 🤖 Automated comment by **Shepherd swarm**, not written by a human");
-    expect(triage).toContain('contains("🤖 Automated comment by")');
+    expect(swarm).toContain(`> ${AUTOMATED_ICON} Automated comment by **Shepherd swarm**, not written by a human`);
+    expect(triage).toContain(`test(${JSON.stringify(AUTOMATED_OPENING_PATTERN)})`);
   });
 
   test.each(["triage", "ci-repair", "shepherd", "incident"])("%s marks its commits with the Shepherd trailer, so a later run never mistakes them for the author's", (name) => {

@@ -5,6 +5,8 @@ description: "See each state of the shepherd commit status, what moves it betwee
 
 Each review in GitHub Actions sets the `shepherd` commit status on the head it reviewed. A branch rule can require it, so a pull request can't merge while its review is running, refused, waiting on a person, or behind a push Shepherd hasn't reviewed.
 
+While the review runs, Shepherd also posts a "shepherd is reviewing" comment on the pull request with a link to the run. Shepherd deletes it when the run ends, and a later run deletes any that a cancelled run left behind.
+
 To read the review itself, see [Read and respond to a review](/shepherd/guides/pull-requests/).
 
 ## How the status moves
